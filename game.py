@@ -7,8 +7,9 @@ from engine import Game, make_db, apply_post_summon_hooks, IllegalAction
 from ai import pick_best_action
 
 pygame.init()
-W, H = 1024, 750
-screen = pygame.display.set_mode((W, H))
+# Fullscreen @ desktop resolution
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+W, H = screen.get_size()
 pygame.display.set_caption("Python Card Battler (Animated-Locked + Targets)")
 
 FONT = pygame.font.SysFont(None, 22)
@@ -38,6 +39,11 @@ MARGIN = 12                 # gap between cards
 ROW_Y_ENEMY = 110              # a bit higher
 ROW_Y_ME    = 325               # a bit higher
 ROW_Y_HAND  = H - CARD_H - 30  # lock hand to bottom with padding
+
+# Hand fan/hover
+HAND_OVERLAP = 0.42      # 0..1 (how much each card overlaps the previous)
+HOVER_SCALE  = 1.35      # how big the zoom is on hover
+HOVER_LIFT   = 44        # how much it rises while hovered
 
 # Timing (ms)
 ANIM_PLAY_MS    = 550
@@ -180,6 +186,14 @@ def _centered_row_rects(n: int, y: int) -> List[pygame.Rect]:
     start_x = max((W - total_w) // 2, MARGIN)
     return [pygame.Rect(start_x + i * (CARD_W + MARGIN), y, CARD_W, CARD_H) for i in range(n)]
 
+def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
+    """Return overlapped, centered rects for the hand (Hearthstone-ish stack)."""
+    if n <= 0: return []
+    step = max(1, int(CARD_W * (1.0 - HAND_OVERLAP)))  # horizontal step between cards
+    total_w = step * (n - 1) + CARD_W
+    start_x = max((W - total_w) // 2, MARGIN)
+    return [pygame.Rect(start_x + i * step, y, CARD_W, CARD_H) for i in range(n)]
+
 def layout_board(g: Game) -> Dict[str, Any]:
     hot = {"hand": [], "my_minions": [], "enemy_minions": [], "end_turn": None,
            "face_enemy": None, "face_me": None}
@@ -192,23 +206,35 @@ def layout_board(g: Game) -> Dict[str, Any]:
     for m, r in zip(g.players[0].board, _centered_row_rects(len(g.players[0].board), ROW_Y_ME)):
         hot["my_minions"].append((m.id, r))
 
-    # Hand row (bottom)
-    hand_rects = _centered_row_rects(len(g.players[0].hand), ROW_Y_HAND)
-    for (i, cid), r in zip(list(enumerate(g.players[0].hand)), hand_rects):
+    # Hand row (stacked/overlapped)
+    for (i, cid), r in zip(list(enumerate(g.players[0].hand)), _stacked_hand_rects(len(g.players[0].hand), ROW_Y_HAND)):
         hot["hand"].append((i, cid, r))
 
-    # Faces: keep enemy face just above enemy row
+    # Faces
     hot["face_enemy"] = pygame.Rect(W//2 - 100, ROW_Y_ENEMY - 75, 200, 52)
 
-    # Your face: default below my row, but clamp so it never touches the hand
-    face_me_y = ROW_Y_ME + CARD_H + 24                 # default gap below my minions
-    max_face_me_y = ROW_Y_HAND - 68                    # keep at least 16px gap to hand
+    face_me_y = ROW_Y_ME + CARD_H + 24
+    max_face_me_y = ROW_Y_HAND - 68
     face_me_y = min(face_me_y, max_face_me_y)
     hot["face_me"] = pygame.Rect(W//2 - 100, face_me_y, 200, 52)
 
-    # End turn at bottom-right
+    # End turn
     hot["end_turn"] = pygame.Rect(W - 170, H - 70, 150, 50)
     return hot
+
+def scale_rect_about_center(r: pygame.Rect, s: float, lift: int = 0) -> pygame.Rect:
+    w, h = int(r.w * s), int(r.h * s)
+    cx, cy = r.centerx, r.centery - lift
+    return pygame.Rect(cx - w // 2, cy - h // 2, w, h)
+
+def hand_hover_index(hot, mx, my) -> Optional[int]:
+    """Return the hand index under the mouse (consider a slightly enlarged hitbox)."""
+    for i, cid, r in hot["hand"]:
+        hit = scale_rect_about_center(r, 1.10, HOVER_LIFT // 2)  # generous hit area
+        if hit.collidepoint(mx, my):
+            return i
+    return None
+
 
 def draw_headers(g: Game):
     centered_text(f"AI — HP:{g.players[1].health}  Hand:{len(g.players[1].hand)}  Mana:{g.players[1].mana}/{g.players[1].max_mana}", 24)
@@ -313,11 +339,36 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         if mid in highlight_my_minions:
             pygame.draw.rect(screen, RED, r.inflate(8, 8), 3, border_radius=12)
 
-    # My hand  (FIXED: use card-frame that shows cost, name, rules text)
+     # My hand (stacked + hover zoom)
+    mx, my = pygame.mouse.get_pos()
+    hover_idx = hand_hover_index(hot, mx, my)
+
+    # draw non-hovered first (so hovered can render on top)
     for i, cid, r in hot["hand"]:
+        if i == hover_idx:
+            continue
         c = g.cards_db[cid]
+        # subtle overlap shadow
+        shadow = r.copy(); shadow.x += 3; shadow.y += 3
+        pygame.draw.rect(screen, (0, 0, 0, 40), shadow, border_radius=12)
         draw_card_frame(r, CARD_BG_HAND, card_obj=c, in_hand=True)
 
+    # hovered last (zoomed + lifted)
+    if hover_idx is not None:
+        # find its original rect
+        r0 = None; cid0 = None
+        for i, cid, r in hot["hand"]:
+            if i == hover_idx:
+                r0, cid0 = r, cid
+                break
+        if r0 is not None:
+            rz = scale_rect_about_center(r0, HOVER_SCALE, HOVER_LIFT)
+            c = g.cards_db[cid0]
+            # backdrop glow
+            glow = rz.inflate(14, 14)
+            pygame.draw.rect(screen, (255, 255, 255), glow, 6, border_radius=18)
+            draw_card_frame(rz, CARD_BG_HAND, card_obj=c, in_hand=True)
+            
     # End turn
     pygame.draw.rect(screen, BLUE if g.active_player == 0 else (90, 90, 90), hot["end_turn"], border_radius=8)
     t = FONT.render("End Turn", True, WHITE)
