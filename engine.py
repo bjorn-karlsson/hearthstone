@@ -58,6 +58,7 @@ class Card:
     # Scripting hooks:
     battlecry: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     on_cast: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
+    text: str = "" 
 
 @dataclass
 class PlayerState:
@@ -542,7 +543,7 @@ def make_db() -> Dict[str, Card]:
     db["CONSECRATION_LITE"] = Card(id="CONSECRATION_LITE", name="Consecration Lite", cost=4, type="SPELL", on_cast=aoe_damage(True, to_minions=2, to_face=2))
     db["FAN_OF_KNIVES_LITE"] = Card(id="FAN_OF_KNIVES_LITE", name="Fan of Knives Lite", cost=3, type="SPELL",
                                     on_cast=lambda g,c,t: aoe_damage(True, to_minions=1, to_face=0)(g,c,t) + g.players[g.active_player].draw(g,1))
-    db["FLAMESTRIKE_LITE"] = Card(id="FLAMEStrike_LITE", name="Flamestrike Lite", cost=7, type="SPELL",
+    db["FLAMESTRIKE_LITE"] = Card(id="FLAMESTRIKE_LITE", name="Flamestrike Lite", cost=7, type="SPELL",
                                   on_cast=aoe_damage(True, to_minions=4, to_face=0))
     db["SWIPE_LITE"] = Card(id="SWIPE_LITE", name="Swipe Lite", cost=4, type="SPELL",
                             on_cast=lambda g,c,t: (g.deal_damage_to_minion(g.find_minion(t)[2],4,source=c.name) if isinstance(t,int) and g.find_minion(t) else []) +
@@ -598,6 +599,55 @@ def make_db() -> Dict[str, Card]:
             m.deathrattle = dr
 
     db["_POST_SUMMON_HOOK"] = attach_deathrattle_on_summon
+
+
+    # ---------- Attach Hearthstone-style text ----------
+    def set_text(cid: str, text: str):
+        if cid in db:
+            db[cid].text = text
+
+    # Core
+    set_text("THE_COIN", "Gain 1 temporary Mana Crystal this turn only.")
+    set_text("RIVER_CROCOLISK", "A sturdy river dweller.")
+    set_text("CHILLWIND_YETI", "It's not just a breeze.")
+    set_text("BOULDERFIST_OGRE", "Big. Loud. Effective.")
+    set_text("SHIELD_BEARER", "Taunt")
+    set_text("WOLFRIDER", "Charge")
+    set_text("RUSHER", "Rush")
+
+    # Your minions/spells with effects
+    set_text("KOBOLD_PING", "Battlecry: Deal 1 damage.")
+    set_text("LEPER_GNOME", "Deathrattle: Deal 2 damage to the enemy hero.")
+    set_text("FIREBALL_LITE", "Deal 4 damage.")
+    set_text("ARCANE_MISSILES_LITE", "Deal 3 damage randomly split among enemies.")
+    set_text("TAUNT_BEAR", "Taunt")
+    set_text("CHARGING_BOAR", "Charge")
+    set_text("KNIFE_THROWER", "Battlecry: Deal 1 damage to the enemy hero.")
+    set_text("LOOT_HOARDER", "Deathrattle: Draw a card.")
+    set_text("HARVEST_GOLEM", "Deathrattle: Summon a 2/1 Damaged Golem.")
+    set_text("NERUBIAN_EGG", "Deathrattle: Summon a 4/4 Nerubian.")
+    set_text("EARTHEN_RING", "Battlecry: Restore 3 Health.")
+    set_text("CHARGE_RUSH_2_2", "Rush")
+    set_text("HOLY_LIGHT_LITE", "Restore 6 Health.")
+    set_text("BLESSING_OF_MIGHT_LITE", "Give a minion +3 Attack.")
+    set_text("BLESSING_OF_KINGS_LITE", "Give a minion +4/+4.")
+    set_text("HAND_OF_PROTECTION_LITE", "Give a friendly minion… (placeholder)")  # you can change later
+    set_text("GIVE_TAUNT", "Give a minion Taunt.")
+    set_text("GIVE_CHARGE", "Give a minion Charge.")
+    set_text("GIVE_RUSH", "Give a minion Rush.")
+    set_text("SILENCE_LITE", "Silence a minion.")
+    set_text("POLYMORPH_LITE", "Transform a minion into a 1/1 Sheep.")
+    set_text("ARCANE_INTELLECT_LITE", "Draw 2 cards.")
+    set_text("CONSECRATION_LITE", "Deal 2 damage to all enemies.")
+    set_text("FAN_OF_KNIVES_LITE", "Deal 1 damage to all enemy minions. Draw a card.")
+    set_text("FLAMESTRIKE_LITE", "Deal 4 damage to all enemy minions.")
+    set_text("SWIPE_LITE", "Deal 4 damage to an enemy minion and 1 to the rest.")
+    set_text("RAISE_WISPS", "Summon two 1/1 Wisps.")
+    set_text("FERAL_SPIRIT_LITE", "Summon two 2/3 Spirit Wolves with Taunt.")
+    set_text("MUSTER_FOR_BATTLE_LITE", "Summon three 1/1 Recruits.")
+
+
+
     return db
 
 
