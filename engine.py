@@ -33,11 +33,15 @@ class Minion:
     taunt: bool = False
     charge: bool = False
     rush: bool = False
-    # Flags that actually drive legality:
-    summoned_this_turn: bool = True
-    has_attacked_this_turn: bool = False
-    # Optional script:
+    can_attack: bool = False
+    exhausted: bool = True
     deathrattle: Optional[Callable[['Game','Minion'], List[Event]]] = None
+    # internal flags
+    has_attacked_this_turn: bool = False
+
+    # NEW: for UI/logic
+    summoned_this_turn: bool = True
+    cost: int = 0  # original mana cost to display on-board
 
     def is_alive(self) -> bool:
         return self.health > 0
@@ -163,8 +167,10 @@ class Game:
         p.max_mana = min(10, p.max_mana + 1)
         p.mana = p.max_mana
         for m in p.board:
+            m.exhausted = False
             m.has_attacked_this_turn = False
             m.summoned_this_turn = False
+            m.can_attack = m.charge or (not m.exhausted)
         ev = [Event("TurnStart", {"player": pid, "turn": self.turn})]
         ev += p.draw(self, 1)
         return ev
@@ -203,6 +209,8 @@ class Game:
                 charge=("Charge" in card.keywords),
                 rush=("Rush" in card.keywords),
                 summoned_this_turn=True,
+                cost=card.cost
+                
             )
             self.next_minion_id += 1
             p.board.append(m)
@@ -229,10 +237,13 @@ class Game:
             raise IllegalAction("You don't control that minion")
         if att.has_attacked_this_turn or not att.is_alive():
             raise IllegalAction("Minion cannot attack")
+        if att.attack <= 0:
+            raise IllegalAction("Minion has 0 attack")
 
         opp = self.other(pid)
         taunts = self.get_taunts(opp)
 
+        # ----- Attack MINION -----
         if target_minion is not None:
             tloc = self.find_minion(target_minion)
             if not tloc:
@@ -243,18 +254,34 @@ class Game:
             if taunts and not tgt.taunt:
                 raise IllegalAction("Must attack Taunt first")
 
+            # Legality vs MINION
             can_vs_minion = (not att.summoned_this_turn) or att.charge or att.rush
             if not can_vs_minion:
                 raise IllegalAction("This minion can't attack another minion yet")
 
+            # SIMULTANEOUS DAMAGE
             att.has_attacked_this_turn = True
-            ev = [Event("Attack", {"attacker": att.id, "target": tgt.id})]
-            ev += self.deal_damage_to_minion(tgt, att.attack, source=att.name)
-            if tgt.is_alive():
-                ev += self.deal_damage_to_minion(att, tgt.attack, source=tgt.name)
+            ev: List[Event] = [Event("Attack", {"attacker": att.id, "target": tgt.id})]
+
+            a_dmg = att.attack
+            t_dmg = tgt.attack
+
+            # Apply raw damage (no immediate deaths)
+            tgt.health -= a_dmg
+            ev.append(Event("MinionDamaged", {"minion": tgt.id, "amount": a_dmg, "source": att.name}))
+            att.health -= t_dmg
+            ev.append(Event("MinionDamaged", {"minion": att.id, "amount": t_dmg, "source": tgt.name}))
+
+            # Resolve deaths after both hits are applied
+            if tgt.health <= 0:
+                ev += self.destroy_minion(tgt, reason="LethalDamage")
+            if att.health <= 0:
+                ev += self.destroy_minion(att, reason="LethalDamage")
+
             self.history += ev
             return ev
 
+        # ----- Attack FACE -----
         if taunts:
             raise IllegalAction("Taunt blocks attacking face")
         can_vs_face = (not att.summoned_this_turn) or att.charge
@@ -272,6 +299,7 @@ class Game:
 def make_db() -> Dict[str, Card]:
     db: Dict[str, Card] = {}
 
+    # ---------- Helpers ----------
     def spell_damage(n:int):
         def on_cast(g:Game, c:Card, target:Optional[int]):
             ev: List[Event] = []
@@ -289,14 +317,145 @@ def make_db() -> Dict[str, Card]:
             return ev
         return on_cast
 
-    # The Coin (+1 temporary mana this turn)
+    def heal_player(pid:int, amt:int) -> Callable[[Game, Card, Optional[int]], List[Event]]:
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            tpid = pid if target is None else target
+            p = g.players[tpid]
+            before = p.health
+            p.health = min(30, p.health + amt)
+            healed = p.health - before
+            if healed > 0:
+                return [Event("PlayerHealed", {"player": tpid, "amount": healed, "source": c.name})]
+            return []
+        return on_cast
+
+    def heal_minion_or_face(amt:int) -> Callable[[Game, Card, Optional[int]], List[Event]]:
+        # Target: minion id OR player id
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            ev: List[Event] = []
+            if not isinstance(target, int):
+                return ev
+            loc = g.find_minion(target)
+            if loc:
+                _,_,m = loc
+                before = m.health
+                m.health = min(m.max_health, m.health + amt)
+                healed = m.health - before
+                if healed > 0:
+                    ev.append(Event("MinionHealed", {"minion": m.id, "amount": healed, "source": c.name}))
+            else:
+                pid = target
+                p = g.players[pid]
+                before = p.health
+                p.health = min(30, p.health + amt)
+                healed = p.health - before
+                if healed > 0:
+                    ev.append(Event("PlayerHealed", {"player": pid, "amount": healed, "source": c.name}))
+            return ev
+        return on_cast
+
+    def buff_minion(delta_atk:int, delta_hp:int, add_taunt:bool=False, give_charge:bool=False, give_rush:bool=False):
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            if not isinstance(target, int):
+                return []
+            loc = g.find_minion(target)
+            if not loc:
+                return []
+            _,_,m = loc
+            m.attack += delta_atk
+            m.max_health += delta_hp
+            m.health += delta_hp
+            if add_taunt: m.taunt = True
+            if give_charge: m.charge = True
+            if give_rush: m.rush = True
+            return [Event("MinionBuffed", {"minion": m.id, "atk": delta_atk, "hp": delta_hp, "source": c.name})]
+        return on_cast
+
+    def silence_minion():
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            if not isinstance(target, int): return []
+            loc = g.find_minion(target)
+            if not loc: return []
+            _,_,m = loc
+            # strip keywords and deathrattle; keep stats
+            m.taunt = False
+            m.charge = False
+            m.rush = False
+            m.deathrattle = None
+            return [Event("MinionSilenced", {"minion": m.id, "source": c.name})]
+        return on_cast
+
+    def polymorph_minion(new_name:str, atk:int, hp:int):
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            if not isinstance(target, int): return []
+            loc = g.find_minion(target)
+            if not loc: return []
+            _,_,m = loc
+            m.name = new_name
+            m.attack = atk
+            m.max_health = hp
+            m.health = min(m.health, hp)
+            m.taunt = False
+            m.charge = False
+            m.rush = False
+            m.deathrattle = None
+            return [Event("MinionTransformed", {"minion": m.id, "to": new_name, "source": c.name})]
+        return on_cast
+
+    def draw_cards(pid:int, n:int):
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            return g.players[pid].draw(g, n)
+        return on_cast
+
+    def draw_cards_active(n:int):
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            return g.players[g.active_player].draw(g, n)
+        return on_cast
+
+    def summon_minion(g:Game, pid:int, name:str, atk:int, hp:int, keywords:List[str]=None, cost:int=0) -> List[Event]:
+        if keywords is None: keywords = []
+        if len(g.players[pid].board) >= 7:
+            return [Event("SummonFailed", {"player": pid, "name": name, "reason": "BoardFull"})]
+        m = Minion(
+            id=g.next_minion_id, owner=pid, name=name,
+            attack=atk, health=hp, max_health=hp,
+            taunt=("Taunt" in keywords), charge=("Charge" in keywords), rush=("Rush" in keywords),
+            summoned_this_turn=True, cost=cost
+        )
+        g.next_minion_id += 1
+        g.players[pid].board.append(m)
+        ev = [Event("MinionSummoned", {"player": pid, "minion": m.id, "name": m.name})]
+        # apply post-summon hook (deathrattles) if present
+        hook = g.cards_db.get("_POST_SUMMON_HOOK")
+        if hook: hook(g, m)
+        return ev
+
+    def aoe_damage(enemies_only:bool, to_minions:int=0, to_face:int=0):
+        def on_cast(g:Game, c:Card, target:Optional[int]):
+            ev: List[Event] = []
+            opp = g.other(g.active_player)
+            # minions
+            for m in list(g.players[opp].board if enemies_only else g.players[0].board + g.players[1].board):
+                if m.is_alive() and to_minions>0:
+                    ev += g.deal_damage_to_minion(m, to_minions, source=c.name)
+            # faces
+            if to_face>0:
+                if enemies_only:
+                    ev += g.deal_damage_to_player(opp, to_face, source=c.name)
+                else:
+                    ev += g.deal_damage_to_player(0, to_face, source=c.name)
+                    ev += g.deal_damage_to_player(1, to_face, source=c.name)
+            return ev
+        return on_cast
+
+    # ---------- The Coin ----------
     def on_cast_coin(g:Game, c:Card, t:Optional[int]):
         p = g.players[g.active_player]
         p.mana = min(p.mana + 1, p.max_mana + 1)
         return [Event("GainMana", {"player": g.active_player, "temp": 1, "mana_after": p.mana})]
-
     db["THE_COIN"] = Card(id="THE_COIN", name="The Coin", cost=0, type="SPELL", on_cast=on_cast_coin)
 
+    # ---------- Originals ----------
     db["RIVER_CROCOLISK"]   = Card(id="RIVER_CROCOLISK",   name="River Crocolisk", cost=2, type="MINION", attack=2, health=3)
     db["CHILLWIND_YETI"]    = Card(id="CHILLWIND_YETI",    name="Chillwind Yeti",  cost=4, type="MINION", attack=4, health=5)
     db["BOULDERFIST_OGRE"]  = Card(id="BOULDERFIST_OGRE",  name="Boulderfist Ogre",cost=6, type="MINION", attack=6, health=7)
@@ -304,7 +463,6 @@ def make_db() -> Dict[str, Card]:
     db["WOLFRIDER"]         = Card(id="WOLFRIDER",         name="Wolfrider",       cost=3, type="MINION", attack=3, health=1, keywords=["Charge"])
     db["RUSHER"]            = Card(id="RUSHER",            name="Arena Rusher",    cost=2, type="MINION", attack=2, health=1, keywords=["Rush"])
 
-    # Battlecry: deal 1 to a target
     def bc_pinger(g:Game, c:Card, target:Optional[int]):
         ev: List[Event] = []
         if isinstance(target, int):
@@ -318,20 +476,13 @@ def make_db() -> Dict[str, Card]:
         return ev
     db["KOBOLD_PING"] = Card(id="KOBOLD_PING", name="Kobold Pinger", cost=2, type="MINION", attack=2, health=2, battlecry=bc_pinger)
 
-    # Leper Gnome with deathrattle: deal 2 face
     def dr_boom(g:Game, m:Minion):
         opp = g.other(m.owner)
         return g.deal_damage_to_player(opp, 2, source=m.name+" (Deathrattle)")
     db["LEPER_GNOME"] = Card(id="LEPER_GNOME", name="Leper Gnome", cost=1, type="MINION", attack=2, health=1)
-    def attach_deathrattle_on_summon(g:Game, m:Minion):
-        if m.name == "Leper Gnome":
-            def dr(g2:Game, m2:Minion):
-                return dr_boom(g2, m2)
-            m.deathrattle = dr
 
     db["FIREBALL_LITE"] = Card(id="FIREBALL_LITE", name="Fireball Lite", cost=4, type="SPELL", on_cast=spell_damage(4))
 
-    # Arcane Missiles-like: 3 random pings among enemies
     def on_cast_missiles(g:Game, c:Card, target:Optional[int]):
         ev: List[Event] = []
         opp = g.other(g.active_player)
@@ -348,8 +499,107 @@ def make_db() -> Dict[str, Card]:
         return ev
     db["ARCANE_MISSILES_LITE"] = Card(id="ARCANE_MISSILES_LITE", name="Arcane Missiles Lite", cost=1, type="SPELL", on_cast=on_cast_missiles)
 
+    # ---------- New Minions ----------
+    db["TAUNT_BEAR"] = Card(id="TAUNT_BEAR", name="Ironfur Grizzly-ish", cost=3, type="MINION", attack=3, health=3, keywords=["Taunt"])
+    db["CHARGING_BOAR"] = Card(id="CHARGING_BOAR", name="Charging Boar", cost=1, type="MINION", attack=1, health=1, keywords=["Charge"])
+    db["KNIFE_THROWER"] = Card(id="KNIFE_THROWER", name="Knife Thrower", cost=3, type="MINION", attack=3, health=2,
+                               battlecry=lambda g,c,t: [g.deal_damage_to_player(g.other(g.active_player),1,source=c.name+" (Battlecry)")][0])
+
+    # Loot Hoarder: DR draw 1
+    db["LOOT_HOARDER"] = Card(id="LOOT_HOARDER", name="Loot Hoarder", cost=2, type="MINION", attack=2, health=1)
+    # Harvest Golem: DR summon 2/1 Damaged Golem
+    db["HARVEST_GOLEM"] = Card(id="HARVEST_GOLEM", name="Harvest Golem", cost=3, type="MINION", attack=2, health=3)
+
+    # Nerubian Egg: 0/2 DR summon 4/4
+    db["NERUBIAN_EGG"] = Card(id="NERUBIAN_EGG", name="Nerubian Egg", cost=2, type="MINION", attack=0, health=2)
+
+    # Battlecry heal allies
+    def bc_earthen_ring(g:Game, c:Card, target:Optional[int]):
+        # heal chosen minion or face for 3
+        return heal_minion_or_face(3)(g, c, target)
+    db["EARTHEN_RING"] = Card(id="EARTHEN_RING", name="Earthen Ring Healer", cost=3, type="MINION", attack=3, health=3, battlecry=bc_earthen_ring)
+
+    # Wolf Rider+Rush variant
+    db["CHARGE_RUSH_2_2"] = Card(id="CHARGE_RUSH_2_2", name="Reckless Sprinter", cost=2, type="MINION", attack=2, health=2, keywords=["Rush"])
+
+    # ---------- New Spells (targeted) ----------
+    db["HOLY_LIGHT_LITE"] = Card(id="HOLY_LIGHT_LITE", name="Holy Light Lite", cost=2, type="SPELL", on_cast=heal_minion_or_face(6))
+    db["BLESSING_OF_MIGHT_LITE"] = Card(id="BLESSING_OF_MIGHT_LITE", name="Blessing of Might Lite", cost=1, type="SPELL",
+                                        on_cast=buff_minion(3,0))
+    db["BLESSING_OF_KINGS_LITE"] = Card(id="BLESSING_OF_KINGS_LITE", name="Blessing of Kings Lite", cost=4, type="SPELL",
+                                        on_cast=buff_minion(4,4))
+    db["HAND_OF_PROTECTION_LITE"] = Card(id="HAND_OF_PROTECTION_LITE", name="Hand of Protection Lite", cost=1, type="SPELL",
+                                         on_cast=buff_minion(0,0))  # (no divine shield mechanic, left as placeholder buff)
+    db["GIVE_TAUNT"] = Card(id="GIVE_TAUNT", name="Give Taunt", cost=1, type="SPELL", on_cast=buff_minion(0,0,add_taunt=True))
+    db["GIVE_CHARGE"] = Card(id="GIVE_CHARGE", name="Give Charge", cost=1, type="SPELL", on_cast=buff_minion(0,0,give_charge=True))
+    db["GIVE_RUSH"] = Card(id="GIVE_RUSH", name="Give Rush", cost=1, type="SPELL", on_cast=buff_minion(0,0,give_rush=True))
+
+    db["SILENCE_LITE"] = Card(id="SILENCE_LITE", name="Silence Lite", cost=2, type="SPELL", on_cast=silence_minion())
+    db["POLYMORPH_LITE"] = Card(id="POLYMORPH_LITE", name="Polymorph Lite", cost=4, type="SPELL", on_cast=polymorph_minion("Sheep", 1, 1))
+
+    # ---------- New Spells (non-targeted) ----------
+    db["ARCANE_INTELLECT_LITE"] = Card(id="ARCANE_INTELLECT_LITE", name="Arcane Intellect Lite", cost=3, type="SPELL", on_cast=draw_cards_active(2))
+    db["CONSECRATION_LITE"] = Card(id="CONSECRATION_LITE", name="Consecration Lite", cost=4, type="SPELL", on_cast=aoe_damage(True, to_minions=2, to_face=2))
+    db["FAN_OF_KNIVES_LITE"] = Card(id="FAN_OF_KNIVES_LITE", name="Fan of Knives Lite", cost=3, type="SPELL",
+                                    on_cast=lambda g,c,t: aoe_damage(True, to_minions=1, to_face=0)(g,c,t) + g.players[g.active_player].draw(g,1))
+    db["FLAMESTRIKE_LITE"] = Card(id="FLAMEStrike_LITE", name="Flamestrike Lite", cost=7, type="SPELL",
+                                  on_cast=aoe_damage(True, to_minions=4, to_face=0))
+    db["SWIPE_LITE"] = Card(id="SWIPE_LITE", name="Swipe Lite", cost=4, type="SPELL",
+                            on_cast=lambda g,c,t: (g.deal_damage_to_minion(g.find_minion(t)[2],4,source=c.name) if isinstance(t,int) and g.find_minion(t) else []) +
+                                                  [e for m in g.players[g.other(g.active_player)].board for e in g.deal_damage_to_minion(m,1,source=c.name) if m.is_alive()])
+
+    # Summon tokens
+    def on_cast_wisps(g:Game, c:Card, t:Optional[int]):
+        pid = g.active_player
+        ev: List[Event] = []
+        ev += summon_minion(g, pid, "Wisp", 1, 1, [], cost=0)
+        ev += summon_minion(g, pid, "Wisp", 1, 1, [], cost=0)
+        return ev
+    db["RAISE_WISPS"] = Card(id="RAISE_WISPS", name="Raise Wisps", cost=2, type="SPELL", on_cast=on_cast_wisps)
+
+    def on_cast_wolves(g:Game, c:Card, t:Optional[int]):
+        pid = g.active_player
+        ev: List[Event] = []
+        ev += summon_minion(g, pid, "Spirit Wolf", 2, 3, ["Taunt"], cost=2)
+        ev += summon_minion(g, pid, "Spirit Wolf", 2, 3, ["Taunt"], cost=2)
+        return ev
+    db["FERAL_SPIRIT_LITE"] = Card(id="FERAL_SPIRIT_LITE", name="Feral Spirit Lite", cost=3, type="SPELL", on_cast=on_cast_wolves)
+
+    # Token spawner spells/minions
+    db["MUSTER_FOR_BATTLE_LITE"] = Card(
+        id="MUSTER_FOR_BATTLE_LITE", name="Muster for Battle Lite", cost=3, type="SPELL",
+        on_cast=lambda g,c,t: summon_minion(g, g.active_player, "Recruit", 1, 1, [], cost=1) +
+                             summon_minion(g, g.active_player, "Recruit", 1, 1, [], cost=1) +
+                             summon_minion(g, g.active_player, "Recruit", 1, 1, [], cost=1)
+    )
+
+    # ---------- Deathrattles via post-summon hook ----------
+    def attach_deathrattle_on_summon(g:Game, m:Minion):
+        # Leper Gnome -> 2 face
+        if m.name == "Leper Gnome":
+            def dr(g2:Game, m2:Minion):
+                opp = g2.other(m2.owner)
+                return g2.deal_damage_to_player(opp, 2, source=m2.name+" (Deathrattle)")
+            m.deathrattle = dr
+        # Loot Hoarder -> draw 1
+        elif m.name == "Loot Hoarder":
+            def dr(g2:Game, m2:Minion):
+                return g2.players[m2.owner].draw(g2, 1)
+            m.deathrattle = dr
+        # Harvest Golem -> summon Damaged Golem 2/1
+        elif m.name == "Harvest Golem":
+            def dr(g2:Game, m2:Minion):
+                return summon_minion(g2, m2.owner, "Damaged Golem", 2, 1, [], cost=1)
+            m.deathrattle = dr
+        # Nerubian Egg -> summon 4/4
+        elif m.name == "Nerubian Egg":
+            def dr(g2:Game, m2:Minion):
+                return summon_minion(g2, m2.owner, "Nerubian", 4, 4, [], cost=4)
+            m.deathrattle = dr
+
     db["_POST_SUMMON_HOOK"] = attach_deathrattle_on_summon
     return db
+
 
 def apply_post_summon_hooks(g:Game, evs:list):
     hook = g.cards_db.get("_POST_SUMMON_HOOK")

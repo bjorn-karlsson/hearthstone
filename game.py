@@ -1,14 +1,15 @@
 import pygame
 import sys
 from typing import Optional, Tuple, List, Dict, Any
+import random
 
 from engine import Game, make_db, apply_post_summon_hooks, IllegalAction
-from ai import pick_best_action  # stepwise AI
+from ai import pick_best_action
 
 pygame.init()
-W, H = 1024, 720
+W, H = 1024, 750
 screen = pygame.display.set_mode((W, H))
-pygame.display.set_caption("Python Card Battler (Animated-Locked)")
+pygame.display.set_caption("Python Card Battler (Animated-Locked + Targets)")
 
 FONT = pygame.font.SysFont(None, 22)
 BIG  = pygame.font.SysFont(None, 32)
@@ -17,14 +18,17 @@ BIG  = pygame.font.SysFont(None, 32)
 BG = (20, 25, 30)
 WHITE = (230, 230, 230)
 GREY = (150, 150, 150)
-GREEN = (60, 200, 90)
-RED   = (210, 70, 70)
-BLUE  = (80, 140, 240)
+GREEN = (60, 200, 90)        # ready glow
+RED   = (210, 70, 70)        # rush outline + target highlight
+BLUE  = (80, 140, 240)       # buttons
 YELLOW = (230, 200, 90)
 CARD_BG_HAND = (45, 75, 110)
 CARD_BG_MY   = (60, 100, 70)
 CARD_BG_EN   = (70, 70, 100)
 COST_BADGE   = (60, 120, 230)
+ATTK_COLOR   = (230, 170, 60)  # orange-yellow for attack
+HP_OK        = WHITE
+HP_HURT      = (230, 80, 80)   # red when damaged
 
 # Layout
 CARD_W, CARD_H = 120, 84
@@ -33,20 +37,48 @@ ROW_Y_ENEMY = 160
 ROW_Y_ME    = 360
 ROW_Y_HAND  = 540
 
-# Animation timing (ms)
+# Timing (ms)
 ANIM_PLAY_MS    = 550
 ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
 AI_THINK_MS     = 250
 
-STARTER_DECK = [
-    "SHIELD_BEARER","LEPER_GNOME","RIVER_CROCOLISK","RUSHER","KOBOLD_PING",
-    "WOLFRIDER","CHILLWIND_YETI","FIREBALL_LITE","ARCANE_MISSILES_LITE",
-    "BOULDERFIST_OGRE"
-] * 3
+# --------- Randomized starter deck ----------
+def make_starter_deck(db, seed=None):
+    """
+    Create a randomized but balanced starter deck (30 cards total)
+    from available cards in the DB.
+    """
+    rng = random.Random(seed)
+    pool = [
+        # 1-cost
+        "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT",
+        # 2-cost
+        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT_LITE",
+        # 3-cost
+        "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
+        "CHARGE_RUSH_2_2",
+        # 4-cost
+        "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
+        "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE",
+        # 5+ cost
+        "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
+        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR"
+    ]
+    # allow up to 2 copies of each card
+    pool_with_dupes = [c for c in pool for _ in range(2)]
+    rng.shuffle(pool_with_dupes)
+    return pool_with_dupes[:30]
 
-# ------------- Drawing helpers -------------
+# Build DB + deck
+db = make_db()
+STARTER_DECK = make_starter_deck(db)
+
+# ---------- Drawing helpers ----------
+def centered_text(text: str, y: int, font=BIG, color=WHITE):
+    surf = font.render(text, True, color)
+    screen.blit(surf, surf.get_rect(center=(W//2, y)))
 
 def draw_cost_badge(r: pygame.Rect, cost: int):
     badge = pygame.Rect(r.x + 6, r.y + 4, 24, 20)
@@ -55,30 +87,34 @@ def draw_cost_badge(r: pygame.Rect, cost: int):
     screen.blit(t, t.get_rect(center=badge.center))
 
 def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
-    # layered outlines
     if taunt:
-        pygame.draw.rect(screen, GREY, r, 3, border_radius=8)
+        pygame.draw.rect(screen, GREY, r, 3, border_radius=8)                 # inner gray
     if rush:
-        pygame.draw.rect(screen, RED, r.inflate(4, 4), 3, border_radius=10)
+        pygame.draw.rect(screen, RED, r.inflate(4, 4), 3, border_radius=10)   # mid red
     if ready:
-        pygame.draw.rect(screen, GREEN, r.inflate(10, 10), 3, border_radius=14)
+        pygame.draw.rect(screen, GREEN, r.inflate(10, 10), 3, border_radius=14)  # outer green
 
-def draw_card_box(r: pygame.Rect, color, title: str, subtitle: str = "", footer: str = ""):
+def draw_card_box(r: pygame.Rect, color, subtitle: str, title: str = ""):
     pygame.draw.rect(screen, color, r, border_radius=8)
     if title:
-        t = FONT.render(title, True, WHITE)
-        screen.blit(t, (r.x + 36, r.y + 6))
+        screen.blit(FONT.render(title, True, WHITE), (r.x + 36, r.y + 6))
     if subtitle:
-        s = FONT.render(subtitle, True, WHITE)
-        screen.blit(s, (r.x + 6, r.y + 28))
-    if footer:
-        f = FONT.render(footer, True, WHITE)
-        screen.blit(f, (r.x + 6, r.y + 50))
+        screen.blit(FONT.render(subtitle, True, WHITE), (r.x + 6, r.y + 28))
 
-def centered_text(text: str, y: int, font=BIG, color=WHITE):
-    surf = font.render(text, True, color)
-    screen.blit(surf, surf.get_rect(center=(W//2, y)))
+def draw_stat_badges_minion(r: pygame.Rect, attack: int, health: int, max_health: int):
+    # Attack bottom-left
+    atk_rect = pygame.Rect(r.x + 6, r.bottom - 22, 24, 18)
+    pygame.draw.rect(screen, (40, 35, 25), atk_rect, border_radius=4)
+    ta = FONT.render(str(attack), True, ATTK_COLOR)
+    screen.blit(ta, ta.get_rect(center=atk_rect.center))
+    # Health bottom-right
+    hp_rect = pygame.Rect(r.right - 30, r.bottom - 22, 24, 18)
+    pygame.draw.rect(screen, (40, 35, 35), hp_rect, border_radius=4)
+    hp_col = HP_HURT if health < max_health else HP_OK
+    th = FONT.render(str(health), True, hp_col)
+    screen.blit(th, th.get_rect(center=hp_rect.center))
 
+# ---------- Layout ----------
 def layout_board(g: Game) -> Dict[str, Any]:
     hot = {"hand": [], "my_minions": [], "enemy_minions": [], "end_turn": None,
            "face_enemy": None, "face_me": None}
@@ -95,8 +131,8 @@ def layout_board(g: Game) -> Dict[str, Any]:
         hot["hand"].append((i, cid, pygame.Rect(x, ROW_Y_HAND, CARD_W, CARD_H)))
         x += CARD_W + MARGIN
     hot["end_turn"] = pygame.Rect(W - 150, H - 60, 140, 40)
-    hot["face_enemy"] = pygame.Rect(W//2 - 90, 60, 180, 50)      # top (AI)
-    hot["face_me"]    = pygame.Rect(W//2 - 90, H - 110, 180, 50) # bottom (You)
+    hot["face_enemy"] = pygame.Rect(W//2 - 90, 60, 180, 50)      # AI face (top)
+    hot["face_me"]    = pygame.Rect(W//2 - 90, H - 110, 180, 50) # your face (bottom)
     return hot
 
 def draw_headers(g: Game):
@@ -104,47 +140,130 @@ def draw_headers(g: Game):
     centered_text(f"You — HP:{g.players[0].health}  Hand:{len(g.players[0].hand)}  Mana:{g.players[0].mana}/{g.players[0].max_mana}", H - 24)
 
 def minion_ready_to_act(g: Game, m) -> bool:
-    if m.has_attacked_this_turn:
+    if m.has_attacked_this_turn or m.attack <= 0:
         return False
-    if not m.summoned_this_turn:
+    if not getattr(m, "summoned_this_turn", True):
         return True
-    if m.charge:
+    if getattr(m, "charge", False):
         return True
-    if m.rush and any(mm.is_alive() for mm in g.players[1 - m.owner].board):
+    if getattr(m, "rush", False) and any(mm.is_alive() for mm in g.players[1 - m.owner].board):
         return True
     return False
 
-def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None):
+# ---------- Targeting logic (for highlights) ----------
+
+def targets_for_spell(g: Game, cid: str):
+    """
+    Return legal target sets for a given card id.
+    Returns: (enemy_min_ids, my_min_ids, enemy_face_ok, my_face_ok)
+    """
+    # Damage to enemy only (minion or face)
+    if cid in ("FIREBALL_LITE",):
+        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+        return enemy_min, set(), True, False
+
+    # Single-target enemy minion only (e.g., Swipe primary)
+    if cid in ("SWIPE_LITE",):
+        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+        return enemy_min, set(), False, False
+
+    # Pinger can hit enemy minions or face
+    if cid in ("KOBOLD_PING",):
+        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+        return enemy_min, set(), True, False
+
+    # Buffs: your minions only
+    if cid in ("BLESSING_OF_MIGHT_LITE", "BLESSING_OF_KINGS_LITE", "GIVE_TAUNT", "GIVE_CHARGE", "GIVE_RUSH"):
+        my_min = {m.id for m in g.players[0].board if m.is_alive()}
+        return set(), my_min, False, False
+
+    # Silence/Polymorph: any minion
+    if cid in ("SILENCE_LITE", "POLYMORPH_LITE"):
+        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+        my_min = {m.id for m in g.players[0].board if m.is_alive()}
+        return enemy_min, my_min, False, False
+
+    # Heals: any minion OR either face
+    if cid in ("HOLY_LIGHT_LITE",):
+        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+        my_min = {m.id for m in g.players[0].board if m.is_alive()}
+        return enemy_min, my_min, True, True
+
+    # Non-targeted spells: return no targets
+    return set(), set(), False, False
+
+def legal_attack_targets(g: Game, attacker_id: int):
+    """Return (set(minion_ids), face_allowed: bool) for attacker."""
+    minfo = g.find_minion(attacker_id)
+    if not minfo:
+        return set(), False
+    pid, _, att = minfo
+    opp = 1 - pid
+    if att.attack <= 0 or att.has_attacked_this_turn or not att.is_alive():
+        return set(), False
+    face_allowed = ((not getattr(att, "summoned_this_turn", True)) or getattr(att, "charge", False))
+    can_hit_minions = ((not getattr(att, "summoned_this_turn", True)) or getattr(att, "charge", False) or getattr(att, "rush", False))
+    enemy_taunts = [m for m in g.players[opp].board if m.taunt and m.is_alive()]
+    enemy_mins = [m for m in g.players[opp].board if m.is_alive()]
+    if not can_hit_minions:
+        mins = set()
+    else:
+        if enemy_taunts:
+            mins = {m.id for m in enemy_taunts}
+            face_allowed = False
+        else:
+            mins = {m.id for m in enemy_mins}
+    if enemy_taunts:
+        face_allowed = False
+    return mins, face_allowed
+
+# ---------- Rendering ----------
+def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
+               highlight_enemy_minions: Optional[set] = None,
+               highlight_my_minions: Optional[set] = None,
+               highlight_enemy_face: bool = False,
+               highlight_my_face: bool = False):
     hidden_minion_ids = hidden_minion_ids or set()
+    highlight_enemy_minions = highlight_enemy_minions or set()
+    highlight_my_minions = highlight_my_minions or set()
 
     # Enemy minions
     for mid, r in hot["enemy_minions"]:
         minfo = g.find_minion(mid)
         if not minfo:
-            continue  # minion died after layout; skip this stale slot
-        pid, idx, m = minfo
+            continue
+        _, _, m = minfo
         if m.id in hidden_minion_ids:
             continue
-        draw_card_box(r, CARD_BG_EN, m.name, f"ATK {m.attack} / HP {m.health}")
+        draw_card_box(r, CARD_BG_EN, m.name)
         draw_layered_borders(r, taunt=m.taunt, rush=m.rush, ready=minion_ready_to_act(g, m))
+        draw_stat_badges_minion(r, m.attack, m.health, m.max_health)
+        # cost badge on-board (safe getattr)
+        draw_cost_badge(r, getattr(m, "cost", 0))
+        if mid in highlight_enemy_minions:
+            pygame.draw.rect(screen, RED, r.inflate(8, 8), 3, border_radius=12)
 
     # My minions
     for mid, r in hot["my_minions"]:
         minfo = g.find_minion(mid)
         if not minfo:
-            continue  # minion died after layout; skip this stale slot
-        pid, idx, m = minfo
+            continue
+        _, _, m = minfo
         if m.id in hidden_minion_ids:
             continue
-        draw_card_box(r, CARD_BG_MY, m.name, f"ATK {m.attack} / HP {m.health}")
+        draw_card_box(r, CARD_BG_MY, m.name)
         draw_layered_borders(r, taunt=m.taunt, rush=m.rush, ready=minion_ready_to_act(g, m))
+        draw_stat_badges_minion(r, m.attack, m.health, m.max_health)
+        draw_cost_badge(r, getattr(m, "cost", 0))
+        if mid in highlight_my_minions:
+            pygame.draw.rect(screen, RED, r.inflate(8, 8), 3, border_radius=12)
 
     # My hand
     for i, cid, r in hot["hand"]:
         c = g.cards_db[cid]
-        subtitle = c.type
-        footer = f"{c.attack}/{c.health}" if c.type == "MINION" else ""
-        draw_card_box(r, CARD_BG_HAND, c.name, subtitle, footer)
+        draw_card_box(r, CARD_BG_HAND, c.name, c.type)
+        if c.type == "MINION":
+            draw_stat_badges_minion(r, c.attack, c.health, c.health)
         draw_cost_badge(r, c.cost)
 
     # End turn
@@ -157,13 +276,16 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None):
     screen.blit(FONT.render("Enemy Face", True, WHITE), (hot["face_enemy"].x+44, hot["face_enemy"].y+16))
     pygame.draw.rect(screen, (70, 140, 70), hot["face_me"], border_radius=8)
     screen.blit(FONT.render("Your Face", True, WHITE), (hot["face_me"].x+54, hot["face_me"].y+16))
-# ------------- Animation system -------------
 
-def lerp(a: float, b: float, t: float) -> float:
-    return a + (b - a) * t
+    # Face highlights
+    if highlight_enemy_face:
+        pygame.draw.rect(screen, RED, hot["face_enemy"].inflate(8, 8), 3, border_radius=12)
+    if highlight_my_face:
+        pygame.draw.rect(screen, RED, hot["face_me"].inflate(8, 8), 3, border_radius=12)
 
-def ease_out(t: float) -> float:
-    return 1 - (1 - t) * (1 - t)
+# ---------- Animation system ----------
+def lerp(a: float, b: float, t: float) -> float: return a + (b - a) * t
+def ease_out(t: float) -> float: return 1 - (1 - t) * (1 - t)
 
 class AnimStep:
     def __init__(self, kind: str, duration_ms: int, data: dict, on_finish=None):
@@ -172,63 +294,38 @@ class AnimStep:
         self.data = data
         self.on_finish = on_finish
         self.start_ms = None
-
-    def start(self):
-        self.start_ms = pygame.time.get_ticks()
-
+    def start(self): self.start_ms = pygame.time.get_ticks()
     def progress(self) -> float:
-        if self.start_ms is None:
-            return 0.0
+        if self.start_ms is None: return 0.0
         t = (pygame.time.get_ticks() - self.start_ms) / self.duration_ms
         return 0.0 if t < 0 else (1.0 if t > 1.0 else t)
-
-    def done(self) -> bool:
-        return self.progress() >= 1.0
+    def done(self) -> bool: return self.progress() >= 1.0
 
 class AnimQueue:
-    def __init__(self):
-        self.queue: List[AnimStep] = []
-
-    def push(self, step: AnimStep):
-        self.queue.append(step)
-
-    def busy(self) -> bool:
-        return len(self.queue) > 0
-
+    def __init__(self): self.queue: List[AnimStep] = []
+    def push(self, step: AnimStep): self.queue.append(step)
+    def busy(self) -> bool: return len(self.queue) > 0
     def update_and_draw(self, g: Game, hot):
         hidden_ids = set()
-        if not self.queue:
-            return hidden_ids
+        if not self.queue: return hidden_ids
         step = self.queue[0]
-        if step.start_ms is None:
-            step.start()
-
+        if step.start_ms is None: step.start()
         t = ease_out(step.progress())
 
-        # draw current anim
         if step.kind == "play_move":
-            src: pygame.Rect = step.data["src"]
-            dst: pygame.Rect = step.data["dst"]
+            src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
             color = step.data.get("color", CARD_BG_HAND)
             lbl = step.data.get("label", "")
-            x = int(lerp(src.x, dst.x, t))
-            y = int(lerp(src.y, dst.y, t))
-            r = pygame.Rect(x, y, CARD_W, CARD_H)
+            r = pygame.Rect(int(lerp(src.x, dst.x, t)), int(lerp(src.y, dst.y, t)), CARD_W, CARD_H)
             pygame.draw.rect(screen, color, r, border_radius=8)
-            if lbl:
-                screen.blit(FONT.render(lbl, True, WHITE), (r.x+6, r.y+6))
-            # optionally hide spawned minion until placed
+            if lbl: screen.blit(FONT.render(lbl, True, WHITE), (r.x+6, r.y+6))
             spawn_mid = step.data.get("spawn_mid")
-            if spawn_mid:
-                hidden_ids.add(spawn_mid)
+            if spawn_mid: hidden_ids.add(spawn_mid)
 
         elif step.kind == "attack_dash":
-            src: pygame.Rect = step.data["src"]
-            dst: pygame.Rect = step.data["dst"]
+            src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
             color = step.data.get("color", CARD_BG_MY)
-            x = int(lerp(src.x, dst.x, t))
-            y = int(lerp(src.y, dst.y, t))
-            r = pygame.Rect(x, y, CARD_W, CARD_H)
+            r = pygame.Rect(int(lerp(src.x, dst.x, t)), int(lerp(src.y, dst.y, t)), CARD_W, CARD_H)
             pygame.draw.rect(screen, color, r, border_radius=8)
 
         elif step.kind == "flash":
@@ -247,12 +344,8 @@ class AnimQueue:
         if step.done():
             self.queue.pop(0)
             if step.on_finish:
-                # SAFETY: never let a callback crash the loop
-                try:
-                    step.on_finish()
-                except Exception as e:
-                    print("Animation callback error:", repr(e))
-
+                try: step.on_finish()
+                except Exception as e: print("Animation callback error:", repr(e))
         return hidden_ids
 
 ANIMS = AnimQueue()
@@ -262,31 +355,23 @@ def enqueue_attack_anim(hot, attacker_mid: int, target_rect: pygame.Rect, enemy:
     src = None
     for mid, r in hot[coll]:
         if mid == attacker_mid:
-            src = r
-            break
-    if src is None:
-        return
-    # forward, then execute on_hit, then schedule return if still alive
+            src = r; break
+    if src is None: return
     def after_forward(attacker_mid=attacker_mid, coll=coll, target_rect=target_rect):
-        # safe engine call
-        try:
-            on_hit()
-        except Exception as e:
-            print("on_hit error:", repr(e))
-        # recompute rects after damage
+        try: on_hit()
+        except Exception as e: print("on_hit error:", repr(e))
         post = layout_board(GLOBAL_GAME)
         if any(mid == attacker_mid for mid, _ in post[coll]):
-            # go back to current spot
             back_dst = None
             for mid, rr in post[coll]:
-                if mid == attacker_mid:
-                    back_dst = rr
-                    break
+                if mid == attacker_mid: back_dst = rr; break
             if back_dst:
-                ANIMS.push(AnimStep("attack_dash", ANIM_RETURN_MS, {"src": target_rect, "dst": back_dst,
-                                                                    "color": CARD_BG_EN if enemy else CARD_BG_MY}))
+                ANIMS.push(AnimStep("attack_dash", ANIM_RETURN_MS,
+                                    {"src": target_rect, "dst": back_dst,
+                                     "color": CARD_BG_EN if enemy else CARD_BG_MY}))
     ANIMS.push(AnimStep("attack_dash", ANIM_ATTACK_MS,
-                        {"src": src, "dst": target_rect, "color": CARD_BG_EN if enemy else CARD_BG_MY},
+                        {"src": src, "dst": target_rect,
+                         "color": CARD_BG_EN if enemy else CARD_BG_MY},
                         on_finish=after_forward))
 
 def enqueue_play_anim(pre_hot, post_hot, from_rect: pygame.Rect, spawned_mid: Optional[int], label: str, is_enemy: bool):
@@ -294,9 +379,7 @@ def enqueue_play_anim(pre_hot, post_hot, from_rect: pygame.Rect, spawned_mid: Op
         coll = "enemy_minions" if is_enemy else "my_minions"
         dst = None
         for mid, r in post_hot[coll]:
-            if mid == spawned_mid:
-                dst = r
-                break
+            if mid == spawned_mid: dst = r; break
         if dst:
             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                 {"src": from_rect, "dst": dst, "label": label,
@@ -309,12 +392,10 @@ def enqueue_flash(rect: pygame.Rect):
 def enemy_face_rect(hot): return hot["face_enemy"]
 def my_face_rect(hot):    return hot["face_me"]
 
-# ------------- Main loop -------------
-
+# ---------- Main loop ----------
 GLOBAL_GAME: Game
 
 def start_game(seed=1337) -> Game:
-    db = make_db()
     g = Game(db, STARTER_DECK.copy(), STARTER_DECK.copy(), seed=seed)
     apply_post_summon_hooks(g, g.start_game())
     return g
@@ -326,7 +407,11 @@ def main():
     GLOBAL_GAME = g
 
     selected_attacker: Optional[int] = None
-    waiting_target_for_play: Optional[Tuple[int, str, pygame.Rect, bool]] = None  # (hand_index, card_id, from_rect, targeted)
+    waiting_target_for_play: Optional[Tuple[int, str, pygame.Rect]] = None
+    hilite_enemy_min: set = set()
+    hilite_my_min: set = set()
+    hilite_enemy_face: bool = False
+    hilite_my_face: bool = False
 
     RUNNING = True
     while RUNNING:
@@ -336,7 +421,12 @@ def main():
 
         draw_headers(g)
         hidden = ANIMS.update_and_draw(g, hot)
-        draw_board(g, hot, hidden_minion_ids=hidden)
+        draw_board(g, hot,
+                   hidden_minion_ids=hidden,
+                   highlight_enemy_minions=hilite_enemy_min,
+                   highlight_my_minions=hilite_my_min,
+                   highlight_enemy_face=hilite_enemy_face,
+                   highlight_my_face=hilite_my_face)
 
         # GG
         if g.players[0].health <= 0 or g.players[1].health <= 0:
@@ -348,33 +438,27 @@ def main():
             pygame.display.flip()
             continue
 
-        # --- AI turn (stepwise; animation-locked) ---
+        # ----- AI turn -----
         if g.active_player == 1:
-            # Only decide when not animating
             if not ANIMS.busy():
-                # think pause
                 def decide():
                     act, _ = pick_best_action(g, 1)
                     kind = act[0]
-
                     if kind == 'end':
                         def do_end():
                             try: g.end_turn(1)
                             except IllegalAction: pass
-                        # tiny pause then end
                         ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=do_end))
 
                     elif kind == 'play':
                         _, idx, tp, tm = act
                         cid = g.players[1].hand[idx]
                         src = pygame.Rect(W//2 - CARD_W//2, 20, CARD_W, CARD_H)
-
                         def do_on_finish(i=idx, tpp=tp, tmm=tm):
                             try:
                                 ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
                                 apply_post_summon_hooks(g, ev)
                                 post = layout_board(g)
-                                # flash actual targets
                                 for e in ev:
                                     if e.kind == "PlayerDamaged":
                                         face = my_face_rect(post) if e.payload["player"] == 0 else enemy_face_rect(post)
@@ -386,63 +470,46 @@ def main():
                                             post2 = layout_board(g)
                                             coll = "my_minions" if pid2 == 0 else "enemy_minions"
                                             for mid2, r2 in post2[coll]:
-                                                if mid2 == m2.id:
-                                                    enqueue_flash(r2); break
+                                                if mid2 == m2.id: enqueue_flash(r2); break
                             except IllegalAction:
-                                # ignore illegal (state may have changed mid-anim)
                                 pass
-                            except Exception as e:
-                                print("AI play on_finish error:", repr(e))
-
-                        # simple think pause + fly to approx slot then apply
                         dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ENEMY, CARD_W, CARD_H)
                         ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}))
-                        ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS, {"src": src, "dst": dst, "label": g.cards_db[cid].name,
-                                                                        "color": CARD_BG_EN}, on_finish=do_on_finish))
+                        ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                            {"src": src, "dst": dst, "label": db[cid].name,
+                                             "color": CARD_BG_EN}, on_finish=do_on_finish))
 
                     elif kind == 'attack':
                         _, aid, tp, tm = act
                         before = layout_board(g)
-                        # attack your minion or your face (bottom)
+                        tr = None
                         if tm is not None:
-                            tr = None
                             for mid, r in before["my_minions"]:
-                                if mid == tm:
-                                    tr = r; break
-                            if tr is None:
-                                tr = my_face_rect(before)
-                        else:
-                            tr = my_face_rect(before)
-
+                                if mid == tm: tr = r; break
+                        if tr is None: tr = my_face_rect(before)
                         def on_hit(aid=aid, tpp=tp, tmm=tm):
-                            try:
-                                g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
-                            except IllegalAction:
-                                return
-                            except Exception as e:
-                                print("AI attack on_hit error:", repr(e)); return
-                            # flashes
+                            try: g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
+                            except IllegalAction: return
                             post = layout_board(g)
                             if tmm is None:
                                 enqueue_flash(my_face_rect(post))
                             else:
                                 for mid, r in post["my_minions"]:
-                                    if mid == tmm:
-                                        enqueue_flash(r); break
-
+                                    if mid == tmm: enqueue_flash(r); break
                         enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
 
                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
-            # drain events but lock inputs during AI time
+            # drain events while AI acts
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: RUNNING = False
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: RUNNING = False
 
-        # --- Human turn ---
+        # ----- YOUR turn -----
         else:
             events = pygame.event.get()
             if ANIMS.busy():
+                # lock inputs during animations
                 for event in events:
                     if event.type == pygame.QUIT: RUNNING = False
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: RUNNING = False
@@ -461,35 +528,88 @@ def main():
                     if hot["end_turn"].collidepoint(mx, my):
                         try: g.end_turn(0)
                         except IllegalAction: pass
+                        # clear highlights
+                        selected_attacker = None
+                        waiting_target_for_play = None
+                        hilite_enemy_min.clear(); hilite_my_min.clear()
+                        hilite_enemy_face = False; hilite_my_face = False
                         continue
 
-                    # Targeted play awaiting?
+                    # If selecting target for a spell
                     if waiting_target_for_play is not None:
-                        idx, cid, src_rect, _ = waiting_target_for_play
-                        # Face?
-                        if enemy_face_rect(hot).collidepoint(mx, my):
+                        idx, cid, src_rect = waiting_target_for_play
+                        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_spell(g, cid)
+
+                        # Enemy face?
+                        if enemy_face_ok and enemy_face_rect(hot).collidepoint(mx, my):
                             def on_finish(i=idx):
                                 try:
                                     ev = g.play_card(0, i, target_player=1)
                                     apply_post_summon_hooks(g, ev)
-                                    post = layout_board(g); enqueue_flash(enemy_face_rect(post))
+                                    enqueue_flash(enemy_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS, {"src": src_rect, "dst": dst, "label": g.cards_db[cid].name}, on_finish=on_finish))
+                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                                on_finish=on_finish))
                             waiting_target_for_play = None
+                            hilite_enemy_min.clear(); hilite_my_min.clear()
+                            hilite_enemy_face = False; hilite_my_face = False
                             continue
-                        # Minion target
+
+                        # My face?
+                        if my_face_ok and my_face_rect(hot).collidepoint(mx, my):
+                            def on_finish(i=idx):
+                                try:
+                                    ev = g.play_card(0, i, target_player=0)
+                                    apply_post_summon_hooks(g, ev)
+                                    enqueue_flash(my_face_rect(layout_board(g)))
+                                except IllegalAction: pass
+                            dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
+                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                                on_finish=on_finish))
+                            waiting_target_for_play = None
+                            hilite_enemy_min.clear(); hilite_my_min.clear()
+                            hilite_enemy_face = False; hilite_my_face = False
+                            continue
+
+                        # Enemy minion target?
+                        targeted = False
                         for mid, r in hot["enemy_minions"]:
-                            if r.collidepoint(mx, my):
+                            if r.collidepoint(mx, my) and mid in enemy_mins:
                                 def on_finish(i=idx, mid_target=mid):
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         apply_post_summon_hooks(g, ev)
                                         enqueue_flash(r)
-                                    except IllegalAction:
-                                        pass
-                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS, {"src": src_rect, "dst": r, "label": g.cards_db[cid].name}, on_finish=on_finish))
+                                    except IllegalAction: pass
+                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                    {"src": src_rect, "dst": r, "label": db[cid].name},
+                                                    on_finish=on_finish))
                                 waiting_target_for_play = None
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
+                                targeted = True
+                                break
+                        if targeted:
+                            continue
+
+                        # My minion target?
+                        for mid, r in hot["my_minions"]:
+                            if r.collidepoint(mx, my) and mid in my_mins:
+                                def on_finish(i=idx, mid_target=mid):
+                                    try:
+                                        ev = g.play_card(0, i, target_minion=mid_target)
+                                        apply_post_summon_hooks(g, ev)
+                                        enqueue_flash(r)
+                                    except IllegalAction: pass
+                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                    {"src": src_rect, "dst": r, "label": db[cid].name},
+                                                    on_finish=on_finish))
+                                waiting_target_for_play = None
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
                                 break
                         continue
 
@@ -498,54 +618,73 @@ def main():
                     for i, cid, r in hot["hand"]:
                         if r.collidepoint(mx, my):
                             clicked_hand = True
-                            if cid in ("FIREBALL_LITE", "KOBOLD_PING"):
-                                waiting_target_for_play = (i, cid, r.copy(), True)
+                            enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_spell(g, cid)
+                            # If this card needs a target: show highlights & wait for click
+                            if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
+                                waiting_target_for_play = (i, cid, r.copy())
+                                hilite_enemy_min = set(enemy_mins)
+                                hilite_my_min = set(my_mins)
+                                hilite_enemy_face = enemy_face_ok
+                                hilite_my_face = my_face_ok
                             else:
+                                # non-targeted: play immediately via animation
                                 def on_finish(i=i):
                                     try:
                                         ev = g.play_card(0, i)
                                         apply_post_summon_hooks(g, ev)
-                                    except IllegalAction:
-                                        pass
+                                    except IllegalAction: pass
                                 dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS, {"src": r.copy(), "dst": dst, "label": g.cards_db[cid].name}, on_finish=on_finish))
+                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                    {"src": r.copy(), "dst": dst, "label": db[cid].name},
+                                                    on_finish=on_finish))
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
                             selected_attacker = None
                             break
                     if clicked_hand:
                         continue
 
-                    # Select attacker
+                    # Select attacker (only if has legal targets)
                     for mid, r in hot["my_minions"]:
                         if r.collidepoint(mx, my):
-                            selected_attacker = mid
+                            mins, face_ok = legal_attack_targets(g, mid)
+                            if mins or face_ok:
+                                selected_attacker = mid
+                                hilite_enemy_min = mins
+                                hilite_enemy_face = face_ok
+                                hilite_my_min.clear(); hilite_my_face = False
+                            else:
+                                selected_attacker = None
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
                             break
 
+                    # If an attacker is selected, attempt to attack a highlighted target
                     if selected_attacker is not None:
-                        # Attack minion
+                        # Minion target
                         did = False
                         for emid, r in hot["enemy_minions"]:
-                            if r.collidepoint(mx, my):
+                            if r.collidepoint(mx, my) and emid in hilite_enemy_min:
                                 def on_hit(attacker=selected_attacker, em=emid):
-                                    try:
-                                        g.attack(0, attacker, target_minion=em)
-                                    except IllegalAction:
-                                        pass
+                                    try: g.attack(0, attacker, target_minion=em)
+                                    except IllegalAction: pass
                                 enqueue_attack_anim(hot, attacker_mid=selected_attacker, target_rect=r, enemy=False, on_hit=on_hit)
                                 selected_attacker = None
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
                                 did = True
                                 break
-                        if did:
-                            continue
-                        # Attack face (enemy top)
-                        if enemy_face_rect(hot).collidepoint(mx, my):
+                        if did: continue
+                        # Face target
+                        if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
                             def on_hit(attacker=selected_attacker):
-                                try:
-                                    g.attack(0, attacker, target_player=1)
-                                except IllegalAction:
-                                    return
-                                post = layout_board(g); enqueue_flash(enemy_face_rect(post))
+                                try: g.attack(0, attacker, target_player=1)
+                                except IllegalAction: return
+                                enqueue_flash(enemy_face_rect(layout_board(g)))
                             enqueue_attack_anim(hot, attacker_mid=selected_attacker, target_rect=enemy_face_rect(hot), enemy=False, on_hit=on_hit)
                             selected_attacker = None
+                            hilite_enemy_min.clear(); hilite_my_min.clear()
+                            hilite_enemy_face = False; hilite_my_face = False
 
         pygame.display.flip()
 
