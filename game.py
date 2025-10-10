@@ -70,6 +70,7 @@ def make_starter_deck(db, seed=None):
         "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR"
     ]
+    pool = ["EARTHEN_RING"] * 20
     pool_with_dupes = [c for c in pool for _ in range(2)]
     rng.shuffle(pool_with_dupes)
     return pool_with_dupes[:30]
@@ -257,26 +258,45 @@ def targets_for_spell(g: Game, cid: str):
     Return legal target sets for a given card id.
     Returns: (enemy_min_ids, my_min_ids, enemy_face_ok, my_face_ok)
     """
+    # ----- Damage spells -----
     if cid in ("FIREBALL_LITE",):
         enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
         return enemy_min, set(), True, False
+
     if cid in ("SWIPE_LITE",):
         enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
         return enemy_min, set(), False, False
+
+    # Pinger battlecry (minion that deals 1 on play)
     if cid in ("KOBOLD_PING",):
         enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
         return enemy_min, set(), True, False
+
+    # ----- Buffs (friendly minions only) -----
     if cid in ("BLESSING_OF_MIGHT_LITE", "BLESSING_OF_KINGS_LITE", "GIVE_TAUNT", "GIVE_CHARGE", "GIVE_RUSH"):
         my_min = {m.id for m in g.players[0].board if m.is_alive()}
         return set(), my_min, False, False
+
+    # ----- Transform / Silence (any minion) -----
     if cid in ("SILENCE_LITE", "POLYMORPH_LITE"):
         enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
         my_min = {m.id for m in g.players[0].board if m.is_alive()}
         return enemy_min, my_min, False, False
+
+    # ----- Heals -----
+    # Spell heal (choose any character)
     if cid in ("HOLY_LIGHT_LITE",):
         enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
-        my_min = {m.id for m in g.players[0].board if m.is_alive()}
+        my_min    = {m.id for m in g.players[0].board if m.is_alive()}
         return enemy_min, my_min, True, True
+
+    # Battlecry heal: EARTHEN_RING (minion) – choose ANY character (faces or minions on both sides)
+    if cid in ("EARTHEN_RING",):
+        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+        my_min    = {m.id for m in g.players[0].board if m.is_alive()}
+        return enemy_min, my_min, True, True
+
+    # Non-targeted by default
     return set(), set(), False, False
 
 def legal_attack_targets(g: Game, attacker_id: int):
@@ -368,7 +388,7 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
             glow = rz.inflate(14, 14)
             pygame.draw.rect(screen, (255, 255, 255), glow, 6, border_radius=18)
             draw_card_frame(rz, CARD_BG_HAND, card_obj=c, in_hand=True)
-            
+
     # End turn
     pygame.draw.rect(screen, BLUE if g.active_player == 0 else (90, 90, 90), hot["end_turn"], border_radius=8)
     t = FONT.render("End Turn", True, WHITE)

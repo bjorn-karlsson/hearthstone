@@ -1,196 +1,196 @@
 # ai.py
-from typing import Tuple, Optional, List
+from typing import Optional, Tuple, List
 from engine import Game, IllegalAction
 
-# Lightweight utility: safely simulate a command on a *copy* of the game.
-def clone_game(g: Game) -> Game:
-    import copy
-    # shallow copy won't cut it; do a deep copy (cards_db is static)
-    g2 = copy.deepcopy(g)
-    g2.cards_db = g.cards_db  # keep reference to shared db
-    return g2
+Action = Tuple[str, ...]  # ('end',) or ('play', idx, target_player, target_minion) or ('attack', attacker_id, target_player, target_minion)
 
-def _card_needs_target(cid: str) -> bool:
-    targeted = {
-        "FIREBALL_LITE","KOBOLD_PING","HOLY_LIGHT_LITE","BLESSING_OF_MIGHT_LITE",
-        "BLESSING_OF_KINGS_LITE","SILENCE_LITE","POLYMORPH_LITE","GIVE_TAUNT",
-        "GIVE_CHARGE","GIVE_RUSH","SWIPE_LITE"
-    }
-    return cid in targeted
+HEAL_SPELLS = {"HOLY_LIGHT_LITE"}      # heals 6, any character
+HEAL_BC_MINIONS = {"EARTHEN_RING"}     # battlecry heal 3, any character
 
-def _legal_targets(g: Game, pid: int, cid: str) -> List[Tuple[Optional[int], Optional[int]]]:
-    """Return list of (target_player, target_minion). None/None = no target."""
-    c = g.cards_db[cid]
-    if c.type != "SPELL" and c.type != "MINION":
-        return [(None,None)]
-    # MINION with battlecry target?
-    if c.type == "MINION" and c.battlecry is None:
-        return [(None,None)]
-    # Map by our UI helper rules
+def can_face(g: Game, pid: int) -> bool:
     opp = 1 - pid
-    r = []
-    if cid == "FIREBALL_LITE" or cid == "KOBOLD_PING":
-        # enemy minion ids and enemy face
-        for m in g.players[opp].board:
-            if m.is_alive(): r.append((None, m.id))
-        r.append((opp, None))
-        return r
-    if cid == "HOLY_LIGHT_LITE":
-        # any minion or either face
-        for m in g.players[0].board:
-            if m.is_alive(): r.append((None, m.id))
-        for m in g.players[1].board:
-            if m.is_alive(): r.append((None, m.id))
-        r.append((0, None)); r.append((1, None))
-        return r
-    if cid in ("BLESSING_OF_MIGHT_LITE","BLESSING_OF_KINGS_LITE","GIVE_TAUNT","GIVE_CHARGE","GIVE_RUSH"):
-        for m in g.players[pid].board:
-            if m.is_alive(): r.append((None, m.id))
-        return r
-    if cid in ("SILENCE_LITE","POLYMORPH_LITE","SWIPE_LITE"):
-        for m in g.players[opp].board:
-            if m.is_alive(): r.append((None, m.id))
-        return r
-    # default: no target
-    return [(None,None)]
+    return not any(m.taunt and m.is_alive() for m in g.players[opp].board)
 
-def _score_state(g: Game, pid: int) -> int:
-    """Crude heuristic: my hp/armor + board stats – opp hp/armor/board."""
-    me, opp = g.players[pid], g.players[1-pid]
-    def board_score(p):
-        s = 0
-        for m in p.board:
-            if not m.is_alive(): continue
-            s += m.attack*2 + m.health
-            if m.taunt: s += 2
-            if m.charge or m.rush: s += 1
-        return s
-    return (me.health + me.armor + board_score(me)) - (opp.health + opp.armor + board_score(opp))
+def minion_ready(m) -> bool:
+    if m.attack <= 0 or m.has_attacked_this_turn or not m.is_alive():
+        return False
+    if not getattr(m, "summoned_this_turn", True):
+        return True
+    if getattr(m, "charge", False):
+        return True
+    if getattr(m, "rush", False):
+        # rush can only hit minions; UI/legal guards face later
+        return True
+    return False
 
-def _try(g: Game, fn, *args, **kwargs):
-    try:
-        return fn(*args, **kwargs)
-    except IllegalAction:
-        return None
+# ---------- HEAL TARGETING ----------
 
-def _find_lethal(g: Game, pid: int):
-    """Very simple: if I can kill face with any combination of direct-damage spells + attacks right now."""
-    opp = 1 - pid
-    # Available direct damage spells
-    dmg_spells = []
-    for i, cid in enumerate(g.players[pid].hand):
-        c = g.cards_db[cid]
-        if c.type == "SPELL" and cid in ("FIREBALL_LITE", "ARCANE_MISSILES_LITE", "CONSECRATION_LITE"):
-            dmg_spells.append((i, cid))
-    # Attacks that can go face (respect Taunt handled by engine)
-    face_attackers = []
-    for m in g.players[pid].board:
-        if m.attack > 0 and not m.has_attacked_this_turn:
-            face_attackers.append(m)
-    # quick optimistic check
-    approx = sum(m.attack for m in face_attackers) + 4*sum(1 for _,cid in dmg_spells if cid=="FIREBALL_LITE")
-    if g.players[opp].health - approx > 0:
-        return None
+def best_heal_target(g: Game, pid: int, heal_amount: int) -> Tuple[Optional[int], Optional[int], int]:
+    """
+    Returns (target_player, target_minion, score).
+    Pick the ally character (face or minion) that gains the most effective health.
+    """
+    p = g.players[pid]
+    best_tp, best_tm, best_score = None, None, -1
 
-    # Try greedily: cast damage spells to face, then attack face with all
-    sim = clone_game(g)
-    # cast spells
-    for i, cid in list(dmg_spells):
-        c = sim.cards_db[cid]
-        if cid == "FIREBALL_LITE":
-            if _try(sim, sim.play_card, pid, i, target_player=1-pid) is None: 
-                continue
-        elif cid == "ARCANE_MISSILES_LITE":
-            if _try(sim, sim.play_card, pid, i) is None:
-                continue
-        elif cid == "CONSECRATION_LITE":
-            if _try(sim, sim.play_card, pid, i) is None:
-                continue
-    # attack face
-    for m in list(sim.players[pid].board):
-        _try(sim, sim.attack, pid, m.id, target_player=1-pid)
-    if sim.players[1-pid].health <= 0:
-        # Return a first lethal action from original g (spell or attack)
-        # choose a face-damaging move available now
-        # 1) a direct face spell if any
-        for i, cid in dmg_spells:
-            if cid == "FIREBALL_LITE":
-                return ('play', i, 1-pid, None)
-            if cid in ("ARCANE_MISSILES_LITE","CONSECRATION_LITE"):
-                return ('play', i, None, None)
-        # 2) otherwise, attack face with any attacker
-        for m in g.players[pid].board:
-            if _try(g, g.attack, pid, m.id, target_player=1-pid) is not None:
-                return ('attack', m.id, 1-pid, None)
+    # Ally face if below 24 gets priority comparable to saving a minion
+    missing_face = max(0, 30 - p.health)
+    if missing_face > 0:
+        eff = min(heal_amount, missing_face)
+        score = eff * 8 + (10 if p.health <= 15 else 0)
+        if score > best_score:
+            best_tp, best_tm, best_score = pid, None, score
+
+    # Damaged ally minions – prefer taunts / high attack / about to trade
+    for m in p.board:
+        if not m.is_alive(): 
+            continue
+        missing = max(0, m.max_health - m.health)
+        if missing <= 0:
+            continue
+        eff = min(heal_amount, missing)
+        # heuristics: value taunts and higher attack
+        bonus = (8 if m.taunt else 0) + m.attack
+        score = eff * 7 + bonus
+        if score > best_score:
+            best_tp, best_tm, best_score = None, m.id, score
+
+    return best_tp, best_tm, best_score
+
+def pick_best_heal_play(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
+    p = g.players[pid]
+    # 1) Holy Light (spell heal 6)
+    for i, cid in enumerate(p.hand):
+        if cid in HEAL_SPELLS and g.cards_db[cid].cost <= p.mana:
+            tp, tm, sc = best_heal_target(g, pid, heal_amount=6)
+            if tp is not None or tm is not None:
+                return (('play', i, tp, tm), sc + 400)  # high preference if useful
+
+    # 2) Earthen Ring (minion with battlecry heal 3)
+    for i, cid in enumerate(p.hand):
+        if cid in HEAL_BC_MINIONS and g.cards_db[cid].cost <= p.mana:
+            tp, tm, sc = best_heal_target(g, pid, heal_amount=3)
+            if tp is not None or tm is not None:
+                # prefer if board slot available
+                if len(p.board) < 7:
+                    return (('play', i, tp, tm), sc + 300)
     return None
 
-def pick_best_action(g: Game, pid: int):
-    """
-    Returns a tuple (action, score):
-      action = ('end',) or ('play', hand_index, target_player, target_minion) or ('attack', attacker_minion_id, target_player, target_minion)
-    """
-    # 1) Lethal now?
-    lethal = _find_lethal(g, pid)
-    if lethal:
-        return lethal, 10_000
+# ---------- ATTACK CHOICES ----------
 
-    best = ('end',)
-    best_score = -10**9
+def pick_attack(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
     opp = 1 - pid
-
-    # 2) Consider plays
-    for i, cid in enumerate(g.players[pid].hand):
-        c = g.cards_db[cid]
-        if g.players[pid].mana < c.cost:
+    # try value trades first
+    for a in g.players[pid].board:
+        if not minion_ready(a):
             continue
-        if _card_needs_target(cid):
-            for (tp, tm) in _legal_targets(g, pid, cid):
-                sim = clone_game(g)
-                if _try(sim, sim.play_card, pid, i, target_player=tp, target_minion=tm) is None:
-                    continue
-                s = _score_state(sim, pid)
-                # prefer value: damage/buffs that swing board; small bias for tempo
-                if s > best_score:
-                    best = ('play', i, tp, tm)
-                    best_score = s
-        else:
-            sim = clone_game(g)
-            if _try(sim, sim.play_card, pid, i) is None:
-                continue
-            s = _score_state(sim, pid)
-            if s > best_score:
-                best = ('play', i, None, None)
-                best_score = s
+        # legal enemy targets
+        enemy_taunts = [m for m in g.players[opp].board if m.taunt and m.is_alive()]
+        pool = enemy_taunts if enemy_taunts else [m for m in g.players[opp].board if m.is_alive()]
+        # evaluate trades: kill without dying > mutual death > chip
+        best = None
+        best_score = -1
+        for m in pool:
+            # quick outcome eval
+            kill_enemy = a.attack >= m.health
+            die_self   = m.attack >= a.health
+            score = 0
+            if kill_enemy and not die_self: score = 120 + m.attack * 5 + m.health
+            elif kill_enemy and die_self:   score = 70  + m.attack * 4
+            elif not kill_enemy and not die_self: score = 25 + min(a.attack, m.health)
+            if score > best_score:
+                best, best_score = m, score
+        if best is not None:
+            return (('attack', a.id, None, best.id), best_score)
 
-    # 3) Consider attacks (prefer good trades; face only if no good trades)
-    had_good_trade = False
-    for m in g.players[pid].board:
-        if m.attack <= 0 or m.has_attacked_this_turn or not m.is_alive():
+    # if no good trades or nothing to hit, go face when allowed
+    if can_face(g, pid):
+        for a in g.players[pid].board:
+            if not minion_ready(a):
+                continue
+            # rush cannot go face on summon; engine will also guard, but keep here
+            if getattr(a, "rush", False) and getattr(a, "summoned_this_turn", True):
+                continue
+            return (('attack', a.id, opp, None), 60 + a.attack)
+    return None
+
+# ---------- PLAY NON-TARGETED / BOARD DEVELOPMENT ----------
+
+def pick_dev_play(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
+    p = g.players[pid]
+    best = None
+    best_score = -1
+    for i, cid in enumerate(p.hand):
+        card = g.cards_db[cid]
+        if card.cost > p.mana:
             continue
-        # try vs enemy minions first
-        for em in g.players[opp].board:
-            if not em.is_alive(): continue
-            sim = clone_game(g)
-            if _try(sim, sim.attack, pid, m.id, target_minion=em.id) is None:
-                continue
-            # good trade heuristic: kill or at least not die for nothing
-            killed = not any(mm.id == em.id and mm.is_alive() for mm in sim.players[opp].board)
-            survived = any(mm.id == m.id and mm.is_alive() for mm in sim.players[pid].board)
-            s = _score_state(sim, pid) + (6 if killed else 0) + (2 if survived else 0)
-            if s > best_score:
-                best = ('attack', m.id, None, em.id)
-                best_score = s
-                had_good_trade = True
-    # face if we didn't find strong trades
-    if not had_good_trade:
-        for m in g.players[pid].board:
-            sim = clone_game(g)
-            if _try(sim, sim.attack, pid, m.id, target_player=opp) is None:
-                continue
-            s = _score_state(sim, pid)
-            # small aggression bonus if we already lead on board
-            if s > best_score - 1:
-                best = ('attack', m.id, opp, None)
-                best_score = s
+        # skip targeted cards here (they are handled elsewhere)
+        if cid in HEAL_SPELLS or cid in HEAL_BC_MINIONS:
+            continue
+        # very rough value: minions > draw > damage if face reachable
+        score = 0
+        if card.type == "MINION" and len(p.board) < 7:
+            score = 50 + card.attack * 3 + card.health * 2 + (8 if "Taunt" in card.keywords else 0) + (6 if "Charge" in card.keywords else 0)
+            best = ('play', i, None, None)
+        elif cid == "ARCANE_INTELLECT_LITE":
+            score = 55
+            best = ('play', i, None, None)
+        elif cid == "FIREBALL_LITE":
+            # keep for removal or face if lethal-ish
+            if can_face(g, pid) and g.players[1 - pid].health <= 6:
+                score = 80
+                best = ('play', i, 1 - pid, None)
+            else:
+                # leave evaluation lower; removal is handled by attack/trade phase
+                score = 35
+                best = ('play', i, None, None)  # engine will default to enemy face if no target passed
+        elif cid in ("CONSECRATION_LITE", "FLAMESTRIKE_LITE", "ARCANE_MISSILES_LITE", "MUSTER_FOR_BATTLE_LITE",
+                     "RAISE_WISPS", "FERAL_SPIRIT_LITE", "CHARGE_RUSH_2_2", "GIVE_TAUNT", "GIVE_CHARGE", "GIVE_RUSH",
+                     "BLESSING_OF_MIGHT_LITE", "BLESSING_OF_KINGS_LITE", "SILENCE_LITE", "POLYMORPH_LITE"):
+            score = 40  # generic development/removal; your deck scripts handle effect
+            best = ('play', i, None, None)
 
-    return best, best_score
+        if score > best_score and best is not None:
+            best_score = score
+            best_action = best
+    if best_score >= 0:
+        return (best_action, best_score)
+    return None
+
+# ---------- TOP-LEVEL PICK ----------
+
+def pick_best_action(g: Game, pid: int) -> Tuple[Action, int]:
+    """
+    Returns the single best action for this turn step.
+    Priority: lethal -> heal if valuable -> good attack -> develop board -> end.
+    """
+    # 0) If we can finish the opponent with ready attacks, try it
+    if can_face(g, pid):
+        face_dmg = sum(m.attack for m in g.players[pid].board
+                       if minion_ready(m))
+        if face_dmg >= g.players[1 - pid].health:
+            # swing with the first ready minion, rest will follow on next frames
+            for m in g.players[pid].board:
+                if minion_ready(m):
+                    return ('attack', m.id, 1 - pid, None), 10_000
+
+    # 1) Healing if useful
+    hp = g.players[pid].health
+    allies_damaged = any(m.is_alive() and m.health < m.max_health for m in g.players[pid].board)
+    if hp < 26 or allies_damaged:
+        heal = pick_best_heal_play(g, pid)
+        if heal:
+            return heal
+
+    # 2) Trades / attacks
+    att = pick_attack(g, pid)
+    if att:
+        return att
+
+    # 3) Develop / cast non-targeted stuff
+    dev = pick_dev_play(g, pid)
+    if dev:
+        return dev
+
+    # 4) Nothing else: end turn
+    return ('end',), 0
