@@ -46,6 +46,13 @@ class Minion:
     cost: int = 0  # original mana cost to display on-board
     rarity: str = ""
 
+
+    card_id: str = ""
+    base_attack: int = 0
+    base_health: int = 0
+    base_text: str = ""
+    base_keywords: List[str] = field(default_factory=list)
+
     def is_alive(self) -> bool:
         return self.health > 0
 
@@ -216,6 +223,11 @@ class Game:
                 summoned_this_turn=True,
                 cost=card.cost,
                 rarity=card.rarity,
+                card_id=card.id,
+                base_attack=card.attack,
+                base_health=card.health,
+                base_text=card.text or "",
+                base_keywords=list(card.keywords),
                 
             )
             self.next_minion_id += 1
@@ -454,24 +466,35 @@ def _fx_silence(params):
 def _summon_from_card_spec(g, owner, card_spec, count):
     ev = []
     for _ in range(count):
-        if len(g.players[owner].board) >= 7: break
-        
+        if len(g.players[owner].board) >= 7:
+            break
+
+        kws = card_spec.get("keywords", []) or []
+
         m = Minion(
-            id=g.next_minion_id, owner=owner, name=card_spec["name"],
-            attack=card_spec.get("attack", 0), health=card_spec.get("health", 1),
-            max_health=card_spec.get("health", 1),
-            taunt=("Taunt" in card_spec.get("keywords", [])),
-            charge=("Charge" in card_spec.get("keywords", [])),
-            rush=("Rush" in card_spec.get("keywords", [])),
-            exhausted=not ("Charge" in card_spec.get("keywords", []) or "Rush" in card_spec.get("keywords", [])),
-            cost=card_spec.get("cost", 0),
-            rarity=card_spec.get("rarity", "Common"),
+            id=g.next_minion_id,
+            owner=owner,
+            name=card_spec.get("name", "Token"),
+            attack=int(card_spec.get("attack", 0)),
+            health=int(card_spec.get("health", 1)),
+            max_health=int(card_spec.get("health", 1)),
+            taunt=("Taunt" in kws),
+            charge=("Charge" in kws),
+            rush=("Rush" in kws),
+            exhausted=not ("Charge" in kws or "Rush" in kws),
+            cost=int(card_spec.get("cost", 0)),
+            rarity=str(card_spec.get("rarity", "Common")),
+            # base/origin info for the inspector
+            card_id=card_spec.get("id", ""),              # may be injected below
+            base_attack=int(card_spec.get("attack", 0)),
+            base_health=int(card_spec.get("health", 1)),
+            base_text=str(card_spec.get("text", "")),
+            base_keywords=list(kws),
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
         ev.append(Event("MinionSummoned", {"player": owner, "minion": m.id, "name": m.name}))
     return ev
-
 def _fx_summon(params, json_db_tokens):
     """
     params:
@@ -511,7 +534,10 @@ def _fx_summon(params, json_db_tokens):
     def run(g, source_obj, target):
         source_owner = getattr(source_obj, "owner", g.active_player)
         owners = _resolve_owners(g, source_owner)
-        spec = json_db_tokens[token_id]
+
+        raw = json_db_tokens[token_id]
+        spec = dict(raw)
+        spec.setdefault("id", token_id)
         evs = []
         for ow in owners:
             evs += _summon_from_card_spec(g, ow, spec, count)

@@ -541,27 +541,25 @@
             ],
             "targeting": "none"
         },
-        {
-            "id": "LEGENDARY_LEROY_JENKINS",
-            "name": "Leroy Jenkins",
-            "type": "MINION",
-            "rarity": "Legendary",
-            "cost": 4,
-            "attack": 6,
-            "health": 2,
-            "keywords": [
-                "Charge"
-            ],
-            "text": "Charge\n Battlecry: Summon two 1/1 Whelps for your enemy.",
-            "battlecry": [
-                {
-                    "effect": "summon",
-                    "card_id": "WHELP",
-                    "count": 2,
-                    "owner": "enemy"
-                }
-            ],
-            "targeting": ""
+       {
+        "id": "LEGENDARY_LEROY_JENKINS",
+        "name": "Leroy Jenkins",
+        "type": "MINION",
+        "rarity": "Legendary",
+        "cost": 4,
+        "attack": 6,
+        "health": 2,
+        "keywords": ["Charge"],
+        "text": "Charge. Battlecry: Summon two 1/1 Whelps for your enemy.",
+        "battlecry": [
+            {
+            "effect": "summon",
+            "card_id": "WHELP",
+            "count": 2,
+            "owner": "enemy"
+            }
+        ],
+        "targeting": "none"
         }
     ]
 }

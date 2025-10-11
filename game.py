@@ -80,7 +80,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
     ]
 
-    #desired = ["MUSTER_FOR_BATTLE_LITE"]  * 30
+    desired = ["LEGENDARY_LEROY_JENKINS"]  * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -124,7 +124,7 @@ def draw_rarity_droplet(r: pygame.Rect, rarity: Optional[str]):
     if not rarity:
         rarity = "COMMON"
     key = str(rarity).upper()
-    color = RARITY_COLORS.get(key, RARITY_COLORS[key])
+    color = RARITY_COLORS.get(key, RARITY_COLORS["COMMON"])
 
     radius = 9
     cx, cy = r.centerx, r.bottom - 16
@@ -225,6 +225,7 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         if "Taunt" in card_obj.keywords: kw.append("Taunt")
         if "Charge" in card_obj.keywords: kw.append("Charge")
         if "Rush" in card_obj.keywords:   kw.append("Rush")
+        
 
         text = (card_obj.text or "").strip()
         if text in kw: text = ""
@@ -243,17 +244,26 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
 
     elif minion_obj:
         draw_cost_gem(r, getattr(minion_obj, "cost", 0))
-        #draw_name_bar(r, minion_obj.name)
-        short = []
-        if getattr(minion_obj, "taunt", False):  short.append("Taunt")
-        if getattr(minion_obj, "charge", False): short.append("Charge")
-        if getattr(minion_obj, "rush", False):   short.append("Rush")
-        desc = " / ".join(short)
-        draw_text_box(r, desc, max_lines=2, font=RULE_FONT)
-        draw_minion_stats(r, minion_obj.attack, minion_obj.health, minion_obj.max_health)
 
+        # Compose short description: keywords header + first lines of base rules text
+        kws = []
+        if getattr(minion_obj, "taunt", False):  kws.append("Taunt")
+        if getattr(minion_obj, "charge", False): kws.append("Charge")
+        if getattr(minion_obj, "rush", False):   kws.append("Rush")
+        header = " / ".join(kws)
+
+        body = (getattr(minion_obj, "base_text", "") or "").strip()
+        # If body starts with a keyword line, trim it (avoid duplicate)
+        for k in ["Taunt", "Charge", "Rush"]:
+            if body.lower().startswith(k.lower()):
+                body = body[len(k):].lstrip(" :.-").strip()
+        # Final short text (2–3 lines on board)
+        final = header if header and not body else (header + ("\n" + body if body else ""))
+
+        draw_text_box(r, final, max_lines=3, font=RULE_FONT)
+
+        # Bottom UI
         draw_name_footer(r, minion_obj.name)
-        # prefer minion.rarity; fallback to Common
         draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"))
         draw_minion_stats(r, minion_obj.attack, minion_obj.health, minion_obj.max_health)
 
@@ -483,13 +493,50 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     t = FONT.render("End Turn", True, WHITE)
     screen.blit(t, t.get_rect(center=hot["end_turn"].center))
 
-    
+
 
     # Face highlights
     if highlight_enemy_face:
         pygame.draw.rect(screen, RED, hot["face_enemy"].inflate(8, 8), 3, border_radius=12)
     if highlight_my_face:
         pygame.draw.rect(screen, RED, hot["face_me"].inflate(8, 8), 3, border_radius=12)
+
+def draw_card_inspector_for_minion(g: Game, minion_id: int):
+    loc = g.find_minion(minion_id)
+    if not loc:
+        return
+    pid, idx, m = loc
+
+    # Build a lightweight card-like object from the minion’s base fields
+    class _ViewCard:
+        pass
+    vc = _ViewCard()
+    vc.id = m.card_id or m.name
+    vc.name = m.name
+    vc.cost = getattr(m, "cost", 0)
+    vc.type = "MINION"
+    vc.attack = m.base_attack
+    vc.health = m.base_health
+    vc.keywords = list(getattr(m, "base_keywords", []))
+    vc.text = getattr(m, "base_text", "")
+    vc.rarity = getattr(m, "rarity", "Common")
+
+    # Darken background
+    overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 160))
+    screen.blit(overlay, (0, 0))
+
+    # Big centered rect
+    INSPECT_W, INSPECT_H = int(CARD_W * 2.0), int(CARD_H * 2.2)
+    R = pygame.Rect(W//2 - INSPECT_W//2, H//2 - INSPECT_H//2, INSPECT_W, INSPECT_H)
+    pygame.draw.rect(screen, (24, 28, 34), R, border_radius=16)
+    # Draw the card using your existing frame renderer
+    draw_card_frame(R, CARD_BG_HAND, card_obj=vc, in_hand=True)
+
+    # Small hint
+    hint = RULE_FONT.render("Right-click to close", True, WHITE)
+    screen.blit(hint, (R.x + 8, R.bottom + 8))
+
 
 # ---------- Animation system ----------
 def lerp(a: float, b: float, t: float) -> float: return a + (b - a) * t
@@ -612,6 +659,11 @@ def apply_post_summon_hooks(g, events):
                 _, _, m = loc
                 hook(g, m)
 
+def minion_under_point(g: Game, hot, mx, my) -> Optional[int]:
+    for mid, r in hot["my_minions"] + hot["enemy_minions"]:
+        if r.collidepoint(mx, my):
+            return mid
+    return None
 
 # ---------- Main loop ----------
 GLOBAL_GAME: Game
@@ -633,6 +685,7 @@ def main():
     hilite_my_min: set = set()
     hilite_enemy_face: bool = False
     hilite_my_face: bool = False
+    inspected_minion_id: Optional[int] = None
 
     RUNNING = True
     while RUNNING:
@@ -648,7 +701,21 @@ def main():
                    highlight_my_minions=hilite_my_min,
                    highlight_enemy_face=hilite_enemy_face,
                    highlight_my_face=hilite_my_face)
-
+        if inspected_minion_id is not None:
+            draw_card_inspector_for_minion(g, inspected_minion_id)
+            # Input drain: allow close via right-click or ESC only
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    RUNNING = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    if inspected_minion_id is not None:
+                        inspected_minion_id = None
+                    else:
+                        RUNNING = False
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    inspected_minion_id = None
+            pygame.display.flip()
+            continue
         # GG
         if g.players[0].health <= 0 or g.players[1].health <= 0:
             winner = "AI" if g.players[0].health <= 0 else "You"
@@ -900,7 +967,26 @@ def main():
                             selected_attacker = None
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    mx, my = event.pos
 
+                    # Priority: cancel selection if any
+                    if selected_attacker is not None or waiting_target_for_play is not None:
+                        selected_attacker = None
+                        waiting_target_for_play = None
+                        hilite_enemy_min.clear(); hilite_my_min.clear()
+                        hilite_enemy_face = False; hilite_my_face = False
+                        continue
+
+                    # Toggle inspector
+                    if inspected_minion_id is not None:
+                        inspected_minion_id = None
+                        continue
+
+                    mid = minion_under_point(g, hot, mx, my)
+                    if mid is not None:
+                        inspected_minion_id = mid
+                        continue
         pygame.display.flip()
 
     pygame.quit()
