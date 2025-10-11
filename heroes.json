@@ -1,0 +1,93 @@
+{
+    "heroes": [
+        {
+            "id": "WARRIOR",
+            "name": "Warrior",
+            "power": {
+                "name": "Armor Up!",
+                "text": "Gain 2 Armor.",
+                "cost": 2,
+                "targeting": "none",
+                "effects": [
+                    {
+                        "effect": "gain_armor",
+                        "amount": 2,
+                        "target": "self_face"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "WARLOCK",
+            "name": "Warlock",
+            "power": {
+                "name": "Life Tap",
+                "text": "Draw a card and take 2 damage.",
+                "cost": 2,
+                "targeting": "none",
+                "effects": [
+                    {
+                        "effect": "draw",
+                        "count": 1
+                    },
+                    {
+                        "effect": "deal_damage",
+                        "amount": 2,
+                        "target": "self_face"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "PALADIN",
+            "name": "Paladin",
+            "power": {
+                "name": "Reinforce",
+                "text": "Summon a 1/1 Silver Hand Recruit.",
+                "cost": 2,
+                "targeting": "none",
+                "effects": [
+                    {
+                        "effect": "summon",
+                        "card_id": "SILVER_HAND_RECRUIT_TOKEN",
+                        "count": 1,
+                        "owner": "friendly"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "MAGE",
+            "name": "Mage",
+            "power": {
+                "name": "Fireblast",
+                "text": "Deal 1 damage.",
+                "cost": 2,
+                "targeting": "any_character",
+                "effects": [
+                    {
+                        "effect": "deal_damage",
+                        "amount": 1
+                    }
+                ]
+            }
+        },
+        {
+            "id": "HUNTER",
+            "name": "Hunter",
+            "power": {
+                "name": "Steady Shot",
+                "text": "Deal 2 damage to the enemy hero.",
+                "cost": 2,
+                "targeting": "enemy_face",
+                "effects": [
+                    {
+                        "effect": "deal_damage",
+                        "amount": 2,
+                        "target": "enemy_face"
+                    }
+                ]
+            }
+        }
+    ]
+}

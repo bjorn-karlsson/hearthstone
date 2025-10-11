@@ -4,7 +4,7 @@ from typing import Optional, Tuple, List, Dict, Any
 import random
 from collections import deque
 
-from engine import Game, load_cards_from_json, IllegalAction
+from engine import Game, load_cards_from_json, load_heros_from_json, IllegalAction
 from ai import pick_best_action
 
 DEBUG = False
@@ -53,6 +53,21 @@ RARITY_COLORS = {
     "LEGENDARY":  (255, 140, 20),   # orange
 }
 
+HERO_COLORS = {
+    "WARRIOR": (185, 35, 35),
+    "WARLOCK": (115, 35, 160),
+    "PALADIN": (210, 175, 60),
+    "MAGE":    (60, 120, 230),
+    "HUNTER":  (35, 155, 75),
+}
+
+def hero_name(h) -> str:
+    if isinstance(h, str):
+        return h.capitalize()
+    if hasattr(h, "name"):
+        return h.name
+    return str(h)
+
 # Layout
 CARD_W, CARD_H = 125, 200   # bigger cards so text fits
 MARGIN = 12                 # gap between cards
@@ -72,6 +87,17 @@ ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
 AI_THINK_MS     = 800
 START_GAME      = 1500
+
+
+KEYWORD_HELP = {
+    "Battlecry": "Triggers when played from hand (on summon).",
+    "Deathrattle": "After this dies, do its effect.",
+    "Taunt": "Enemies must attack this first.",
+    "Rush": "Can attack minions immediately.",
+    "Charge": "Can attack heroes and minions immediately.",
+    "Silence": "Remove text and keywords from a minion.",
+    # add more as you add mechanics: Divine Shield, Stealth, Windfury, etc.
+}
 
 # -------- LOGGING -------------
 
@@ -100,6 +126,12 @@ def format_event(e, g, skip=False) -> str:
     if DEBUG and not skip:
         return f"{k}: {format_event(e, g, True)}"
 
+    if k == "HeroPowerUsed":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} used {p.get('hero','Hero')} power."
+    if k == "ArmorGained":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} gained {p.get('amount',0)} Armor."
     if k == "GameStart":
         who = "You" if p.get("active_player") == 0 else "AI"
         return f"Game started. {who} goes first."
@@ -140,7 +172,7 @@ def format_event(e, g, skip=False) -> str:
         src = p.get("source","")
         return f"{who} took {p['amount']} dmg{f' ({src})' if src else ''}."
     if k == "MinionHealed":
-        return f"Minion {p['minion']} healed {p['amount']}."
+        return f"Minion {_minion_name(g, p['minion'])} healed {p['amount']}."
     if k == "PlayerHealed":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} healed {p['amount']}."
@@ -148,11 +180,11 @@ def format_event(e, g, skip=False) -> str:
         # you already store the name in the payload
         return f"{p.get('name','A minion')} died."
     if k == "Buff":
-        return f"Minion {p['minion']} buffed (+{p.get('attack_delta',0)}/+{p.get('health_delta',0)})."
+        return f"Minion {_minion_name(g, p['minion'])} buffed (+{p.get('attack_delta',0)}/+{p.get('health_delta',0)})."
     if k == "BuffKeyword":
-        return f"Minion {p['minion']} gained {p.get('keyword','a keyword')}."
+        return f"Minion {_minion_name(g, p['minion'])} gained {p.get('keyword','a keyword')}."
     if k == "Silenced":
-        return f"Minion {p['minion']} was silenced."
+        return f"Minion {_minion_name(g, p['minion'])} was silenced."
     if k == "GainMana":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} gained {p.get('temp',1)} temporary mana."
@@ -178,9 +210,13 @@ def log_events(ev_list, g):
 
 
 # --------- Randomized starter deck ----------
+def select_random_hero(hero_db):
+    return random.choice(list(hero_db.values()))
+
+
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
-
+    
     # What you'd *like* to include:
     desired = [
         # 1-cost
@@ -197,8 +233,6 @@ def make_starter_deck(db, seed=None):
         "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
     ]
-
-    #desired = ["LEGENDARY_LEROY_JENKINS"]  * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -231,9 +265,15 @@ def make_starter_deck(db, seed=None):
     return deck[:30]
 
 # Build DB + deck
-db = load_cards_from_json("cards.json")
+db      = load_cards_from_json("cards.json")
+hero_db = load_heros_from_json("heroes.json")
+
+HERO_PLAYER = select_random_hero(hero_db)
+HERO_AI     = select_random_hero(hero_db)
+
 STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
-STARTER_DECK_AI = make_starter_deck(db, random.randint(1, 50000))
+STARTER_DECK_AI     = make_starter_deck(db, random.randint(1, 50000))
+
 
 # ---------- Drawing helpers (reworked cards) ----------
 
@@ -264,6 +304,76 @@ def draw_action_log():
                 return
             screen.blit(surf, (x, y))
             y += surf.get_height() + 2
+
+def keyword_explanations_for_card(card_obj) -> List[str]:
+    tips = []
+    kws = set(getattr(card_obj, "keywords", []) or [])
+    # Some cards have battlecry but not the literal keyword in JSON:
+    if getattr(card_obj, "battlecry", None):
+        kws.add("Battlecry")
+    if getattr(card_obj, "on_cast", None) and card_obj.type == "MINION":
+        kws.add("Battlecry")
+
+    for k in ["Battlecry","Deathrattle","Taunt","Rush","Charge","Silence"]:
+        if k in kws:
+            tips.append(f"{k}: {KEYWORD_HELP[k]}")
+    return tips
+
+def keyword_explanations_for_minion(m) -> List[str]:
+    tips = []
+    if getattr(m, "silenced", False):
+        tips.append(f"Silence: {KEYWORD_HELP['Silence']}")
+    else:
+        if m.taunt:  tips.append(f"Taunt: {KEYWORD_HELP['Taunt']}")
+        if m.rush:   tips.append(f"Rush: {KEYWORD_HELP['Rush']}")
+        if m.charge: tips.append(f"Charge: {KEYWORD_HELP['Charge']}")
+        if getattr(m, "deathrattle", None):
+            tips.append(f"Deathrattle: {KEYWORD_HELP['Deathrattle']}")
+    return tips
+
+def draw_keyword_help_panel(anchor_rect: pygame.Rect, lines: List[str], side: str = "right"):
+    if not lines: return
+    pad = 10
+    max_w = 320
+    # position panel
+    if side == "right":
+        px = min(W - max_w - 12, anchor_rect.right + 12)
+    else:
+        px = max(12, anchor_rect.left - max_w - 12)
+    py = max(12, anchor_rect.top)
+
+    # measure height
+    wrapped = []
+    for ln in lines:
+        wrapped += wrap_text(ln, RULE_FONT, max_w - pad*2)
+    ph = 8 + sum(RULE_FONT.size(w)[1] + 4 for w in wrapped) + 40
+
+    panel = pygame.Rect(px, py, max_w, ph)
+    pygame.draw.rect(screen, (26, 32, 40), panel, border_radius=10)
+    pygame.draw.rect(screen, (60, 90, 130), panel, 1, border_radius=10)
+
+    y = panel.y + 8
+    title = FONT.render("Keywords", True, LOG_ACCENT)
+    screen.blit(title, (panel.x + pad, y))
+    y += title.get_height() + 4
+    for w in wrapped:
+        surf = RULE_FONT.render(w, True, WHITE)
+        screen.blit(surf, (panel.x + pad, y))
+        y += surf.get_height() + 4
+
+# ui file
+def draw_silence_overlay(r: pygame.Rect):
+    # diagonal ribbon across the card
+    s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+    pygame.draw.polygon(
+        s, (100, 80, 150, 180),  # semi-transparent purple
+        [( -10, r.h*0.35), (r.w+10, r.h*0.10), (r.w+10, r.h*0.25), (-10, r.h*0.50)]
+    )
+    # text
+    lbl = BIG.render("SILENCED", True, (240, 235, 255))
+    s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.23))))
+    screen.blit(s, (r.x, r.y))
+
 
 def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
     """Green-glow condition for cards in hand."""
@@ -373,22 +483,30 @@ def draw_text_box(r: pygame.Rect, text: str, max_lines: int, font=RULE_FONT):
         screen.blit(surf, (box.x+6, y))
         y += surf.get_height() + 2
 
-def draw_minion_stats(r: pygame.Rect, attack: int, health: int, max_health: int):
+def draw_minion_stats(r: pygame.Rect, attack: int, health: int,
+                      max_health: int, *, base_attack: int, base_health: int):
     # Attack bottom-left
     atk_rect = pygame.Rect(r.x + 10, r.bottom - 28, 28, 22)
     pygame.draw.rect(screen, (40, 35, 25), atk_rect, border_radius=6)
-    ta = FONT.render(str(attack), True, ATTK_COLOR)
+    atk_col = (60, 200, 90) if attack > base_attack else ATTK_COLOR  # green if buffed
+    ta = FONT.render(str(attack), True, atk_col)
     screen.blit(ta, ta.get_rect(center=atk_rect.center))
+
     # Health bottom-right
     hp_rect = pygame.Rect(r.right - 38, r.bottom - 28, 28, 22)
     pygame.draw.rect(screen, (40, 35, 35), hp_rect, border_radius=6)
-    hp_col = HP_HURT if health < max_health else HP_OK
+    if health < max_health:
+        hp_col = HP_HURT
+    elif max_health > base_health:
+        hp_col = (60, 200, 90)  # green only when at full *and* buffed
+    else:
+        hp_col = HP_OK
     th = FONT.render(str(health), True, hp_col)
     screen.blit(th, th.get_rect(center=hp_rect.center))
 
+
 def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool):
     pygame.draw.rect(screen, color_bg, r, border_radius=12)
-    rarity_to_draw = None
 
     if card_obj:
         draw_cost_gem(r, card_obj.cost)
@@ -413,7 +531,10 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         draw_name_footer(r, card_obj.name)
         draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"))
         if card_obj.type == "MINION":
-            draw_minion_stats(r, card_obj.attack, card_obj.health, card_obj.health)
+            draw_minion_stats(
+                r, card_obj.attack, card_obj.health, card_obj.health,
+                base_attack=card_obj.attack, base_health=card_obj.health
+            )
 
     elif minion_obj:
         draw_cost_gem(r, getattr(minion_obj, "cost", 0))
@@ -423,6 +544,7 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         if getattr(minion_obj, "taunt", False):  kws.append("Taunt")
         if getattr(minion_obj, "charge", False): kws.append("Charge")
         if getattr(minion_obj, "rush", False):   kws.append("Rush")
+
         header = " / ".join(kws)
 
         body = (getattr(minion_obj, "base_text", "") or "").strip()
@@ -438,8 +560,16 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         # Bottom UI
         draw_name_footer(r, minion_obj.name)
         draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"))
-        draw_minion_stats(r, minion_obj.attack, minion_obj.health, minion_obj.max_health)
-
+        draw_minion_stats(
+            r,
+            minion_obj.attack,
+            minion_obj.health,
+            minion_obj.max_health,
+            base_attack=getattr(minion_obj, "base_attack", minion_obj.attack),
+            base_health=getattr(minion_obj, "base_health", minion_obj.max_health),
+        )
+    if getattr(minion_obj, "silenced", False):
+        draw_silence_overlay(r)
 
 def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
     if taunt: pygame.draw.rect(screen, GREY, r, 3, border_radius=10)
@@ -463,7 +593,8 @@ def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
 
 def layout_board(g: Game) -> Dict[str, Any]:
     hot = {"hand": [], "my_minions": [], "enemy_minions": [], "end_turn": None,
-           "face_enemy": None, "face_me": None}
+           "face_enemy": None, "face_me": None,
+           "hp_enemy": None, "hp_me": None}   # NEW
 
     # Enemy row
     for m, r in zip(g.players[1].board, _centered_row_rects(len(g.players[1].board), ROW_Y_ENEMY)):
@@ -485,27 +616,32 @@ def layout_board(g: Game) -> Dict[str, Any]:
     face_me_y = min(face_me_y, max_face_me_y)
     hot["face_me"] = pygame.Rect(W//2 - 100, face_me_y, 200, 52)
 
+    hot["hp_enemy"] = pygame.Rect(hot["face_enemy"].right + 10, hot["face_enemy"].y, 140, 52)
+    hot["hp_me"]    = pygame.Rect(hot["face_me"].right + 10,    hot["face_me"].y,    140, 52)
     # End turn
     hot["end_turn"] = pygame.Rect(W - 170, H - 70, 150, 50)
     return hot
 
 def scale_rect_about_center(r: pygame.Rect, s: float, lift: int = 0) -> pygame.Rect:
-    w, h = int(r.w * s * 1.2), int(r.h * s * 1.2)
+    w, h = int(r.w * s * 1.2), int(r.h * s)
     cx, cy = r.centerx, r.centery - lift * 1.5
     return pygame.Rect(cx - w // 2, cy - h // 2, w, h)
 
 def hand_hover_index(hot, mx, my) -> Optional[int]:
     """Return the hand index under the mouse (consider a slightly enlarged hitbox)."""
     for i, cid, r in hot["hand"]:
-        hit = scale_rect_about_center(r, 1.10, HOVER_LIFT // 2)  # generous hit area
+        hit = scale_rect_about_center(r, 1.10, 0)  # generous hit area
         if hit.collidepoint(mx, my):
             return i
     return None
 
 
 def draw_headers(g: Game):
-    centered_text(f"AI — HP:{g.players[1].health}  Hand:{len(g.players[1].hand)}  Mana:{g.players[1].mana}/{g.players[1].max_mana}", 24)
-    centered_text(f"You — HP:{g.players[0].health}  Hand:{len(g.players[0].hand)}  Mana:{g.players[0].mana}/{g.players[0].max_mana}", H - 10)  # was H - 24
+    ai = g.players[1]; me = g.players[0]
+    ai_armor = f" +{ai.armor}🛡" if ai.armor > 0 else ""
+    me_armor = f" +{me.armor}🛡" if me.armor > 0 else ""
+    centered_text(f"AI — {hero_name(ai.hero)} — HP:{ai.health}{ai_armor}  Hand:{len(ai.hand)}  Mana:{ai.mana}/{ai.max_mana}", 24)
+    centered_text(f"You — {hero_name(me.hero)} — HP:{me.health}{me_armor}  Hand:{len(me.hand)}  Mana:{me.mana}/{me.max_mana}", H - 10)
 
 def minion_ready_to_act(g: Game, m) -> bool:
     if m.has_attacked_this_turn or m.attack <= 0:
@@ -565,6 +701,41 @@ def targets_for_spell(g: Game, cid: str):
     # Non-targeted by default
     return set(), set(), False, False
 
+def can_use_hero_power(g: Game, pid: int) -> bool:
+    p = g.players[pid]
+    cost = getattr(p.hero.power, "cost", 2)
+    if p.mana < cost or p.hero_power_used_this_turn: return False
+    # Example: Paladin still needs board space
+    if p.hero.id.upper() == "PALADIN" and len(p.board) >= 7: return False
+    return True
+
+def targets_for_hero_power(g: Game, pid: int):
+    """
+    Return (enemy_min_ids, my_min_ids, enemy_face_ok, my_face_ok)
+    Based on hero.power.targeting
+    """
+    h = g.players[pid].hero
+    spec = h.power.targeting.lower()
+    opp = 1 - pid
+
+    enemy_min = set(m.id for m in g.players[opp].board if m.is_alive())
+    my_min    = set(m.id for m in g.players[pid].board if m.is_alive())
+
+    if spec == "none":
+        return set(), set(), False, False
+    if spec == "enemy_face":
+        return set(), set(), True, False    
+    if spec == "any_character":
+        return enemy_min, my_min, True, True
+    if spec == "friendly_character":
+        return set(), my_min, False, True
+    if spec == "enemy_minion":
+        return enemy_min, set(), False, False
+    if spec == "friendly_minion":
+        return set(), my_min, False, False
+    # fallback: no targeting
+    return set(), set(), False, False
+
 def legal_attack_targets(g: Game, attacker_id: int):
     minfo = g.find_minion(attacker_id)
     if not minfo:
@@ -604,6 +775,22 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     screen.blit(FONT.render("Enemy Face", True, WHITE), (hot["face_enemy"].x+44, hot["face_enemy"].y+16))
     pygame.draw.rect(screen, (73, 158, 93), hot["face_me"],    border_radius=10)
     screen.blit(FONT.render("Your Face", True, WHITE), (hot["face_me"].x+54, hot["face_me"].y+16))
+
+    # Hero Power buttons
+    me = g.players[0]; ai = g.players[1]
+    # Enemy button (display only; AI clicks programmatically)
+    hp_en = hot["hp_enemy"]; col_en = HERO_COLORS.get(ai.hero.id.upper(), (100,100,100))
+    pygame.draw.rect(screen, col_en, hp_en, border_radius=10)
+    cap = FONT.render(f"{hero_name(ai.hero)} Power", True, WHITE)
+    screen.blit(cap, cap.get_rect(center=hp_en.center))
+
+    # My button (clickable if can use)
+    hp_me = hot["hp_me"]; col_me = HERO_COLORS.get(me.hero.id.upper(), (100,100,100))
+    usable = (g.active_player == 0) and can_use_hero_power(g, 0)
+    bg = col_me if usable else (60,60,60)
+    pygame.draw.rect(screen, bg, hp_me, border_radius=10)
+    cap2 = FONT.render(f"{hero_name(me.hero)} Power ({getattr(me.hero.power, 'cost', 2)})", True, WHITE)
+    screen.blit(cap2, cap2.get_rect(center=hp_me.center))
 
     # Enemy minions
     for mid, r in hot["enemy_minions"]:
@@ -664,6 +851,10 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
             glow = rz.inflate(14, 14)
             pygame.draw.rect(screen, (255, 255, 255), glow, 6, border_radius=18)
             draw_card_frame(rz, CARD_BG_HAND, card_obj=c, in_hand=True)
+
+            lines = keyword_explanations_for_card(c)
+            draw_keyword_help_panel(rz, lines, side="right")
+
             if g.active_player == 0 and card_is_playable_now(g, 0, cid0):
                 pygame.draw.rect(screen, GREEN, rz.inflate(12, 12), 4, border_radius=18)
 
@@ -711,6 +902,9 @@ def draw_card_inspector_for_minion(g: Game, minion_id: int):
     pygame.draw.rect(screen, (24, 28, 34), R, border_radius=16)
     # Draw the card using your existing frame renderer
     draw_card_frame(R, CARD_BG_HAND, card_obj=vc, in_hand=True)
+
+    lines = keyword_explanations_for_minion(m)
+    draw_keyword_help_panel(R, lines, side="right")
 
     # Small hint
     hint = RULE_FONT.render("Right-click to close", True, WHITE)
@@ -860,10 +1054,11 @@ GLOBAL_GAME: Game
 
 def start_game() -> Game:
     ANIMS.push(AnimStep("start_game", 1500, {}))
-    g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy())
+    g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy(),
+             heroes=(HERO_PLAYER, HERO_AI))
     ev = g.start_game()
     apply_post_summon_hooks(g, ev)
-    log_events(ev, g)  # <—
+    log_events(ev, g)
     return g
 
 def main():
@@ -874,11 +1069,13 @@ def main():
 
     selected_attacker: Optional[int] = None
     waiting_target_for_play: Optional[Tuple[int, str, pygame.Rect]] = None
+    waiting_target_for_power: Optional[int] = None  # holds pid (0 only for UI)
     hilite_enemy_min: set = set()
     hilite_my_min: set = set()
     hilite_enemy_face: bool = False
     hilite_my_face: bool = False
     inspected_minion_id: Optional[int] = None
+    
     
     RUNNING = True
     while RUNNING:
@@ -926,6 +1123,39 @@ def main():
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
+                    # 0) Try using hero power if affordable & sensible
+                    try:
+                        if g.players[1].mana >= 2 and not g.players[1].hero_power_used_this_turn:
+                            h = g.players[1].hero.id.upper()
+                            if h == "HUNTER":
+                                ev = g.use_hero_power(1)  # face shot
+                                log_events(ev, g)
+                                post = layout_board(g)
+                                enqueue_flash(my_face_rect(post))
+                            elif h == "WARRIOR":
+                                ev = g.use_hero_power(1)
+                                log_events(ev, g)
+                            elif h == "WARLOCK":
+                                ev = g.use_hero_power(1)
+                                log_events(ev, g)
+                            elif h == "PALADIN" and len(g.players[1].board) < 7:
+                                ev = g.use_hero_power(1)
+                                log_events(ev, g)
+                            elif h == "MAGE":
+                                # prefer pinging a 1HP enemy minion, else face
+                                candidates = [m for m in g.players[0].board if m.is_alive() and m.health <= 1]
+                                if candidates:
+                                    ev = g.use_hero_power(1, target_minion=candidates[0].id)
+                                    log_events(ev, g)
+                                    post = layout_board(g)
+                                    for mid, r in post["my_minions"]:
+                                        if mid == candidates[0].id: enqueue_flash(r); break
+                                else:
+                                    ev = g.use_hero_power(1, target_player=0)
+                                    log_events(ev, g)
+                                    enqueue_flash(my_face_rect(layout_board(g)))
+                    except IllegalAction:
+                        pass
                     act, _ = pick_best_action(g, 1)
                     kind = act[0]
                     if kind == 'end':
@@ -1026,6 +1256,69 @@ def main():
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
 
+                    # If selecting target for a HERO POWER (Mage)
+                    if waiting_target_for_power is not None:
+                        pid_power = waiting_target_for_power  # 0
+                        e_min, m_min, e_face, m_face = targets_for_hero_power(g, pid_power)
+
+                        # Enemy face?
+                        if e_face and enemy_face_rect(hot).collidepoint(mx, my):
+                            try:
+                                ev = g.use_hero_power(0, target_player=1)
+                                log_events(ev, g)
+                                enqueue_flash(enemy_face_rect(layout_board(g)))
+                            except IllegalAction:
+                                pass
+                            waiting_target_for_power = None
+                            hilite_enemy_min.clear(); hilite_my_min.clear()
+                            hilite_enemy_face = False; hilite_my_face = False
+                            continue
+
+                        # My face?
+                        if m_face and my_face_rect(hot).collidepoint(mx, my):
+                            try:
+                                ev = g.use_hero_power(0, target_player=0)
+                                log_events(ev, g)
+                                enqueue_flash(my_face_rect(layout_board(g)))
+                            except IllegalAction:
+                                pass
+                            waiting_target_for_power = None
+                            hilite_enemy_min.clear(); hilite_my_min.clear()
+                            hilite_enemy_face = False; hilite_my_face = False
+                            continue
+
+                        # Enemy minion?
+                        for mid, r in hot["enemy_minions"]:
+                            if r.collidepoint(mx, my) and mid in e_min:
+                                try:
+                                    ev = g.use_hero_power(0, target_minion=mid)
+                                    log_events(ev, g)
+                                    enqueue_flash(r)
+                                except IllegalAction:
+                                    pass
+                                waiting_target_for_power = None
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
+                                break
+                        else:
+                            # My minion?
+                            did = False
+                            for mid, r in hot["my_minions"]:
+                                if r.collidepoint(mx, my) and mid in m_min:
+                                    try:
+                                        ev = g.use_hero_power(0, target_minion=mid)
+                                        log_events(ev, g)
+                                        enqueue_flash(r)
+                                    except IllegalAction:
+                                        pass
+                                    waiting_target_for_power = None
+                                    hilite_enemy_min.clear(); hilite_my_min.clear()
+                                    hilite_enemy_face = False; hilite_my_face = False
+                                    did = True
+                                    break
+                            if did:
+                                continue
+
                     # If selecting target for a spell
                     if waiting_target_for_play is not None:
                         idx, cid, src_rect = waiting_target_for_play
@@ -1112,6 +1405,29 @@ def main():
                                 hilite_enemy_face = False; hilite_my_face = False
                                 break
                         continue
+                    
+                    # Click hero power button
+                    if hot["hp_me"].collidepoint(mx, my) and g.active_player == 0 and can_use_hero_power(g, 0):
+                        spec = g.players[0].hero.power.targeting.lower()
+                        if spec in ("none", "enemy_face"):  # immediate or auto-resolved
+                            try:
+                                # enemy_face doesn't need an explicit target; engine resolves via POV
+                                ev = g.use_hero_power(0)
+                                log_events(ev, g)
+                                post = layout_board(g)
+                                if spec == "enemy_face":
+                                    enqueue_flash(enemy_face_rect(post))
+                            except IllegalAction:
+                                pass
+                        else:
+                            # enter targeting mode
+                            waiting_target_for_power = 0
+                            e_min, m_min, e_face, m_face = targets_for_hero_power(g, 0)
+                            hilite_enemy_min = set(e_min)
+                            hilite_my_min = set(m_min)
+                            hilite_enemy_face = e_face
+                            hilite_my_face = m_face
+                        continue
 
                     # Click hand to play
                     clicked_hand = False
@@ -1190,13 +1506,16 @@ def main():
                     mx, my = event.pos
 
                     # Priority: cancel selection if any
-                    if selected_attacker is not None or waiting_target_for_play is not None:
+
+                    if selected_attacker is not None or waiting_target_for_play is not None or waiting_target_for_power is not None:
                         selected_attacker = None
                         waiting_target_for_play = None
+                        waiting_target_for_power = None
                         hilite_enemy_min.clear(); hilite_my_min.clear()
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
-
+                    
+                    
                     # Toggle inspector
                     if inspected_minion_id is not None:
                         inspected_minion_id = None

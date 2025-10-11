@@ -25,6 +25,22 @@ class Event:
 # ---------------------- Entities ----------------------
 
 @dataclass
+class HeroPower:
+    name: str
+    text: str
+    cost: int = 2
+    targeting: str = "none"  # "none", "any_character", "enemy_face", "friendly_character",
+                             # "enemy_minion", "friendly_minion"
+    # We keep raw JSON spec; compile into a callable on demand using the cards.json tokens
+    effects_spec: List[Dict[str, Any]] = field(default_factory=list)
+
+@dataclass
+class Hero:
+    id: str             # canonical id, e.g. "MAGE"
+    name: str           # friendly display, e.g. "Mage"
+    power: HeroPower
+
+@dataclass
 class Minion:
     id: int
     owner: int
@@ -37,6 +53,7 @@ class Minion:
     rush: bool = False
     can_attack: bool = False
     exhausted: bool = True
+    silenced: bool = False
     deathrattle: Optional[Callable[['Game','Minion'], List[Event]]] = None
     # internal flags
     has_attacked_this_turn: bool = False
@@ -84,6 +101,8 @@ class PlayerState:
     max_mana: int = 0
     mana: int = 0
     fatigue: int = 0
+    hero: Hero = None   
+    hero_power_used_this_turn: bool = False
 
     def draw(self, g:'Game', n:int=1) -> List[Event]:
         ev: List[Event] = []
@@ -108,9 +127,16 @@ class IllegalAction(Exception):
     pass
 
 class Game:
-    def __init__(self, cards_db: Dict[str, Card], p0_deck: List[str], p1_deck: List[str], seed: Optional[int] = None):
+    def __init__(self, cards_db: Dict[str, Card], p0_deck: List[str], p1_deck: List[str],
+                 seed: Optional[int] = None,
+                 heroes: Tuple[Hero, Hero] = None):
         self.cards_db = cards_db
         self.players = [PlayerState(0, list(p0_deck)), PlayerState(1, list(p1_deck))]
+        # Expect Hero objects
+        if heroes is None:
+            raise ValueError("Game requires (Hero, Hero)")
+        self.players[0].hero = heroes[0]
+        self.players[1].hero = heroes[1]
         self.active_player = 0
         self.turn = 0
         if seed is None:
@@ -194,6 +220,7 @@ class Game:
         turn_number = self.turn if pid == 0 else max(1, self.turn)
         p.max_mana = min(10, p.max_mana + 1)
         p.mana = p.max_mana
+        p.hero_power_used_this_turn = False
         for m in p.board:
             m.exhausted = False
             m.has_attacked_this_turn = False
@@ -213,6 +240,75 @@ class Game:
         return ev
 
     # ---------- Commands ----------
+    def use_hero_power(self, pid:int,
+                       target_player:Optional[int]=None,
+                       target_minion:Optional[int]=None) -> List[Event]:
+        if pid != self.active_player:
+            raise IllegalAction("Not your turn")
+        p = self.players[pid]
+        hero = p.hero
+        if hero is None:
+            raise IllegalAction("No hero")
+        if p.hero_power_used_this_turn:
+            raise IllegalAction("Hero power already used")
+        if p.mana < hero.power.cost:
+            raise IllegalAction("Not enough mana for hero power")
+
+        # Validate targeting by hero.power.targeting
+        targ = hero.power.targeting
+        needs_target = targ in ("any_character", "enemy_minion", "friendly_minion",
+                                "friendly_character", "enemy_character")
+        runtime_target: Optional[int] = None  # int => minionId or playerId
+
+        if needs_target:
+            # We accept either (target_minion) or (target_player)
+            if target_minion is not None:
+                loc = self.find_minion(target_minion)
+                if not loc:
+                    raise IllegalAction("Target minion not found")
+                # scope checking
+                tpid, _, _ = loc
+                if targ == "enemy_minion" and tpid == pid:
+                    raise IllegalAction("Must target enemy minion")
+                if targ == "friendly_minion" and tpid != pid:
+                    raise IllegalAction("Must target friendly minion")
+                runtime_target = target_minion
+            elif target_player in (0, 1):
+                if targ == "enemy_minion" or targ == "friendly_minion":
+                    raise IllegalAction("This power requires a minion target")
+                if targ == "friendly_character" and target_player != pid:
+                    raise IllegalAction("Must target friendly character")
+                if targ in ("enemy_character",) and target_player == pid:
+                    raise IllegalAction("Must target enemy character")
+                runtime_target = target_player
+            else:
+                raise IllegalAction("Hero power needs a target")
+        else:
+            # If the power declares "enemy_face", UI passes none; effect spec can infer POV
+            if targ == "enemy_face":
+                runtime_target = None  # effect spec resolves using owner POV
+            else:
+                runtime_target = None
+
+        # Pay + mark used + log
+        p.mana -= hero.power.cost
+        p.hero_power_used_this_turn = True
+        ev: List[Event] = [Event("HeroPowerUsed", {"player": pid, "hero": hero.id})]
+
+        # Build a lightweight "source" carrying owner + display name
+        class _HPSource: pass
+        src = _HPSource()
+        src.owner = pid
+        src.name = hero.power.name
+
+        # Compile & run effects (on demand)
+        impl = _compile_effects_for_heroes(hero.power.effects_spec, self.cards_db)
+        ev += impl(self, src, runtime_target)
+
+        self.history += ev
+        return ev
+
+
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
@@ -328,9 +424,50 @@ class Game:
         self.history += ev
         return ev
 
+def _ev_hero_power(pid, hero_name):
+    return Event("HeroPowerUsed", {"player": pid, "hero": hero_name})
+
+def _ev_armor(pid, amount):
+    return Event("ArmorGained", {"player": pid, "amount": amount})
+
+_SILVER_HAND_RECRUIT_SPEC = {
+    "id": "SILVER_HAND_RECRUIT_TOKEN",
+    "name": "Silver Hand Recruit",
+    "type": "MINION",
+    "cost": 1, "attack": 1, "health": 1,
+    "rarity": "Common",
+    "keywords": []
+}
+
 # ---------------------- Card Scripts ----------------------
 
 # ---- Effect factories ----
+
+def _fx_gain_armor(params):
+    amt = int(params.get("amount", 0))
+    t_spec = params.get("target")  # optional: "self"/"friendly_face"/"enemy_face"
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        # Resolve player to receive armor
+        if isinstance(target, int):
+            pid = target
+        else:
+            pid = owner
+            if t_spec:
+                s = str(t_spec).lower()
+                if s in ("self", "self_face", "friendly", "friendly_face", "ally_face"):
+                    pid = owner
+                elif s in ("enemy", "enemy_face", "opponent", "opponent_face"):
+                    pid = g.other(owner)
+
+        p = g.players[pid]
+        p.armor += amt
+        return [Event("ArmorGained", {"player": pid, "amount": amt})]
+    return run
+
+
 def _fx_add_keyword(params):
     kw = params["keyword"].lower()
     def run(g, source_obj, target):
@@ -346,21 +483,42 @@ def _fx_add_keyword(params):
 
 def _fx_deal_damage(params):
     n = int(params["amount"])
+    t_spec = params.get("target")
+
     def run(g, source_obj, target):
-        name = getattr(source_obj, "name", "Effect")
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)  # <- POV anchor
         ev = []
+
+        # 1) If a concrete runtime target was provided (e.g., targeted spells), honor it.
         if isinstance(target, int):
             loc = g.find_minion(target)
             if loc:
                 _, _, m = loc
                 ev += g.deal_damage_to_minion(m, n, source=name)
             else:
-                pid = target
+                pid = target  # assume player id 0/1
                 ev += g.deal_damage_to_player(pid, n, source=name)
-        else:
-            opp = g.other(g.active_player)
-            ev += g.deal_damage_to_player(opp, n, source=name)
+            return ev
+
+        # 2) If the params declare a semantic target (like "enemy_face"), resolve from OWNER's POV.
+        if t_spec:
+            s = str(t_spec).lower()
+            if s in ("enemy_face", "opponent_face", "enemy_hero", "opponent_hero"):
+                pid = g.other(owner)
+                ev += g.deal_damage_to_player(pid, n, source=name)
+                return ev
+            if s in ("friendly_face", "ally_face", "self_face", "friendly_hero", "self_hero"):
+                ev += g.deal_damage_to_player(owner, n, source=name)
+                return ev
+            # You can extend here for other patterns later (enemy_random_minion, etc.)
+            # For unknown spec, fall through to default owner-based enemy face.
+
+        # 3) Fallback: treat as "enemy_face" relative to OWNER (keeps spells working too).
+        opp = g.other(owner)
+        ev += g.deal_damage_to_player(opp, n, source=name)
         return ev
+
     return run
 
 def _fx_heal(params):
@@ -480,6 +638,7 @@ def _fx_silence(params):
         _,_,m = loc
         m.taunt = m.charge = m.rush = False
         m.deathrattle = None
+        m.silenced = True           
         return [Event("Silenced", {"minion": m.id})]
     return run
 
@@ -599,11 +758,17 @@ def _effect_factory(name, params, json_tokens):
         "add_keyword":        _fx_add_keyword,
         "summon":             lambda p: _fx_summon(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
+        "gain_armor":         _fx_gain_armor,
     }
     if name not in table:
         raise ValueError(f"Unknown effect: {name}")
     fn_or_factory = table[name]
     return fn_or_factory(params)
+
+def _compile_effects_for_heroes(effects_spec, cards_db):
+    tokens = cards_db.get("_TOKENS", {})
+    return _compile_effects(effects_spec, tokens)
+
 
 def _compile_effects(effects_spec, json_tokens):
     """effects_spec is a list of {effect: 'name', ...params} dicts.
@@ -618,6 +783,44 @@ def _compile_effects(effects_spec, json_tokens):
             ev += fn(g, src_obj, target)
         return ev
     return run_all
+
+def load_heros_from_json(path: str) -> Dict[str, Hero]:
+    """
+    heroes.json format (flexible, but this is recommended):
+    {
+      "heroes": [
+        {
+          "id": "MAGE",
+          "name": "Mage",
+          "power": {
+            "name": "Fireblast",
+            "text": "Deal 1 damage.",
+            "cost": 2,
+            "targeting": "any_character",
+            "effects": [
+              {"effect":"deal_damage","amount":1}
+            ]
+          }
+        },
+        ...
+      ]
+    }
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    db: Dict[str, Hero] = {}
+    for h in raw.get("heroes", []):
+        pid  = str(h.get("id", "")).upper()
+        name = h.get("name") or pid.capitalize()
+        pwr  = h.get("power", {}) or {}
+        hp = HeroPower(
+            name=pwr.get("name", "Hero Power"),
+            text=pwr.get("text", ""),
+            cost=int(pwr.get("cost", 2)),
+            targeting=str(pwr.get("targeting", "none")).lower(),
+            effects_spec=list(pwr.get("effects", [])),
+        )
+        db[pid] = Hero(id=pid, name=name, power=hp)
+    return db
 
 def load_cards_from_json(path: str) -> Dict[str, Card]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -666,7 +869,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
                     return _dr_inner(g2, m2, None)
                 m.deathrattle = _dr
                 break
-
+    
+    db["_TOKENS"] = tokens  # expose raw token specs for other compilers (heroes)
     db["_POST_SUMMON_HOOK"] = _post_summon
     db["_TARGETING"] = targeting  # (optional) UI can use this to highlight targets
     return db

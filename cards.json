@@ -459,6 +459,7 @@
                     "target": "any_minion"
                 }
             ],
+            "keywords": ["Silence"],
             "targeting": "any_minion"
         },
         {
