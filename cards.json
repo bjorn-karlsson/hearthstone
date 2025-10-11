@@ -1,0 +1,546 @@
+{
+    "tokens": {
+        "WISP": {
+            "name": "Wisp",
+            "type": "MINION",
+            "cost": 0,
+            "attack": 1,
+            "health": 1
+        },
+        "WHELP": {
+            "name": "Whelp",
+            "type": "MINION",
+            "cost": 0,
+            "attack": 1,
+            "health": 1
+        },
+        "SHEEP_1_1": {
+            "name": "Sheep",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 1
+        },
+        "NERUBIAN_4_4": {
+            "name": "Nerubian",
+            "type": "MINION",
+            "cost": 4,
+            "attack": 4,
+            "health": 4
+        },
+        "DAMAGED_GOLEM": {
+            "name": "Damaged Golem",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 2,
+            "health": 1
+        },
+        "SPIRIT_WOLF": {
+            "name": "Spirit Wolf",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "keywords": [
+                "Taunt"
+            ]
+        }
+    },
+    "cards": [
+        {
+            "id": "CHARGING_BOAR",
+            "name": "Charging Boar",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "keywords": [
+                "Charge"
+            ],
+            "text": "Charge."
+        },
+        {
+            "id": "GIVE_TAUNT",
+            "name": "Shield Up",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Give a minion Taunt.",
+            "effects": [
+                {
+                    "when": "on_cast",
+                    "fn": "add_keyword",
+                    "keyword": "Taunt",
+                    "target": "FRIENDLY_MINION"
+                }
+            ]
+        },
+        {
+            "id": "RUSHER",
+            "name": "Arena Rusher",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 1,
+            "keywords": [
+                "Rush"
+            ],
+            "text": "Rush."
+        },
+        {
+            "id": "TAUNT_BEAR",
+            "name": "Stoneshell Bear",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 3,
+            "health": 4,
+            "keywords": [
+                "Taunt"
+            ],
+            "text": "Taunt."
+        },
+        {
+            "id": "CHARGE_RUSH_2_2",
+            "name": "Stormrunner",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 2,
+            "health": 2,
+            "keywords": [
+                "Charge",
+                "Rush"
+            ],
+            "text": "Charge, Rush."
+        },
+        {
+            "id": "MUSTER_FOR_BATTLE_LITE",
+            "name": "Muster for Battle (Lite)",
+            "type": "SPELL",
+            "cost": 3,
+            "text": "Summon three 1/1 Recruits.",
+            "effects": [
+                {
+                    "when": "on_cast",
+                    "fn": "summon",
+                    "card_id": "SILVER_HAND_RECRUIT_TOKEN",
+                    "count": 3,
+                    "side": "FRIENDLY"
+                }
+            ]
+        },
+        {
+            "id": "GIVE_CHARGE",
+            "name": "Battle Drums",
+            "type": "SPELL",
+            "cost": 2,
+            "text": "Give a minion Charge.",
+            "effects": [
+                {
+                    "when": "on_cast",
+                    "fn": "add_keyword",
+                    "keyword": "Charge",
+                    "target": "FRIENDLY_MINION"
+                }
+            ]
+        },
+        {
+            "id": "GIVE_RUSH",
+            "name": "Quick March",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Give a minion Rush.",
+            "effects": [
+                {
+                    "when": "on_cast",
+                    "fn": "add_keyword",
+                    "keyword": "Rush",
+                    "target": "FRIENDLY_MINION"
+                }
+            ]
+        },
+        {
+            "id": "SILVER_HAND_RECRUIT_TOKEN",
+            "name": "Silver Hand Recruit",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "keywords": [],
+            "text": ""
+        },
+        {
+            "id": "THE_COIN",
+            "name": "The Coin",
+            "type": "SPELL",
+            "cost": 0,
+            "text": "+1 mana this turn.",
+            "on_cast": [
+                {
+                    "effect": "gain_temp_mana",
+                    "amount": 1
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "WOLFRIDER",
+            "name": "Wolfrider",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 3,
+            "health": 1,
+            "keywords": [
+                "Charge"
+            ],
+            "text": "Charge"
+        },
+        {
+            "id": "SHIELD_BEARER",
+            "name": "Shieldbearer",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 0,
+            "health": 4,
+            "keywords": [
+                "Taunt"
+            ],
+            "text": "Taunt"
+        },
+        {
+            "id": "EARTHEN_RING",
+            "name": "Earthen Ring Farseer",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 3,
+            "health": 3,
+            "text": "Battlecry: Restore 3 Health.",
+            "battlecry": [
+                {
+                    "effect": "heal",
+                    "amount": 3,
+                    "target": "any_character"
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
+            "id": "KOBOLD_PING",
+            "name": "Kobold Pinger",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "text": "Battlecry: Deal 1 damage.",
+            "battlecry": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 1,
+                    "target": "enemy_character"
+                }
+            ],
+            "targeting": "enemy_character"
+        },
+        {
+            "id": "KOBOLD_BLASTER",
+            "name": "Kobold Blaster",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 2,
+            "health": 3,
+            "text": "Battlecry: Deal 2 damage.",
+            "battlecry": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 2,
+                    "target": "enemy_character"
+                }
+            ],
+            "targeting": "enemy_character"
+        },
+        {
+            "id": "LEPER_GNOME",
+            "name": "Leper Gnome",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 2,
+            "health": 1,
+            "text": "Deathrattle: Deal 2 damage to the enemy hero.",
+            "deathrattle": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 2,
+                    "target": "enemy_face"
+                }
+            ]
+        },
+        {
+            "id": "HARVEST_GOLEM",
+            "name": "Harvest Golem",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 2,
+            "health": 3,
+            "text": "Deathrattle: Summon a 2/1 Damaged Golem.",
+            "deathrattle": [
+                {
+                    "effect": "summon",
+                    "card_id": "DAMAGED_GOLEM",
+                    "count": 1
+                }
+            ]
+        },
+        {
+            "id": "NERUBIAN_EGG",
+            "name": "Nerubian Egg",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 0,
+            "health": 2,
+            "text": "Deathrattle: Summon a 4/4 Nerubian.",
+            "deathrattle": [
+                {
+                    "effect": "summon",
+                    "card_id": "NERUBIAN_4_4",
+                    "count": 1
+                }
+            ]
+        },
+        {
+            "id": "RIVER_CROCOLISK",
+            "name": "River Crocolisk",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 3
+        },
+        {
+            "id": "CHILLWIND_YETI",
+            "name": "Chillwind Yeti",
+            "type": "MINION",
+            "cost": 4,
+            "attack": 4,
+            "health": 5
+        },
+        {
+            "id": "BOULDERFIST_OGRE",
+            "name": "Boulderfist Ogre",
+            "type": "MINION",
+            "cost": 6,
+            "attack": 6,
+            "health": 7
+        },
+        {
+            "id": "FIREBALL_LITE",
+            "name": "Fireball",
+            "type": "SPELL",
+            "cost": 4,
+            "text": "Deal 4 damage.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 4,
+                    "target": "enemy_character"
+                }
+            ],
+            "targeting": "enemy_character"
+        },
+        {
+            "id": "HOLY_LIGHT",
+            "name": "Holy Light",
+            "type": "SPELL",
+            "cost": 2,
+            "text": "Restore 6 Health.",
+            "on_cast": [
+                {
+                    "effect": "heal",
+                    "amount": 6,
+                    "target": "any_character"
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
+            "id": "ARCANE_INTELLECT_LITE",
+            "name": "Arcane Intellect",
+            "type": "SPELL",
+            "cost": 3,
+            "text": "Draw 2 cards.",
+            "on_cast": [
+                {
+                    "effect": "draw",
+                    "count": 2
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "ARCANE_INTELLECT",
+            "name": "Major Arcane Intellect",
+            "type": "SPELL",
+            "cost": 6,
+            "text": "Draw 4 cards.",
+            "on_cast": [
+                {
+                    "effect": "draw",
+                    "count": 4
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "ARCANE_MISSILES_LITE",
+            "name": "Arcane Missiles",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Deal 3 damage randomly split among enemies.",
+            "on_cast": [
+                {
+                    "effect": "random_pings",
+                    "count": 3,
+                    "target": "enemies"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "BLESSING_OF_MIGHT_LITE",
+            "name": "Blessing of Might",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Give a minion +3 Attack.",
+            "on_cast": [
+                {
+                    "effect": "add_attack",
+                    "amount": 3,
+                    "target": "friendly_minion"
+                }
+            ],
+            "targeting": "friendly_minion"
+        },
+        {
+            "id": "BLESSING_OF_KINGS_LITE",
+            "name": "Blessing of Kings",
+            "type": "SPELL",
+            "cost": 4,
+            "text": "Give a minion +2/+2.",
+            "on_cast": [
+                {
+                    "effect": "add_stats",
+                    "attack": 2,
+                    "health": 2,
+                    "target": "friendly_minion"
+                }
+            ],
+            "targeting": "friendly_minion"
+        },
+        {
+            "id": "SILENCE_LITE",
+            "name": "Silence",
+            "type": "SPELL",
+            "cost": 0,
+            "text": "Silence a minion.",
+            "on_cast": [
+                {
+                    "effect": "silence",
+                    "target": "any_minion"
+                }
+            ],
+            "targeting": "any_minion"
+        },
+        {
+            "id": "POLYMORPH_LITE",
+            "name": "Polymorph",
+            "type": "SPELL",
+            "cost": 4,
+            "text": "Transform a minion into a 1/1 Sheep.",
+            "on_cast": [
+                {
+                    "effect": "transform",
+                    "target": "any_minion",
+                    "card_id": "SHEEP_1_1"
+                }
+            ],
+            "targeting": "any_minion"
+        },
+        {
+            "id": "CONSECRATION_LITE",
+            "name": "Consecration",
+            "type": "SPELL",
+            "cost": 4,
+            "text": "Deal 2 damage to all enemies.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage",
+                    "amount": 2,
+                    "target": "enemies"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "FLAMESTRIKE_LITE",
+            "name": "Flamestrike",
+            "type": "SPELL",
+            "cost": 7,
+            "text": "Deal 4 damage to all enemy minions.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage_minions",
+                    "amount": 4,
+                    "target": "enemy_minions"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "RAISE_WISPS",
+            "name": "Raise Wisps",
+            "type": "SPELL",
+            "cost": 2,
+            "text": "Summon two 1/1 Wisps.",
+            "on_cast": [
+                {
+                    "effect": "summon",
+                    "card_id": "WISP",
+                    "count": 2
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "FERAL_SPIRIT_LITE",
+            "name": "Feral Spirit",
+            "type": "SPELL",
+            "cost": 3,
+            "text": "Summon two 2/3 Spirit Wolves with Taunt.",
+            "on_cast": [
+                {
+                    "effect": "summon",
+                    "card_id": "SPIRIT_WOLF",
+                    "count": 2
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "LEGENDARY_LEROY_JENKINS",
+            "name": "Leroy Jenkins",
+            "type": "MINION",
+            "cost": 6,
+            "attack": 6,
+            "health": 2,
+            "keywords": [
+                "Charge"
+            ],
+            "text": "Charge\n Battlecry: Summon two 1/1 Whelps for your enemy.",
+            "battlecry": [
+                {
+                    "effect": "summon",
+                    "card_id": "WHELP",
+                    "count": 2,
+                    "owner": "enemy"
+                }
+            ],
+            "targeting": ""
+        }
+    ]
+}

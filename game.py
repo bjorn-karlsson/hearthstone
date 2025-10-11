@@ -3,7 +3,7 @@ import sys
 from typing import Optional, Tuple, List, Dict, Any
 import random
 
-from engine import Game, make_db, apply_post_summon_hooks, IllegalAction
+from engine import Game, load_cards_from_json, IllegalAction
 from ai import pick_best_action
 
 pygame.init()
@@ -34,7 +34,7 @@ HP_OK        = WHITE
 HP_HURT      = (230, 80, 80)   # red when damaged
 
 # Layout
-CARD_W, CARD_H = 125, 160   # bigger cards so text fits
+CARD_W, CARD_H = 125, 200   # bigger cards so text fits
 MARGIN = 12                 # gap between cards
 ROW_Y_ENEMY = 110              # a bit higher
 ROW_Y_ME    = 325               # a bit higher
@@ -55,30 +55,60 @@ AI_THINK_MS     = 250
 # --------- Randomized starter deck ----------
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
-    pool = [
+
+    # What you'd *like* to include:
+    desired = [
         # 1-cost
         "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT",
         # 2-cost
-        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT_LITE",
+        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT",
         # 3-cost
         "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
         "CHARGE_RUSH_2_2",
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
-        "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE",
+        "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
         # 5+ cost
         "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
-        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR"
+        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
     ]
-    pool = ["EARTHEN_RING"] * 20
-    pool_with_dupes = [c for c in pool for _ in range(2)]
-    rng.shuffle(pool_with_dupes)
-    return pool_with_dupes[:30]
+
+    desired = ["LEGENDARY_LEROY_JENKINS"] * 50
+
+    # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
+    valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
+
+    # Filter desired by what actually exists in the JSON
+    pool = [cid for cid in desired if cid in valid_ids]
+
+    # Helpful debug print so you can see what's missing from the JSON
+    missing = [cid for cid in desired if cid not in valid_ids]
+    if missing:
+        print("[DeckBuilder] Missing from JSON (will be skipped):", ", ".join(missing))
+
+    # If pool too small, pad with *any* valid IDs from JSON
+    if len(pool) < 15:
+        extras = [cid for cid in valid_ids if cid not in pool]
+        rng.shuffle(extras)
+        pool.extend(extras[: max(0, 25 - len(pool))])
+
+    # Allow up to 2 copies of each, shuffle, and take 30
+    dupes = [cid for cid in pool for _ in range(2)]
+    rng.shuffle(dupes)
+
+    # Ensure 30 cards
+    deck = []
+    while len(deck) < 30 and dupes:
+        deck.append(dupes.pop())
+    while len(deck) < 30 and pool:
+        deck.append(rng.choice(pool))
+
+    return deck[:30]
 
 # Build DB + deck
-db = make_db()
-STARTER_DECK_PLAYER = make_starter_deck(db)
-STARTER_DECK_AI = make_starter_deck(db)
+db = load_cards_from_json("cards.json")
+STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
+STARTER_DECK_AI = make_starter_deck(db, random.randint(1, 50000))
 
 # ---------- Drawing helpers (reworked cards) ----------
 
@@ -285,7 +315,7 @@ def targets_for_spell(g: Game, cid: str):
 
     # ----- Heals -----
     # Spell heal (choose any character)
-    if cid in ("HOLY_LIGHT_LITE",):
+    if cid in ("HOLY_LIGHT",):
         enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
         my_min    = {m.id for m in g.players[0].board if m.is_alive()}
         return enemy_min, my_min, True, True
@@ -332,6 +362,12 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     hidden_minion_ids = hidden_minion_ids or set()
     highlight_enemy_minions = highlight_enemy_minions or set()
     highlight_my_minions = highlight_my_minions or set()
+
+    # Faces
+    pygame.draw.rect(screen, (158, 73, 73), hot["face_enemy"], border_radius=10)
+    screen.blit(FONT.render("Enemy Face", True, WHITE), (hot["face_enemy"].x+44, hot["face_enemy"].y+16))
+    pygame.draw.rect(screen, (73, 158, 93), hot["face_me"],    border_radius=10)
+    screen.blit(FONT.render("Your Face", True, WHITE), (hot["face_me"].x+54, hot["face_me"].y+16))
 
     # Enemy minions
     for mid, r in hot["enemy_minions"]:
@@ -394,11 +430,7 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     t = FONT.render("End Turn", True, WHITE)
     screen.blit(t, t.get_rect(center=hot["end_turn"].center))
 
-    # Faces
-    pygame.draw.rect(screen, (158, 73, 73), hot["face_enemy"], border_radius=10)
-    screen.blit(FONT.render("Enemy Face", True, WHITE), (hot["face_enemy"].x+44, hot["face_enemy"].y+16))
-    pygame.draw.rect(screen, (73, 158, 93), hot["face_me"],    border_radius=10)
-    screen.blit(FONT.render("Your Face", True, WHITE), (hot["face_me"].x+54, hot["face_me"].y+16))
+    
 
     # Face highlights
     if highlight_enemy_face:
@@ -514,6 +546,19 @@ def enqueue_flash(rect: pygame.Rect):
 
 def enemy_face_rect(hot): return hot["face_enemy"]
 def my_face_rect(hot):    return hot["face_me"]
+
+# Small compatibility shim – runs the JSON post-summon hook on all summon events
+def apply_post_summon_hooks(g, events):
+    hook = g.cards_db.get("_POST_SUMMON_HOOK")
+    if not hook or not events:
+        return
+    for e in events:
+        if getattr(e, "kind", None) == "MinionSummoned":
+            loc = g.find_minion(e.payload["minion"])
+            if loc:
+                _, _, m = loc
+                hook(g, m)
+
 
 # ---------- Main loop ----------
 GLOBAL_GAME: Game
