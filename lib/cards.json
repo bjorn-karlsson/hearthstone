@@ -562,11 +562,25 @@
             "health": 7
         },
         {
+            "id": "AMANI_BERSERKER",
+            "name": "Amani Berserker",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "text": "Enrage: +3 Attack.",
+            "enrage": {
+                "attack": 3
+            },
+            "keywords": []
+        },
+        {
             "id": "FIREBALL_LITE",
             "name": "Fireball",
             "type": "SPELL",
             "rarity": "Rare",
-            "cost": 1,
+            "cost": 4,
             "text": "Deal 4 damage.",
             "on_cast": [
                 {

@@ -59,8 +59,12 @@ class Minion:
     deathrattle: Optional[Callable[['Game','Minion'], List[Event]]] = None
     aura_spec: Optional[Dict[str, Any]] = None   # e.g. {"scope":"other_friendly_minions","attack":1,"health":1}
     aura_active: bool = False
+    enrage_spec: Optional[Dict[str, Any]] = None
+    enrage_active: bool = False
+    
     # internal flags
     has_attacked_this_turn: bool = False
+
 
     # NEW: for UI/logic
     summoned_this_turn: bool = True
@@ -161,6 +165,8 @@ class Game:
                     return pid, i, m
         return None
 
+    
+
     def get_taunts(self, pid:int) -> List[Minion]:
         return [m for m in self.players[pid].board if m.taunt and m.is_alive()]
 
@@ -188,6 +194,7 @@ class Game:
     def deal_damage_to_minion(self, target:Minion, amount:int, source:str="") -> List[Event]:
         target.health -= amount
         ev = [Event("MinionDamaged", {"minion": target.id, "amount": amount, "source": source})]
+        ev += self._update_enrage(target)
         if target.health <= 0:
             ev += self.destroy_minion(target, reason="LethalDamage")
         return ev
@@ -209,7 +216,34 @@ class Game:
             ev += m.deathrattle(self, m)
         return ev
     
-    
+    def _update_enrage(self, m: Minion) -> List[Event]:
+        ev: List[Event] = []
+        spec = getattr(m, "enrage_spec", None)
+        if not spec:
+            # if no enrage exists but flag is somehow on, clear it
+            if m.enrage_active:
+                # remove any lingering bonus (safety)
+                bonus = int(spec.get("attack", 0)) if spec else 0
+                if bonus:
+                    m.attack -= bonus
+                m.enrage_active = False
+            return ev
+
+        bonus = int(spec.get("attack", 0))
+        should_be_active = (not m.silenced) and m.is_alive() and (m.health < m.max_health)
+
+        if should_be_active and not m.enrage_active:
+            if bonus:
+                m.attack += bonus
+            m.enrage_active = True
+            ev.append(Event("Buff", {"minion": m.id, "attack_delta": bonus, "health_delta": 0}))
+        elif (not should_be_active) and m.enrage_active:
+            if bonus:
+                m.attack -= bonus
+            m.enrage_active = False
+            ev.append(Event("Buff", {"minion": m.id, "attack_delta": -bonus, "health_delta": 0}))
+        return ev
+
     # ---------- Aura helpers ----------
     def _aura_targets(self, owner: int, source_id: int, spec: Dict[str, Any]):
         """
@@ -244,6 +278,7 @@ class Game:
                     if t.health > t.max_health:
                         t.health = t.max_health
             ev.append(Event("Buff", {"minion": t.id, "attack_delta": a, "health_delta": h}))
+            ev += self._update_enrage(t)
         return ev
 
     def _enable_aura(self, source: 'Minion') -> List[Event]:
@@ -443,6 +478,8 @@ class Game:
                 aura_spec=card.aura_spec,
                 aura_active=False,
                 spell_damage=getattr(card, "spell_damage", 0),
+                enrage_spec=getattr(card, "enrage_spec", None),
+                enrage_active=False,
                 
             )
             self.next_minion_id += 1
@@ -521,6 +558,10 @@ class Game:
             ev.append(Event("MinionDamaged", {"minion": tgt.id, "amount": a_dmg, "source": att.name}))
             att.health -= t_dmg
             ev.append(Event("MinionDamaged", {"minion": att.id, "amount": t_dmg, "source": tgt.name}))
+
+            # Check enrage state
+            ev += self._update_enrage(tgt)
+            ev += self._update_enrage(att)
 
             # Resolve deaths after both hits are applied
             if tgt.health <= 0:
@@ -665,14 +706,24 @@ def _fx_heal(params):
         name = getattr(source_obj, "name", "Effect")
         kind, obj = _resolve_tagged_target(g, target)
         if kind == "minion":
+            ev = []  # <-- define it
             before = obj.health
             obj.health = min(obj.max_health, obj.health + n)
-            return [Event("MinionHealed", {"minion": obj.id, "amount": obj.health - before, "source": name})]
+            ev.append(Event("MinionHealed", {
+                "minion": obj.id,
+                "amount": obj.health - before,
+                "source": name
+            }))
+            # Toggle Enrage on/off after the heal (healed-to-full should disable it)
+            ev += g._update_enrage(obj)
+            return ev
         if kind == "player":
             p = g.players[obj]
             before = p.health
             p.health = min(30, p.health + n)
-            return [Event("PlayerHealed", {"player": obj, "amount": p.health - before, "source": name})]
+            return [Event("PlayerHealed", {
+                "player": obj, "amount": p.health - before, "source": name
+            })]
         return []
     return run
 
@@ -836,6 +887,7 @@ def _fx_silence(params):
         m.deathrattle = None
         m.silenced = True
         ev.append(Event("Silenced", {"minion": m.id}))
+        ev += g._update_enrage(m)
         return ev
     return run
 
@@ -871,6 +923,8 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             aura_spec=card_spec.get("aura"),
             aura_active=False,
             spell_damage=int(card_spec.get("spell_damage", 0)),
+            enrage_spec=card_spec.get("enrage"),
+            enrage_active=False,
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
@@ -1060,6 +1114,7 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         rarity = (raw.get("rarity") or "Common")
         aura_spec = raw.get("aura")  # dict or None
         spell_dmg = int(raw.get("spell_damage", 0))
+        enrage_spec = raw.get("enrage")  # dict or None
 
 
         bc = oc = None
@@ -1077,6 +1132,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             aura_spec=aura_spec,
             spell_damage=spell_dmg
         )
+
+        setattr(card, "enrage_spec", enrage_spec)
         # if your Card has a text field:
         try:
             setattr(card, "text", text)
