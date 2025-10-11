@@ -542,6 +542,49 @@ def _fx_heal(params):
         return ev
     return run
 
+def _fx_discover_equal_remaining_mana(params):
+    """
+    Discover (auto-pick for now) a card whose cost equals the player's
+    remaining mana crystals. Adds the chosen card to hand (or burns if full).
+
+    JSON usage (e.g. in battlecry):
+      { "effect": "discover_equal_remaining_mana" }
+    """
+    def run(g, source_obj, target):
+        pid = g.active_player
+        p = g.players[pid]
+        remaining = max(0, p.mana)
+
+        # pool: real collectible cards with exactly that cost
+        def is_real_card(cid, cobj):
+            if cid.startswith("_"): 
+                return False
+            t = getattr(cobj, "type", None)
+            return t in ("MINION", "SPELL")  # include other types if you have them
+
+        pool = [cid for cid, c in g.cards_db.items()
+                if isinstance(c, Card) and is_real_card(cid, c) and c.cost == remaining]
+
+        if not pool:
+            return []  # nothing to discover
+
+        # up to 3 options, then auto-pick 1 (deterministic via g.rng)
+        options = g.rng.sample(pool, min(3, len(pool)))
+        choice = g.rng.choice(options)
+
+        ev = []
+        if len(p.hand) < 10:
+            p.hand.append(choice)
+            ev.append(Event("CardDiscovered", {
+                "player": pid, "card": choice, "options": options, "source": "Discover"
+            }))
+        else:
+            p.graveyard.append(choice)
+            ev.append(Event("CardBurned", {"player": pid, "card": choice}))
+
+        return ev
+    return run
+
 def _fx_draw(params):
     count = int(params.get("count", 1))
     def run(g, source_obj, target):
@@ -759,6 +802,7 @@ def _effect_factory(name, params, json_tokens):
         "summon":             lambda p: _fx_summon(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
         "gain_armor":         _fx_gain_armor,
+        "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,
     }
     if name not in table:
         raise ValueError(f"Unknown effect: {name}")

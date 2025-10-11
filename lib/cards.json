@@ -91,6 +91,24 @@
             "targeting": "friendly_minion"
         },
         {
+            "id": "SCRAPPY_SCAVENGER",
+            "name": "Scrappy Scavenger",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Discover a card with cost equal to your remaining Mana Crystals.",
+            "battlecry": [
+                {
+                    "effect": "discover_equal_remaining_mana"
+                }
+            ]
+        },
+        {
             "id": "RUSHER",
             "name": "Arena Rusher",
             "type": "MINION",
@@ -274,7 +292,6 @@
             ],
             "targeting": "enemy_character"
         },
-        
         {
             "id": "NOVICE_ENGINEER",
             "name": "Novice Engineer",
@@ -309,7 +326,7 @@
                 }
             ]
         },
-                {
+        {
             "id": "SILVER_HAND_KNIGHT",
             "name": "Silver Hand Knight",
             "type": "MINION",
@@ -345,7 +362,6 @@
                 }
             ]
         },
-        
         {
             "id": "NERUBIAN_EGG",
             "name": "Nerubian Egg",

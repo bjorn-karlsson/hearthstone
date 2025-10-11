@@ -16,8 +16,8 @@ W, H = screen.get_size()
 pygame.display.set_caption("Python Card Battler (Animated-Locked + Targets)")
 
 FONT = pygame.font.SysFont(None, 22)
-BIG  = pygame.font.SysFont(None, 32)
-RULE_FONT = pygame.font.SysFont(None, 18)  # smaller for rules text
+BIG  = pygame.font.SysFont(None, 26)
+RULE_FONT = pygame.font.SysFont(None, 20)  # smaller for rules text
 
 
 
@@ -86,7 +86,7 @@ def hero_name(h) -> str:
 
 # Layout
 CARD_W, CARD_H = 125, 200   # bigger cards so text fits
-MARGIN = 12                 # gap between cards
+MARGIN = 15                 # gap between cards
 ROW_Y_ENEMY = 110              # a bit higher
 ROW_Y_ME    = 325               # a bit higher
 ROW_Y_HAND  = H - CARD_H - 30  # lock hand to bottom with padding
@@ -101,7 +101,7 @@ ANIM_PLAY_MS    = 550
 ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
-AI_THINK_MS     = 800
+AI_THINK_MS     = 750
 START_GAME      = 1500
 
 
@@ -160,6 +160,10 @@ def format_event(e, g, skip=False) -> str:
     if k == "CardDrawn":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} drew a card."
+    if k == "CardDiscovered":
+        who = "You" if p["player"] == 0 else "AI"
+        nm  = g.cards_db.get(p.get("card"), type("x",(object,),{"name":"a card"})).name
+        return f"{who} discovered {nm}."
     if k == "CardBurned":
         who = "You" if p["player"] == 0 else "AI"
         # try to show the card name if available
@@ -236,7 +240,7 @@ def make_starter_deck(db, seed=None):
     # What you'd *like* to include:
     desired = [
         # 1-cost
-        "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT",
+        "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT", "SCRAPPY_SCAVENGER",
         # 2-cost
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER",
         # 3-cost
@@ -249,8 +253,7 @@ def make_starter_deck(db, seed=None):
         "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS"
     ]
-
-    #desired = ["NOVICE_ENGINEER", "SILVER_HAND_KNIGHT"] * 30
+    #desired = ["SCRAPPY_SCAVENGER"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -659,7 +662,7 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         draw_text_box(r, body, max_lines=6, title=minion_obj.name, font_body=RULE_FONT)
 
         # Bottom UI
-        draw_name_footer(r, minion_obj.name)
+        #draw_name_footer(r, minion_obj.name)
         draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"))
         draw_minion_stats(
             r,
