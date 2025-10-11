@@ -7,7 +7,6 @@
             "attack": 1,
             "health": 1,
             "rarity": "Common"
-            
         },
         "WHELP": {
             "name": "Whelp",
@@ -41,7 +40,7 @@
             "health": 1,
             "rarity": "Common"
         },
-        "SILVER_HAND_RECRUIT" : {
+        "SILVER_HAND_RECRUIT": {
             "name": "Silver Hand Recruit",
             "type": "MINION",
             "cost": 1,
@@ -83,7 +82,11 @@
             "cost": 1,
             "text": "Give a minion Taunt.",
             "on_cast": [
-                { "effect": "add_keyword", "keyword": "Taunt", "target": "friendly_minion" }
+                {
+                    "effect": "add_keyword",
+                    "keyword": "Taunt",
+                    "target": "friendly_minion"
+                }
             ],
             "targeting": "friendly_minion"
         },
@@ -128,21 +131,21 @@
             "text": "Charge, Rush."
         },
         {
-        "id": "MUSTER_FOR_BATTLE_LITE",
-        "name": "Muster for Battle (Lite)",
-        "type": "SPELL",
-        "rarity": "Rare",
-        "cost": 3,
-        "text": "Summon three 1/1 Recruits.",
-        "on_cast": [
-            {
-            "effect": "summon",
-            "card_id": "SILVER_HAND_RECRUIT",
-            "count": 3,
-            "owner": "player"
-            }
-        ],
-        "targeting": "none"
+            "id": "MUSTER_FOR_BATTLE_LITE",
+            "name": "Muster for Battle (Lite)",
+            "type": "SPELL",
+            "rarity": "Rare",
+            "cost": 3,
+            "text": "Summon three 1/1 Recruits.",
+            "on_cast": [
+                {
+                    "effect": "summon",
+                    "card_id": "SILVER_HAND_RECRUIT",
+                    "count": 3,
+                    "owner": "player"
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "GIVE_CHARGE",
@@ -152,7 +155,11 @@
             "cost": 2,
             "text": "Give a minion Charge.",
             "on_cast": [
-                { "effect": "add_keyword", "keyword": "Charge", "target": "friendly_minion" }
+                {
+                    "effect": "add_keyword",
+                    "keyword": "Charge",
+                    "target": "friendly_minion"
+                }
             ],
             "targeting": "friendly_minion"
         },
@@ -164,7 +171,11 @@
             "cost": 1,
             "text": "Give a minion Rush.",
             "on_cast": [
-                { "effect": "add_keyword", "keyword": "Rush", "target": "friendly_minion" }
+                {
+                    "effect": "add_keyword",
+                    "keyword": "Rush",
+                    "target": "friendly_minion"
+                }
             ],
             "targeting": "friendly_minion"
         },
@@ -263,6 +274,24 @@
             ],
             "targeting": "enemy_character"
         },
+        
+        {
+            "id": "NOVICE_ENGINEER",
+            "name": "Novice Engineer",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 2,
+            "attack": 1,
+            "health": 1,
+            "text": "Battlecry: Draw 1 card.",
+            "battlecry": [
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "targeting": "enemy_character"
+        },
         {
             "id": "LEPER_GNOME",
             "name": "Leper Gnome",
@@ -279,6 +308,25 @@
                     "target": "enemy_face"
                 }
             ]
+        },
+                {
+            "id": "SILVER_HAND_KNIGHT",
+            "name": "Silver Hand Knight",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 5,
+            "attack": 4,
+            "health": 4,
+            "text": "Battlecry: Summon a 1/1 Silver Hand Recruit",
+            "battlecry": [
+                {
+                    "effect": "summon",
+                    "card_id": "SILVER_HAND_RECRUIT",
+                    "count": 1,
+                    "owner": "player"
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "HARVEST_GOLEM",
@@ -297,6 +345,7 @@
                 }
             ]
         },
+        
         {
             "id": "NERUBIAN_EGG",
             "name": "Nerubian Egg",
@@ -364,7 +413,13 @@
             "rarity": "Rare",
             "cost": 2,
             "text": "Restore 6 Health.",
-            "on_cast": [{ "effect": "heal", "amount": 6, "target": "any_character" }],
+            "on_cast": [
+                {
+                    "effect": "heal",
+                    "amount": 6,
+                    "target": "any_character"
+                }
+            ],
             "targeting": "any_character"
         },
         {
@@ -459,7 +514,9 @@
                     "target": "any_minion"
                 }
             ],
-            "keywords": ["Silence"],
+            "keywords": [
+                "Silence"
+            ],
             "targeting": "any_minion"
         },
         {
@@ -542,25 +599,27 @@
             ],
             "targeting": "none"
         },
-       {
-        "id": "LEGENDARY_LEROY_JENKINS",
-        "name": "Leroy Jenkins",
-        "type": "MINION",
-        "rarity": "Legendary",
-        "cost": 4,
-        "attack": 6,
-        "health": 2,
-        "keywords": ["Charge"],
-        "text": "Charge. Battlecry: Summon two 1/1 Whelps for your enemy.",
-        "battlecry": [
-            {
-            "effect": "summon",
-            "card_id": "WHELP",
-            "count": 2,
-            "owner": "enemy"
-            }
-        ],
-        "targeting": "none"
+        {
+            "id": "LEGENDARY_LEEROY_JENKINS",
+            "name": "Leeroy Jenkins",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "cost": 4,
+            "attack": 6,
+            "health": 2,
+            "keywords": [
+                "Charge"
+            ],
+            "text": "Charge. Battlecry: Summon two 1/1 Whelps for your enemy.",
+            "battlecry": [
+                {
+                    "effect": "summon",
+                    "card_id": "WHELP",
+                    "count": 2,
+                    "owner": "enemy"
+                }
+            ],
+            "targeting": "none"
         }
     ]
 }

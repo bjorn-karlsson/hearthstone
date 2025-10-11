@@ -222,7 +222,7 @@ def make_starter_deck(db, seed=None):
         # 1-cost
         "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT",
         # 2-cost
-        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT",
+        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER"
         # 3-cost
         "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
         "CHARGE_RUSH_2_2",
@@ -230,9 +230,11 @@ def make_starter_deck(db, seed=None):
         "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
         "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
         # 5+ cost
-        "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
+        "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
     ]
+
+    desired = ["NOVICE_ENGINEER", "SILVER_HAND_KNIGHT"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -265,8 +267,8 @@ def make_starter_deck(db, seed=None):
     return deck[:30]
 
 # Build DB + deck
-db      = load_cards_from_json("cards.json")
-hero_db = load_heros_from_json("heroes.json")
+db      = load_cards_from_json("lib/cards.json")
+hero_db = load_heros_from_json("lib/heroes.json")
 
 HERO_PLAYER = select_random_hero(hero_db)
 HERO_AI     = select_random_hero(hero_db)

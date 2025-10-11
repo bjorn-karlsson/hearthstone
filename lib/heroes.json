@@ -49,7 +49,7 @@
                 "effects": [
                     {
                         "effect": "summon",
-                        "card_id": "SILVER_HAND_RECRUIT_TOKEN",
+                        "card_id": "SILVER_HAND_RECRUIT",
                         "count": 1,
                         "owner": "friendly"
                     }
