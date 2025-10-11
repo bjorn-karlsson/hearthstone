@@ -5,35 +5,49 @@
             "type": "MINION",
             "cost": 0,
             "attack": 1,
-            "health": 1
+            "health": 1,
+            "rarity": "Common"
+            
         },
         "WHELP": {
             "name": "Whelp",
             "type": "MINION",
             "cost": 0,
             "attack": 1,
-            "health": 1
+            "health": 1,
+            "rarity": "Common"
         },
         "SHEEP_1_1": {
             "name": "Sheep",
             "type": "MINION",
             "cost": 1,
             "attack": 1,
-            "health": 1
+            "health": 1,
+            "rarity": "Common"
         },
         "NERUBIAN_4_4": {
             "name": "Nerubian",
             "type": "MINION",
             "cost": 4,
             "attack": 4,
-            "health": 4
+            "health": 4,
+            "rarity": "Common"
         },
         "DAMAGED_GOLEM": {
             "name": "Damaged Golem",
             "type": "MINION",
             "cost": 1,
             "attack": 2,
-            "health": 1
+            "health": 1,
+            "rarity": "Common"
+        },
+        "SILVER_HAND_RECRUIT" : {
+            "name": "Silver Hand Recruit",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "rarity": "Common"
         },
         "SPIRIT_WOLF": {
             "name": "Spirit Wolf",
@@ -41,6 +55,7 @@
             "cost": 2,
             "attack": 2,
             "health": 3,
+            "rarity": "Rare",
             "keywords": [
                 "Taunt"
             ]
@@ -54,6 +69,7 @@
             "cost": 1,
             "attack": 1,
             "health": 1,
+            "rarity": "Common",
             "keywords": [
                 "Charge"
             ],
@@ -63,21 +79,19 @@
             "id": "GIVE_TAUNT",
             "name": "Shield Up",
             "type": "SPELL",
+            "rarity": "Common",
             "cost": 1,
             "text": "Give a minion Taunt.",
-            "effects": [
-                {
-                    "when": "on_cast",
-                    "fn": "add_keyword",
-                    "keyword": "Taunt",
-                    "target": "FRIENDLY_MINION"
-                }
-            ]
+            "on_cast": [
+                { "effect": "add_keyword", "keyword": "Taunt", "target": "friendly_minion" }
+            ],
+            "targeting": "friendly_minion"
         },
         {
             "id": "RUSHER",
             "name": "Arena Rusher",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 2,
             "attack": 2,
             "health": 1,
@@ -90,6 +104,7 @@
             "id": "TAUNT_BEAR",
             "name": "Stoneshell Bear",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 3,
             "health": 4,
@@ -102,6 +117,7 @@
             "id": "CHARGE_RUSH_2_2",
             "name": "Stormrunner",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 2,
             "health": 2,
@@ -112,65 +128,51 @@
             "text": "Charge, Rush."
         },
         {
-            "id": "MUSTER_FOR_BATTLE_LITE",
-            "name": "Muster for Battle (Lite)",
-            "type": "SPELL",
-            "cost": 3,
-            "text": "Summon three 1/1 Recruits.",
-            "effects": [
-                {
-                    "when": "on_cast",
-                    "fn": "summon",
-                    "card_id": "SILVER_HAND_RECRUIT_TOKEN",
-                    "count": 3,
-                    "side": "FRIENDLY"
-                }
-            ]
+        "id": "MUSTER_FOR_BATTLE_LITE",
+        "name": "Muster for Battle (Lite)",
+        "type": "SPELL",
+        "rarity": "Rare",
+        "cost": 3,
+        "text": "Summon three 1/1 Recruits.",
+        "on_cast": [
+            {
+            "effect": "summon",
+            "card_id": "SILVER_HAND_RECRUIT",
+            "count": 3,
+            "owner": "player"
+            }
+        ],
+        "targeting": "none"
         },
         {
             "id": "GIVE_CHARGE",
             "name": "Battle Drums",
             "type": "SPELL",
+            "rarity": "Common",
             "cost": 2,
             "text": "Give a minion Charge.",
-            "effects": [
-                {
-                    "when": "on_cast",
-                    "fn": "add_keyword",
-                    "keyword": "Charge",
-                    "target": "FRIENDLY_MINION"
-                }
-            ]
+            "on_cast": [
+                { "effect": "add_keyword", "keyword": "Charge", "target": "friendly_minion" }
+            ],
+            "targeting": "friendly_minion"
         },
         {
             "id": "GIVE_RUSH",
             "name": "Quick March",
             "type": "SPELL",
+            "rarity": "Common",
             "cost": 1,
             "text": "Give a minion Rush.",
-            "effects": [
-                {
-                    "when": "on_cast",
-                    "fn": "add_keyword",
-                    "keyword": "Rush",
-                    "target": "FRIENDLY_MINION"
-                }
-            ]
-        },
-        {
-            "id": "SILVER_HAND_RECRUIT_TOKEN",
-            "name": "Silver Hand Recruit",
-            "type": "MINION",
-            "cost": 1,
-            "attack": 1,
-            "health": 1,
-            "keywords": [],
-            "text": ""
+            "on_cast": [
+                { "effect": "add_keyword", "keyword": "Rush", "target": "friendly_minion" }
+            ],
+            "targeting": "friendly_minion"
         },
         {
             "id": "THE_COIN",
             "name": "The Coin",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 0,
             "text": "+1 mana this turn.",
             "on_cast": [
@@ -185,6 +187,7 @@
             "id": "WOLFRIDER",
             "name": "Wolfrider",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 3,
             "health": 1,
@@ -197,6 +200,7 @@
             "id": "SHIELD_BEARER",
             "name": "Shieldbearer",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 1,
             "attack": 0,
             "health": 4,
@@ -209,6 +213,7 @@
             "id": "EARTHEN_RING",
             "name": "Earthen Ring Farseer",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 3,
             "health": 3,
@@ -226,6 +231,7 @@
             "id": "KOBOLD_PING",
             "name": "Kobold Pinger",
             "type": "MINION",
+            "rarity": "Common",
             "cost": 2,
             "attack": 2,
             "health": 2,
@@ -243,6 +249,7 @@
             "id": "KOBOLD_BLASTER",
             "name": "Kobold Blaster",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 2,
             "health": 3,
@@ -260,6 +267,7 @@
             "id": "LEPER_GNOME",
             "name": "Leper Gnome",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 1,
             "attack": 2,
             "health": 1,
@@ -276,6 +284,7 @@
             "id": "HARVEST_GOLEM",
             "name": "Harvest Golem",
             "type": "MINION",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 2,
             "health": 3,
@@ -292,6 +301,7 @@
             "id": "NERUBIAN_EGG",
             "name": "Nerubian Egg",
             "type": "MINION",
+            "rarity": "Common",
             "cost": 2,
             "attack": 0,
             "health": 2,
@@ -308,6 +318,7 @@
             "id": "RIVER_CROCOLISK",
             "name": "River Crocolisk",
             "type": "MINION",
+            "rarity": "Common",
             "cost": 2,
             "attack": 2,
             "health": 3
@@ -316,6 +327,7 @@
             "id": "CHILLWIND_YETI",
             "name": "Chillwind Yeti",
             "type": "MINION",
+            "rarity": "Common",
             "cost": 4,
             "attack": 4,
             "health": 5
@@ -324,6 +336,7 @@
             "id": "BOULDERFIST_OGRE",
             "name": "Boulderfist Ogre",
             "type": "MINION",
+            "rarity": "Common",
             "cost": 6,
             "attack": 6,
             "health": 7
@@ -332,6 +345,7 @@
             "id": "FIREBALL_LITE",
             "name": "Fireball",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 4,
             "text": "Deal 4 damage.",
             "on_cast": [
@@ -347,20 +361,16 @@
             "id": "HOLY_LIGHT",
             "name": "Holy Light",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 2,
             "text": "Restore 6 Health.",
-            "on_cast": [
-                {
-                    "effect": "heal",
-                    "amount": 6,
-                    "target": "any_character"
-                }
-            ],
+            "on_cast": [{ "effect": "heal", "amount": 6, "target": "any_character" }],
             "targeting": "any_character"
         },
         {
             "id": "ARCANE_INTELLECT_LITE",
             "name": "Arcane Intellect",
+            "rarity": "Common",
             "type": "SPELL",
             "cost": 3,
             "text": "Draw 2 cards.",
@@ -376,6 +386,7 @@
             "id": "ARCANE_INTELLECT",
             "name": "Major Arcane Intellect",
             "type": "SPELL",
+            "rarity": "Epic",
             "cost": 6,
             "text": "Draw 4 cards.",
             "on_cast": [
@@ -390,6 +401,7 @@
             "id": "ARCANE_MISSILES_LITE",
             "name": "Arcane Missiles",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 1,
             "text": "Deal 3 damage randomly split among enemies.",
             "on_cast": [
@@ -405,6 +417,7 @@
             "id": "BLESSING_OF_MIGHT_LITE",
             "name": "Blessing of Might",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 1,
             "text": "Give a minion +3 Attack.",
             "on_cast": [
@@ -419,6 +432,7 @@
         {
             "id": "BLESSING_OF_KINGS_LITE",
             "name": "Blessing of Kings",
+            "rarity": "Rare",
             "type": "SPELL",
             "cost": 4,
             "text": "Give a minion +2/+2.",
@@ -436,6 +450,7 @@
             "id": "SILENCE_LITE",
             "name": "Silence",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 0,
             "text": "Silence a minion.",
             "on_cast": [
@@ -450,6 +465,7 @@
             "id": "POLYMORPH_LITE",
             "name": "Polymorph",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 4,
             "text": "Transform a minion into a 1/1 Sheep.",
             "on_cast": [
@@ -465,6 +481,7 @@
             "id": "CONSECRATION_LITE",
             "name": "Consecration",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 4,
             "text": "Deal 2 damage to all enemies.",
             "on_cast": [
@@ -480,6 +497,7 @@
             "id": "FLAMESTRIKE_LITE",
             "name": "Flamestrike",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 7,
             "text": "Deal 4 damage to all enemy minions.",
             "on_cast": [
@@ -495,6 +513,7 @@
             "id": "RAISE_WISPS",
             "name": "Raise Wisps",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 2,
             "text": "Summon two 1/1 Wisps.",
             "on_cast": [
@@ -510,6 +529,7 @@
             "id": "FERAL_SPIRIT_LITE",
             "name": "Feral Spirit",
             "type": "SPELL",
+            "rarity": "Rare",
             "cost": 3,
             "text": "Summon two 2/3 Spirit Wolves with Taunt.",
             "on_cast": [
@@ -525,7 +545,8 @@
             "id": "LEGENDARY_LEROY_JENKINS",
             "name": "Leroy Jenkins",
             "type": "MINION",
-            "cost": 6,
+            "rarity": "Legendary",
+            "cost": 4,
             "attack": 6,
             "health": 2,
             "keywords": [

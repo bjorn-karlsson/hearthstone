@@ -33,6 +33,13 @@ ATTK_COLOR   = (230, 170, 60)  # orange-yellow for attack
 HP_OK        = WHITE
 HP_HURT      = (230, 80, 80)   # red when damaged
 
+RARITY_COLORS = {
+    "COMMON":     (235, 235, 235),  # white
+    "RARE":       (80, 140, 240),   # blue
+    "EPIC":       (165, 95, 210),   # purple
+    "LEGENDARY":  (255, 140, 20),   # orange
+}
+
 # Layout
 CARD_W, CARD_H = 125, 200   # bigger cards so text fits
 MARGIN = 12                 # gap between cards
@@ -73,7 +80,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
     ]
 
-    desired = ["LEGENDARY_LEROY_JENKINS"] * 50
+    #desired = ["MUSTER_FOR_BATTLE_LITE"]  * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -112,6 +119,19 @@ STARTER_DECK_AI = make_starter_deck(db, random.randint(1, 50000))
 
 # ---------- Drawing helpers (reworked cards) ----------
 
+def draw_rarity_droplet(r: pygame.Rect, rarity: Optional[str]):
+    """Small gem centered at bottom of the card."""
+    if not rarity:
+        rarity = "COMMON"
+    key = str(rarity).upper()
+    color = RARITY_COLORS.get(key, RARITY_COLORS[key])
+
+    radius = 9
+    cx, cy = r.centerx, r.bottom - 16
+    pygame.draw.circle(screen, color, (cx, cy), radius)
+    # subtle rim
+    pygame.draw.circle(screen, (20, 20, 20), (cx, cy), radius, 2)
+
 def centered_text(text: str, y: int, font=BIG, color=WHITE):
     surf = font.render(text, True, color)
     screen.blit(surf, surf.get_rect(center=(W//2, y)))
@@ -136,20 +156,43 @@ def draw_cost_gem(r: pygame.Rect, cost: int):
     t = BIG.render(str(cost), True, WHITE)
     screen.blit(t, t.get_rect(center=gem.center))
 
-def draw_name_bar(r: pygame.Rect, name: str):
-    bar = pygame.Rect(r.x+46, r.y+8, r.w-54, 26)
-    pygame.draw.rect(screen, (30, 35, 45), bar, border_radius=8)
+def draw_name_footer(r: pygame.Rect, name: str):
+    """
+    Bottom-centered pill for name, sitting just above rarity droplet.
+    Leaves room for stats at the very bottom row.
+    """
+    name_h   = 22
+    stats_h  = 28
+    gap      = 4
+    footer_w = r.w - 20  # insets for a nicer shape
+    footer_x = r.x + (r.w - footer_w)//2
+    footer_y = r.bottom - stats_h - gap - name_h
+
+    bar = pygame.Rect(footer_x, footer_y, footer_w, name_h)
+    pygame.draw.rect(screen, (30, 35, 45), bar, border_radius=10)
+
+    # truncate gracefully
     nm = name
-    while FONT.size(nm)[0] > bar.w - 12 and len(nm) > 0:
+    while FONT.size(nm)[0] > bar.w - 16 and len(nm) > 0:
         nm = nm[:-1]
-    if len(nm) < len(name): nm = nm[:-1] + "…"
-    title = FONT.render(nm, True, WHITE)
-    screen.blit(title, (bar.x+6, bar.y+4))
+    if len(nm) < len(name) and len(nm) > 0:
+        nm = nm[:-1] + "…"
+    text_surf = FONT.render(nm, True, WHITE)
+    screen.blit(text_surf, text_surf.get_rect(center=bar.center))
 
 def draw_text_box(r: pygame.Rect, text: str, max_lines: int, font=RULE_FONT):
-    # larger inner box with proper padding
-    box = pygame.Rect(r.x+10, r.y+46, r.w-20, r.h-88)
+    # Top padding
+    top_pad = 45
+
+    # Reserve bottom area: name footer + stats + gaps
+    name_h  = 22
+    stats_h = 28
+    gap     = 4
+    bottom_reserved = name_h + stats_h + gap + 6
+
+    box = pygame.Rect(r.x+10, r.y+top_pad, r.w-20, r.h - top_pad - bottom_reserved)
     pygame.draw.rect(screen, (28, 28, 34), box, border_radius=8)
+
     lines = wrap_text(text, font, box.w-12)[:max_lines]
     y = box.y + 6
     for ln in lines:
@@ -172,9 +215,11 @@ def draw_minion_stats(r: pygame.Rect, attack: int, health: int, max_health: int)
 
 def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool):
     pygame.draw.rect(screen, color_bg, r, border_radius=12)
+    rarity_to_draw = None
+
     if card_obj:
         draw_cost_gem(r, card_obj.cost)
-        draw_name_bar(r, card_obj.name)
+        #draw_name_bar(r, card_obj.name)
 
         kw = []
         if "Taunt" in card_obj.keywords: kw.append("Taunt")
@@ -187,16 +232,18 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
             if text.lower().startswith(k.lower()):
                 text = text[len(k):].lstrip(" :.-").strip()
 
-        header = " / ".join(kw)
+        header = " / ".join(kw) 
         final_text = header if header and not text else (header + ("\n" + text if text else ""))
 
         draw_text_box(r, final_text, max_lines=6, font=RULE_FONT)   # <-- smaller font + more lines
+        draw_name_footer(r, card_obj.name)
+        draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"))
         if card_obj.type == "MINION":
             draw_minion_stats(r, card_obj.attack, card_obj.health, card_obj.health)
 
     elif minion_obj:
         draw_cost_gem(r, getattr(minion_obj, "cost", 0))
-        draw_name_bar(r, minion_obj.name)
+        #draw_name_bar(r, minion_obj.name)
         short = []
         if getattr(minion_obj, "taunt", False):  short.append("Taunt")
         if getattr(minion_obj, "charge", False): short.append("Charge")
@@ -204,6 +251,12 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         desc = " / ".join(short)
         draw_text_box(r, desc, max_lines=2, font=RULE_FONT)
         draw_minion_stats(r, minion_obj.attack, minion_obj.health, minion_obj.max_health)
+
+        draw_name_footer(r, minion_obj.name)
+        # prefer minion.rarity; fallback to Common
+        draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"))
+        draw_minion_stats(r, minion_obj.attack, minion_obj.health, minion_obj.max_health)
+
 
 def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
     if taunt: pygame.draw.rect(screen, GREY, r, 3, border_radius=10)
@@ -254,8 +307,8 @@ def layout_board(g: Game) -> Dict[str, Any]:
     return hot
 
 def scale_rect_about_center(r: pygame.Rect, s: float, lift: int = 0) -> pygame.Rect:
-    w, h = int(r.w * s), int(r.h * s)
-    cx, cy = r.centerx, r.centery - lift
+    w, h = int(r.w * s * 1.2), int(r.h * s * 1.2)
+    cx, cy = r.centerx, r.centery - lift * 1.5
     return pygame.Rect(cx - w // 2, cy - h // 2, w, h)
 
 def hand_hover_index(hot, mx, my) -> Optional[int]:

@@ -44,6 +44,7 @@ class Minion:
     # NEW: for UI/logic
     summoned_this_turn: bool = True
     cost: int = 0  # original mana cost to display on-board
+    rarity: str = ""
 
     def is_alive(self) -> bool:
         return self.health > 0
@@ -61,6 +62,7 @@ class Card:
     battlecry: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     on_cast: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     text: str = "" 
+    rarity: str = ""
 
 @dataclass
 class PlayerState:
@@ -212,7 +214,8 @@ class Game:
                 charge=("Charge" in card.keywords),
                 rush=("Rush" in card.keywords),
                 summoned_this_turn=True,
-                cost=card.cost
+                cost=card.cost,
+                rarity=card.rarity,
                 
             )
             self.next_minion_id += 1
@@ -300,6 +303,19 @@ class Game:
 # ---------------------- Card Scripts ----------------------
 
 # ---- Effect factories ----
+def _fx_add_keyword(params):
+    kw = params["keyword"].lower()
+    def run(g, source_obj, target):
+        if not isinstance(target, int): return []
+        loc = g.find_minion(target)
+        if not loc: return []
+        _,_,m = loc
+        if kw == "taunt":   m.taunt = True
+        elif kw == "charge": m.charge = True
+        elif kw == "rush":   m.rush = True
+        return [Event("BuffKeyword", {"minion": m.id, "keyword": kw})]
+    return run
+
 def _fx_deal_damage(params):
     n = int(params["amount"])
     def run(g, source_obj, target):
@@ -439,6 +455,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
     ev = []
     for _ in range(count):
         if len(g.players[owner].board) >= 7: break
+        
         m = Minion(
             id=g.next_minion_id, owner=owner, name=card_spec["name"],
             attack=card_spec.get("attack", 0), health=card_spec.get("health", 1),
@@ -446,7 +463,9 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             taunt=("Taunt" in card_spec.get("keywords", [])),
             charge=("Charge" in card_spec.get("keywords", [])),
             rush=("Rush" in card_spec.get("keywords", [])),
-            exhausted=not ("Charge" in card_spec.get("keywords", []) or "Rush" in card_spec.get("keywords", []))
+            exhausted=not ("Charge" in card_spec.get("keywords", []) or "Rush" in card_spec.get("keywords", [])),
+            cost=card_spec.get("cost", 0),
+            rarity=card_spec.get("rarity", "Common"),
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
@@ -529,6 +548,7 @@ def _effect_factory(name, params, json_tokens):
         "add_attack":         _fx_add_attack,
         "add_stats":          _fx_add_stats,
         "silence":            _fx_silence,
+        "add_keyword":        _fx_add_keyword,
         "summon":             lambda p: _fx_summon(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
     }
@@ -567,6 +587,7 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         atk   = int(raw.get("attack", 0))
         hp    = int(raw.get("health", 0))
         kwords= list(raw.get("keywords", []))
+        rarity = (raw.get("rarity") or "Common")
 
         bc = oc = None
         if "battlecry" in raw:
@@ -577,7 +598,7 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             deathrattles_map[cid] = raw["deathrattle"]  # keep spec for hook attachment
 
         card = Card(id=cid, name=name, cost=cost, type=typ, attack=atk, health=hp,
-                    keywords=kwords, battlecry=bc, on_cast=oc)
+                    keywords=kwords, battlecry=bc, on_cast=oc, rarity=rarity)
         # if your Card has a text field:
         try:
             setattr(card, "text", text)
