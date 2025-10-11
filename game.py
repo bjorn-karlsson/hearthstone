@@ -11,7 +11,7 @@ DEBUG = False
 
 pygame.init()
 # Fullscreen @ desktop resolution
-screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+screen = pygame.display.set_mode((0, 0))
 W, H = screen.get_size()
 pygame.display.set_caption("Python Card Battler (Animated-Locked + Targets)")
 
@@ -37,6 +37,22 @@ COST_BADGE   = (60, 120, 230)
 ATTK_COLOR   = (230, 170, 60)  # orange-yellow for attack
 HP_OK        = WHITE
 HP_HURT      = (230, 80, 80)   # red when damaged
+
+# --- Hero plate + battlefield ---
+BOARD_BG       = (26, 32, 40)   # battleground panel fill
+BOARD_BORDER   = (60, 90, 130)  # battleground border
+
+HEALTH_BADGE   = (210, 70, 70)
+ARMOR_BADGE    = (130, 130, 130)
+MANA_BADGE     = (60, 120, 230)
+PLATE_BG       = (30, 36, 46)   # hero plate background
+PLATE_RIM      = (42, 50, 60)   # hero plate outline
+
+# Hero plate sizing + crystal width
+FACE_W = 220
+FACE_H = 64
+CRYSTAL_W = 54
+CRYSTAL_PAD = 10
 
 LOG_MAX_LINES = 40
 LOG_PANEL_W   = 320
@@ -222,7 +238,7 @@ def make_starter_deck(db, seed=None):
         # 1-cost
         "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT",
         # 2-cost
-        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER"
+        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER",
         # 3-cost
         "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
         "CHARGE_RUSH_2_2",
@@ -231,10 +247,10 @@ def make_starter_deck(db, seed=None):
         "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
         # 5+ cost
         "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
-        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
+        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS"
     ]
 
-    desired = ["NOVICE_ENGINEER", "SILVER_HAND_KNIGHT"] * 30
+    #desired = ["NOVICE_ENGINEER", "SILVER_HAND_KNIGHT"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -306,6 +322,61 @@ def draw_action_log():
                 return
             screen.blit(surf, (x, y))
             y += surf.get_height() + 2
+
+def battle_area_rect():
+    top_y    = ROW_Y_ENEMY - 5
+    bottom_y = ROW_Y_ME + CARD_H + 15
+    return pygame.Rect(370, top_y, W - 450, bottom_y - top_y)
+
+def draw_badge_circle(center: Tuple[int,int], radius: int, color: Tuple[int,int,int], text: str, text_color=WHITE, font=BIG):
+    pygame.draw.circle(screen, color, center, radius)
+    pygame.draw.circle(screen, (20,20,20), center, radius, 2)
+    label = font.render(text, True, text_color)
+    screen.blit(label, label.get_rect(center=center))
+
+def draw_mana_crystal_rect(r: pygame.Rect, mana: int, max_mana: int):
+    """Right-side vertical crystal showing current/maximum mana."""
+    # crystal body
+    pygame.draw.rect(screen, MANA_BADGE, r, border_radius=10)
+    pygame.draw.rect(screen, (20, 30, 50), r, 2, border_radius=10)
+    # numbers stacked
+    t1 = BIG.render(str(mana), True, WHITE)
+    t2 = FONT.render(f"/{max_mana}", True, WHITE)
+    screen.blit(t1, t1.get_rect(center=(r.centerx, r.centery - 8)))
+    screen.blit(t2, t2.get_rect(center=(r.centerx, r.centery + 12)))
+
+def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
+    # plate
+    pygame.draw.rect(screen, PLATE_BG, face_rect, border_radius=12)
+    pygame.draw.rect(screen, PLATE_RIM, face_rect, 2, border_radius=12)
+
+    # draw inner FIRST so it doesn't cover badges later
+    inner = face_rect.inflate(-18, -28)
+    pygame.draw.rect(screen, (22, 26, 34), inner, border_radius=10)
+
+    # tiny label strip at top (class color)
+    strip = pygame.Rect(face_rect.x, face_rect.y, face_rect.w, 18)
+    hid = getattr(pstate.hero, "id", pstate.hero)
+    col = HERO_COLORS.get(str(hid).upper(), (90, 90, 90))
+    pygame.draw.rect(screen, col, strip, border_radius=10)
+
+    # class name centered on strip
+    cap = FONT.render(hero_name(pstate.hero), True, WHITE)
+    screen.blit(cap, cap.get_rect(center=strip.center))
+
+    # health (bottom-right)
+    health_center = (face_rect.right - 20, face_rect.bottom - 18)
+    draw_badge_circle(health_center, 14, HEALTH_BADGE, str(max(0, pstate.health)), font=FONT)
+
+    # armor (small, above health)
+    if pstate.armor > 0:
+        armor_center = (health_center[0], health_center[1] - 26)
+        draw_badge_circle(armor_center, 11, ARMOR_BADGE, str(pstate.armor), text_color=WHITE, font=FONT)
+
+    # mana crystal on the right side
+    crystal = pygame.Rect(face_rect.right + CRYSTAL_PAD, face_rect.y + 6, CRYSTAL_W, face_rect.h - 12)
+    draw_mana_crystal_rect(crystal, pstate.mana, pstate.max_mana)
+
 
 def keyword_explanations_for_card(card_obj) -> List[str]:
     tips = []
@@ -465,24 +536,52 @@ def draw_name_footer(r: pygame.Rect, name: str):
     text_surf = FONT.render(nm, True, WHITE)
     screen.blit(text_surf, text_surf.get_rect(center=bar.center))
 
-def draw_text_box(r: pygame.Rect, text: str, max_lines: int, font=RULE_FONT):
-    # Top padding
+def draw_text_box(
+    r: pygame.Rect,
+    body_text: str,
+    max_lines: int,
+    *,
+    title: Optional[str] = None,
+    font_body=RULE_FONT,
+    font_title=BIG
+):
+    # Top padding inside the card art area
     top_pad = 45
 
-    # Reserve bottom area: name footer + stats + gaps
+    # Reserve bottom area: footer (type) + stats + gaps
     name_h  = 22
     stats_h = 28
     gap     = 4
     bottom_reserved = name_h + stats_h + gap + 6
 
-    box = pygame.Rect(r.x+10, r.y+top_pad, r.w-20, r.h - top_pad - bottom_reserved)
+    # Text box rect
+    box = pygame.Rect(r.x + 10, r.y + top_pad, r.w - 20, r.h - top_pad - bottom_reserved)
     pygame.draw.rect(screen, (28, 28, 34), box, border_radius=8)
 
-    lines = wrap_text(text, font, box.w-12)[:max_lines]
     y = box.y + 6
+
+    # --- Title (centered) ---
+    if title:
+        # shrink with ellipsis if needed
+        t_txt = title
+        while font_title.size(t_txt)[0] > box.w - 12 and len(t_txt) > 0:
+            t_txt = t_txt[:-1]
+        if len(t_txt) < len(title) and len(t_txt) > 0:
+            t_txt = t_txt[:-1] + "…"
+
+        ts = font_title.render(t_txt, True, WHITE)
+        screen.blit(ts, ts.get_rect(center=(box.centerx, y + ts.get_height()//2)))
+        y += ts.get_height() + 4
+
+        # thin divider under title
+        pygame.draw.line(screen, (60, 70, 85), (box.x + 6, y), (box.right - 6, y), 1)
+        y += 6
+
+    # --- Body (wrapped, left-aligned) ---
+    lines = wrap_text(body_text, font_body, box.w - 12)[:max_lines]
     for ln in lines:
-        surf = font.render(ln, True, WHITE)
-        screen.blit(surf, (box.x+6, y))
+        surf = font_body.render(ln, True, WHITE)
+        screen.blit(surf, (box.x + 6, y))
         y += surf.get_height() + 2
 
 def draw_minion_stats(r: pygame.Rect, attack: int, health: int,
@@ -527,10 +626,9 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
                 text = text[len(k):].lstrip(" :.-").strip()
 
         header = " / ".join(kw) 
-        final_text = header if header and not text else (header + ("\n" + text if text else ""))
-
-        draw_text_box(r, final_text, max_lines=6, font=RULE_FONT)   # <-- smaller font + more lines
-        draw_name_footer(r, card_obj.name)
+        body   = header if header and not text else (header + ("\n" + text if text else ""))
+        draw_text_box(r, body, max_lines=6, title=card_obj.name, font_body=RULE_FONT)
+        draw_name_footer(r, card_obj.type)
         draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"))
         if card_obj.type == "MINION":
             draw_minion_stats(
@@ -549,15 +647,16 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
 
         header = " / ".join(kws)
 
-        body = (getattr(minion_obj, "base_text", "") or "").strip()
+        text = (getattr(minion_obj, "base_text", "") or "").strip()
         # If body starts with a keyword line, trim it (avoid duplicate)
         for k in ["Taunt", "Charge", "Rush"]:
-            if body.lower().startswith(k.lower()):
-                body = body[len(k):].lstrip(" :.-").strip()
+            if text.lower().startswith(k.lower()):
+                text = text[len(k):].lstrip(" :.-").strip()
         # Final short text (2–3 lines on board)
-        final = header if header and not body else (header + ("\n" + body if body else ""))
+        body   = header if header and not text else (header + ("\n" + text if text else ""))
+        
 
-        draw_text_box(r, final, max_lines=3, font=RULE_FONT)
+        draw_text_box(r, body, max_lines=6, title=minion_obj.name, font_body=RULE_FONT)
 
         # Bottom UI
         draw_name_footer(r, minion_obj.name)
@@ -579,10 +678,12 @@ def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool
     if ready: pygame.draw.rect(screen, GREEN,r.inflate(10,10), 3, border_radius=16)
 
 # ---------- Layout ----------
-def _centered_row_rects(n: int, y: int) -> List[pygame.Rect]:
+def _centered_row_rects(n: int, y: int, container: Optional[pygame.Rect] = None) -> List[pygame.Rect]:
     if n <= 0: return []
+    if container is None:
+        container = pygame.Rect(0, 0, W, H)
     total_w = n * CARD_W + (n - 1) * MARGIN
-    start_x = max((W - total_w) // 2, MARGIN)
+    start_x = max(container.x + (container.w - total_w)//2, container.x + MARGIN)
     return [pygame.Rect(start_x + i * (CARD_W + MARGIN), y, CARD_W, CARD_H) for i in range(n)]
 
 def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
@@ -595,34 +696,39 @@ def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
 
 def layout_board(g: Game) -> Dict[str, Any]:
     hot = {"hand": [], "my_minions": [], "enemy_minions": [], "end_turn": None,
-           "face_enemy": None, "face_me": None,
-           "hp_enemy": None, "hp_me": None}   # NEW
+           "face_enemy": None, "face_me": None, "hp_enemy": None, "hp_me": None}
+
+    arena = battle_area_rect()
 
     # Enemy row
-    for m, r in zip(g.players[1].board, _centered_row_rects(len(g.players[1].board), ROW_Y_ENEMY)):
+    for m, r in zip(g.players[1].board, _centered_row_rects(len(g.players[1].board), ROW_Y_ENEMY, arena)):
         hot["enemy_minions"].append((m.id, r))
 
     # My row
-    for m, r in zip(g.players[0].board, _centered_row_rects(len(g.players[0].board), ROW_Y_ME)):
+    for m, r in zip(g.players[0].board, _centered_row_rects(len(g.players[0].board), ROW_Y_ME, arena)):
         hot["my_minions"].append((m.id, r))
 
-    # Hand row (stacked/overlapped)
+    # Hand row (unchanged)
     for (i, cid), r in zip(list(enumerate(g.players[0].hand)), _stacked_hand_rects(len(g.players[0].hand), ROW_Y_HAND)):
         hot["hand"].append((i, cid, r))
 
-    # Faces
-    hot["face_enemy"] = pygame.Rect(W//2 - 100, ROW_Y_ENEMY - 75, 200, 52)
+    # Faces: center on arena, not on whole window
+    hot["face_enemy"] = pygame.Rect(arena.centerx - FACE_W//2, ROW_Y_ENEMY - 75, FACE_W, FACE_H)
 
     face_me_y = ROW_Y_ME + CARD_H + 24
     max_face_me_y = ROW_Y_HAND - 68
     face_me_y = min(face_me_y, max_face_me_y)
-    hot["face_me"] = pygame.Rect(W//2 - 100, face_me_y, 200, 52)
+    hot["face_me"] = pygame.Rect(arena.centerx - FACE_W//2, face_me_y, FACE_W, FACE_H)
 
-    hot["hp_enemy"] = pygame.Rect(hot["face_enemy"].right + 10, hot["face_enemy"].y, 140, 52)
-    hot["hp_me"]    = pygame.Rect(hot["face_me"].right + 10,    hot["face_me"].y,    140, 52)
-    # End turn
+    # Hero power buttons (keep your current offsets)
+    hp_x_enemy = hot["face_enemy"].right + CRYSTAL_PAD + CRYSTAL_W + CRYSTAL_PAD
+    hp_x_me    = hot["face_me"].right    + CRYSTAL_PAD + CRYSTAL_W + CRYSTAL_PAD
+    hot["hp_enemy"] = pygame.Rect(hp_x_enemy, hot["face_enemy"].y, 150, 52)
+    hot["hp_me"]    = pygame.Rect(hp_x_me,    hot["face_me"].y,    150, 52)
+
     hot["end_turn"] = pygame.Rect(W - 170, H - 70, 150, 50)
     return hot
+
 
 def scale_rect_about_center(r: pygame.Rect, s: float, lift: int = 0) -> pygame.Rect:
     w, h = int(r.w * s * 1.2), int(r.h * s)
@@ -638,12 +744,6 @@ def hand_hover_index(hot, mx, my) -> Optional[int]:
     return None
 
 
-def draw_headers(g: Game):
-    ai = g.players[1]; me = g.players[0]
-    ai_armor = f" +{ai.armor}🛡" if ai.armor > 0 else ""
-    me_armor = f" +{me.armor}🛡" if me.armor > 0 else ""
-    centered_text(f"AI — {hero_name(ai.hero)} — HP:{ai.health}{ai_armor}  Hand:{len(ai.hand)}  Mana:{ai.mana}/{ai.max_mana}", 24)
-    centered_text(f"You — {hero_name(me.hero)} — HP:{me.health}{me_armor}  Hand:{len(me.hand)}  Mana:{me.mana}/{me.max_mana}", H - 10)
 
 def minion_ready_to_act(g: Game, m) -> bool:
     if m.has_attacked_this_turn or m.attack <= 0:
@@ -772,11 +872,15 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     highlight_enemy_minions = highlight_enemy_minions or set()
     highlight_my_minions = highlight_my_minions or set()
 
-    # Faces
-    pygame.draw.rect(screen, (158, 73, 73), hot["face_enemy"], border_radius=10)
-    screen.blit(FONT.render("Enemy Face", True, WHITE), (hot["face_enemy"].x+44, hot["face_enemy"].y+16))
-    pygame.draw.rect(screen, (73, 158, 93), hot["face_me"],    border_radius=10)
-    screen.blit(FONT.render("Your Face", True, WHITE), (hot["face_me"].x+54, hot["face_me"].y+16))
+    # --- Battleground panel/background ---
+    # A framed area spanning enemy row to your row
+    arena = battle_area_rect()
+    pygame.draw.rect(screen, BOARD_BG, arena, border_radius=16)
+    pygame.draw.rect(screen, BOARD_BORDER, arena, 2, border_radius=16)
+
+    # Hero plates (enemy + you)
+    draw_hero_plate(hot["face_enemy"], g.players[1], friendly=False)
+    draw_hero_plate(hot["face_me"],    g.players[0], friendly=True)
 
     # Hero Power buttons
     me = g.players[0]; ai = g.players[1]
@@ -988,7 +1092,16 @@ class AnimQueue:
                 try: step.on_finish()
                 except Exception as e: print("Animation callback error:", repr(e))
         return hidden_ids, top_overlay 
-
+    def peek_hidden_ids(self):
+        hidden = set()
+        if not self.queue:
+            return hidden
+        step = self.queue[0]
+        if step.kind == "play_move":
+            spawn_mid = step.data.get("spawn_mid")
+            if spawn_mid:
+                hidden.add(spawn_mid)
+        return hidden
 ANIMS = AnimQueue()
 
 def enqueue_attack_anim(hot, attacker_mid: int, target_rect: pygame.Rect, enemy: bool, on_hit):
@@ -1085,16 +1198,23 @@ def main():
         screen.fill(BG)
         hot = layout_board(g)
 
-        draw_headers(g)
+        #draw_headers(g)
         draw_action_log()
-        hidden, top_overlay = ANIMS.update_and_draw(g, hot)
+        # 1) get IDs to hide (no drawing yet)
+        hidden = ANIMS.peek_hidden_ids()
 
+        # 2) draw the board first (so the arena is underneath)
         draw_board(g, hot,
                 hidden_minion_ids=hidden,
                 highlight_enemy_minions=hilite_enemy_min,
                 highlight_my_minions=hilite_my_min,
                 highlight_enemy_face=hilite_enemy_face,
                 highlight_my_face=hilite_my_face)
+        # 3) now draw the animations ON TOP
+        _, top_overlay = ANIMS.update_and_draw(g, hot)
+        if top_overlay is not None:
+            screen.blit(top_overlay, (0, 0))
+
         if inspected_minion_id is not None:
             draw_card_inspector_for_minion(g, inspected_minion_id)
             # Input drain: allow close via right-click or ESC only
