@@ -7,7 +7,7 @@ from collections import deque
 from engine import Game, load_cards_from_json, IllegalAction
 from ai import pick_best_action
 
-DEBUG = True
+DEBUG = False
 
 pygame.init()
 # Fullscreen @ desktop resolution
@@ -70,7 +70,8 @@ ANIM_PLAY_MS    = 550
 ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
-AI_THINK_MS     = 250
+AI_THINK_MS     = 800
+START_GAME      = 1500
 
 # -------- LOGGING -------------
 
@@ -80,6 +81,19 @@ def add_log(msg: str):
         ACTION_LOG.append(line)
 
 def format_event(e, g, skip=False) -> str:
+    def _minion_name(g: Game, mid: int) -> str:
+        # 1) still alive?
+        loc = g.find_minion(mid)
+        if loc:
+            return loc[2].name
+        # 2) look in dead piles
+        for pid in (0, 1):
+            for dm in g.players[pid].dead_minions:
+                if dm.id == mid:
+                    return dm.name
+        # 3) fallback
+        return f"#{mid}"
+
     k = getattr(e, "kind", "")
     p = getattr(e, "payload", {})
 
@@ -116,11 +130,11 @@ def format_event(e, g, skip=False) -> str:
         tgt = p.get("target")
         if isinstance(tgt, str) and tgt.startswith("player:"):
             side = "You" if tgt.endswith("0") else "AI"
-            return f"Minion {p['attacker']} attacked {side}'s face."
-        return f"Minion {p['attacker']} attacked minion {tgt}."
+            return f"Minion {_minion_name(g, p['attacker'])} attacked {side}'s face."
+        return f"Minion {_minion_name(g, p['attacker'])} attacked {_minion_name(g, tgt)}."
     if k == "MinionDamaged":
         src = p.get("source","")
-        return f"Minion {p['minion']} took {p['amount']} dmg{f' ({src})' if src else ''}."
+        return f"{_minion_name(g, p['minion'])} took {p['amount']} dmg{f' ({src})' if src else ''}."
     if k == "PlayerDamaged":
         who = "You" if p["player"] == 0 else "AI"
         src = p.get("source","")
@@ -131,6 +145,7 @@ def format_event(e, g, skip=False) -> str:
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} healed {p['amount']}."
     if k == "MinionDied":
+        # you already store the name in the payload
         return f"{p.get('name','A minion')} died."
     if k == "Buff":
         return f"Minion {p['minion']} buffed (+{p.get('attack_delta',0)}/+{p.get('health_delta',0)})."
@@ -144,7 +159,17 @@ def format_event(e, g, skip=False) -> str:
     if k == "PlayerDefeated":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} was defeated."
-    return ""
+    if k == "SpellHit":
+        src = p.get("source", "Spell")
+        ttype = p.get("target_type")
+        if ttype == "player":
+            who = "You" if p.get("player") == 0 else "AI"
+            return f"{src} hits {who}'s face."
+        if ttype == "minion":
+            # payload may include name, but resolve live just in case
+            mid = p.get("minion")
+            return f"{src} hits {_minion_name(g, mid)}."
+        return ""
     
 def log_events(ev_list, g):
     for e in ev_list or []:
@@ -749,6 +774,11 @@ class AnimQueue:
             overlay.fill((0,0,0, min(120, int(150 * t))))
             screen.blit(overlay, (0,0))
             centered_text("AI is thinking...", H//2)
+        elif step.kind == "start_game":
+            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+            overlay.fill((0,0,0, min(120, int(150 * t))))
+            screen.blit(overlay, (0,0))
+            centered_text("Game starting...", H//2)
 
         if step.done():
             self.queue.pop(0)
@@ -823,6 +853,7 @@ def minion_under_point(g: Game, hot, mx, my) -> Optional[int]:
 GLOBAL_GAME: Game
 
 def start_game() -> Game:
+    ANIMS.push(AnimStep("start_game", 1500, {}))
     g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy())
     ev = g.start_game()
     apply_post_summon_hooks(g, ev)
@@ -842,7 +873,7 @@ def main():
     hilite_enemy_face: bool = False
     hilite_my_face: bool = False
     inspected_minion_id: Optional[int] = None
-
+    
     RUNNING = True
     while RUNNING:
         clock.tick(60)
@@ -906,7 +937,7 @@ def main():
                                 ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
                                 log_events(ev, g)
 
-                                ev = apply_post_summon_hooks(g, ev)
+                                apply_post_summon_hooks(g, ev)
                                 log_events(ev, g)
                                 post = layout_board(g)
                                 for e in ev:
@@ -998,8 +1029,7 @@ def main():
                                 try:
                                     ev = g.play_card(0, i, target_player=1)
                                     log_events(ev, g)
-                                    ev = apply_post_summon_hooks(g, ev)
-                                    log_events(ev, g)
+                                    apply_post_summon_hooks(g, ev)
                                     enqueue_flash(enemy_face_rect(layout_board(g)))
                                     
                                 except IllegalAction: pass
@@ -1018,8 +1048,8 @@ def main():
                                 try:
                                     ev = g.play_card(0, i, target_player=0)
                                     log_events(ev, g)
-                                    ev = apply_post_summon_hooks(g, ev)
-                                    log_events(ev, g)
+                                    apply_post_summon_hooks(g, ev)
+                                   
                                     enqueue_flash(my_face_rect(layout_board(g)))
                                     
                                 except IllegalAction: pass
@@ -1040,8 +1070,7 @@ def main():
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         log_events(ev, g)
-                                        ev = apply_post_summon_hooks(g, ev)
-                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
                                         enqueue_flash(r)
                                         
                                     except IllegalAction: pass
@@ -1063,8 +1092,7 @@ def main():
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         log_events(ev, g)
-                                        ev = apply_post_summon_hooks(g, ev)
-                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
                                         enqueue_flash(r)
                                         
                                     except IllegalAction: pass
@@ -1094,8 +1122,7 @@ def main():
                                     try:
                                         ev = g.play_card(0, i)
                                         log_events(ev, g)
-                                        ev = apply_post_summon_hooks(g, ev)
-                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
                                     except IllegalAction: pass
                                 dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,

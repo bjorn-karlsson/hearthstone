@@ -78,6 +78,7 @@ class PlayerState:
     hand: List[str] = field(default_factory=list)
     board: List[Minion] = field(default_factory=list)
     graveyard: List[str] = field(default_factory=list)
+    dead_minions: List[Minion] = field(default_factory=list)
     health: int = 30
     armor: int = 0
     max_mana: int = 0
@@ -158,6 +159,7 @@ class Game:
             return ev
         pid, idx, m = loc
         self.players[pid].board.pop(idx)
+        self.players[pid].dead_minions.append(m)
         ev.append(Event("MinionDied", {"minion": m.id, "owner": pid, "reason": reason, "name": m.name}))
         if m.deathrattle:
             ev += m.deathrattle(self, m)
@@ -407,11 +409,13 @@ def _fx_random_pings(params):
             pool = [("player", opp)] + [("minion", m.id) for m in g.players[opp].board if m.is_alive()]
             tgt = g.rng.choice(pool)
             if tgt[0] == "player":
+                ev.append(Event("SpellHit", {"source": name, "target_type":"player", "player": opp}))
                 ev += g.deal_damage_to_player(opp, 1, source=name)
             else:
                 loc = g.find_minion(tgt[1])
                 if loc:
                     _,_,m = loc
+                    ev.append(Event("SpellHit", {"source": name, "target_type":"minion", "minion": m.id, "name": m.name}))
                     ev += g.deal_damage_to_minion(m, 1, source=name)
         return ev
     return run
@@ -422,9 +426,11 @@ def _fx_aoe_damage(params):
         name = getattr(source_obj, "name", "Effect")
         opp = g.other(g.active_player)
         ev = []
+        ev.append(Event("SpellHit", {"source": name, "target_type":"player", "player": opp, "aoe": True}))
         ev += g.deal_damage_to_player(opp, n, source=name)
         for m in list(g.players[opp].board):
             if m.is_alive():
+                ev.append(Event("SpellHit", {"source": name, "target_type":"minion", "minion": m.id, "name": m.name, "aoe": True}))
                 ev += g.deal_damage_to_minion(m, n, source=name)
         return ev
     return run
