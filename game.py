@@ -2,9 +2,12 @@ import pygame
 import sys
 from typing import Optional, Tuple, List, Dict, Any
 import random
+from collections import deque
 
 from engine import Game, load_cards_from_json, IllegalAction
 from ai import pick_best_action
+
+DEBUG = True
 
 pygame.init()
 # Fullscreen @ desktop resolution
@@ -15,6 +18,8 @@ pygame.display.set_caption("Python Card Battler (Animated-Locked + Targets)")
 FONT = pygame.font.SysFont(None, 22)
 BIG  = pygame.font.SysFont(None, 32)
 RULE_FONT = pygame.font.SysFont(None, 18)  # smaller for rules text
+
+
 
 
 # Colors
@@ -32,6 +37,14 @@ COST_BADGE   = (60, 120, 230)
 ATTK_COLOR   = (230, 170, 60)  # orange-yellow for attack
 HP_OK        = WHITE
 HP_HURT      = (230, 80, 80)   # red when damaged
+
+LOG_MAX_LINES = 40
+LOG_PANEL_W   = 320
+LOG_BG        = (18, 22, 26)
+LOG_TEXT      = (215, 215, 215)
+LOG_ACCENT    = (140, 170, 255)
+
+ACTION_LOG = deque(maxlen=LOG_MAX_LINES)
 
 RARITY_COLORS = {
     "COMMON":     (235, 235, 235),  # white
@@ -58,6 +71,86 @@ ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
 AI_THINK_MS     = 250
+
+# -------- LOGGING -------------
+
+def add_log(msg: str):
+    if not msg: return
+    for line in msg.splitlines():
+        ACTION_LOG.append(line)
+
+def format_event(e, g, skip=False) -> str:
+    k = getattr(e, "kind", "")
+    p = getattr(e, "payload", {})
+
+    if DEBUG and not skip:
+        return f"{k}: {format_event(e, g, True)}"
+
+    if k == "GameStart":
+        who = "You" if p.get("active_player") == 0 else "AI"
+        return f"Game started. {who} goes first."
+    if k == "TurnStart":
+        who = "You" if p.get("player") == 0 else "AI"
+        return f"— Turn {p.get('turn', '')} start: {who}"
+    if k == "TurnEnd":
+        who = "You" if p.get("player") == 0 else "AI"
+        return f"Turn ended: {who}"
+    if k == "CardDrawn":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} drew a card."
+    if k == "CardBurned":
+        who = "You" if p["player"] == 0 else "AI"
+        # try to show the card name if available
+        cid = p.get("card", "")
+        name = g.cards_db.get(cid).name if cid in g.cards_db else cid or "a card"
+        return f"{who} burned {name} (hand full)."
+    if k == "CardPlayed":
+        who = "You" if p["player"] == 0 else "AI"
+        cid = p.get("card","")
+        name = p.get("name", g.cards_db.get(cid, type("x",(object,),{"name":cid})).name)
+        return f"{who} played {name}."
+    if k == "MinionSummoned":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} summoned {p.get('name','a minion')}."
+    if k == "Attack":
+        tgt = p.get("target")
+        if isinstance(tgt, str) and tgt.startswith("player:"):
+            side = "You" if tgt.endswith("0") else "AI"
+            return f"Minion {p['attacker']} attacked {side}'s face."
+        return f"Minion {p['attacker']} attacked minion {tgt}."
+    if k == "MinionDamaged":
+        src = p.get("source","")
+        return f"Minion {p['minion']} took {p['amount']} dmg{f' ({src})' if src else ''}."
+    if k == "PlayerDamaged":
+        who = "You" if p["player"] == 0 else "AI"
+        src = p.get("source","")
+        return f"{who} took {p['amount']} dmg{f' ({src})' if src else ''}."
+    if k == "MinionHealed":
+        return f"Minion {p['minion']} healed {p['amount']}."
+    if k == "PlayerHealed":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} healed {p['amount']}."
+    if k == "MinionDied":
+        return f"{p.get('name','A minion')} died."
+    if k == "Buff":
+        return f"Minion {p['minion']} buffed (+{p.get('attack_delta',0)}/+{p.get('health_delta',0)})."
+    if k == "BuffKeyword":
+        return f"Minion {p['minion']} gained {p.get('keyword','a keyword')}."
+    if k == "Silenced":
+        return f"Minion {p['minion']} was silenced."
+    if k == "GainMana":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} gained {p.get('temp',1)} temporary mana."
+    if k == "PlayerDefeated":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} was defeated."
+    return ""
+    
+def log_events(ev_list, g):
+    for e in ev_list or []:
+        s = format_event(e, g)
+        if s: add_log(s)
+
 
 # --------- Randomized starter deck ----------
 def make_starter_deck(db, seed=None):
@@ -118,6 +211,34 @@ STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
 STARTER_DECK_AI = make_starter_deck(db, random.randint(1, 50000))
 
 # ---------- Drawing helpers (reworked cards) ----------
+
+def draw_action_log():
+    # Panel
+    panel = pygame.Rect(8, 8, LOG_PANEL_W, H - 16)
+    pygame.draw.rect(screen, LOG_BG, panel, border_radius=8)
+    pygame.draw.rect(screen, (42, 50, 60), panel, 1, border_radius=8)
+
+    # Title
+    title = BIG.render("Combat Log", True, LOG_ACCENT)
+    screen.blit(title, (panel.x + 10, panel.y + 8))
+
+    # Text area
+    y = panel.y + 44
+    x = panel.x + 10
+    max_w = panel.w - 20
+
+    # Render from newest -> oldest but clip to visible area
+    lines = list(ACTION_LOG)[-200:]  # safety
+    # We want oldest at top; ACTION_LOG already keeps order, so iterate directly
+    for line in lines:
+        # wrap long lines
+        wrapped = wrap_text(line, RULE_FONT, max_w)
+        for wline in wrapped:
+            surf = RULE_FONT.render(wline, True, LOG_TEXT)
+            if y + surf.get_height() > panel.bottom - 10:
+                return
+            screen.blit(surf, (x, y))
+            y += surf.get_height() + 2
 
 def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
     """Green-glow condition for cards in hand."""
@@ -703,7 +824,9 @@ GLOBAL_GAME: Game
 
 def start_game() -> Game:
     g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy())
-    apply_post_summon_hooks(g, g.start_game())
+    ev = g.start_game()
+    apply_post_summon_hooks(g, ev)
+    log_events(ev, g)  # <—
     return g
 
 def main():
@@ -727,6 +850,7 @@ def main():
         hot = layout_board(g)
 
         draw_headers(g)
+        draw_action_log()
         hidden = ANIMS.update_and_draw(g, hot)
         draw_board(g, hot,
                    hidden_minion_ids=hidden,
@@ -767,7 +891,9 @@ def main():
                     kind = act[0]
                     if kind == 'end':
                         def do_end():
-                            try: g.end_turn(1)
+                            try: 
+                                ev = g.end_turn(1)
+                                log_events(ev, g)
                             except IllegalAction: pass
                         ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=do_end))
 
@@ -778,7 +904,10 @@ def main():
                         def do_on_finish(i=idx, tpp=tp, tmm=tm):
                             try:
                                 ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
-                                apply_post_summon_hooks(g, ev)
+                                log_events(ev, g)
+
+                                ev = apply_post_summon_hooks(g, ev)
+                                log_events(ev, g)
                                 post = layout_board(g)
                                 for e in ev:
                                     if e.kind == "PlayerDamaged":
@@ -809,7 +938,9 @@ def main():
                                 if mid == tm: tr = r; break
                         if tr is None: tr = my_face_rect(before)
                         def on_hit(aid=aid, tpp=tp, tmm=tm):
-                            try: g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
+                            try: 
+                                ev = g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
+                                log_events(ev, g)
                             except IllegalAction: return
                             post = layout_board(g)
                             if tmm is None:
@@ -846,7 +977,9 @@ def main():
 
                     # End turn
                     if hot["end_turn"].collidepoint(mx, my):
-                        try: g.end_turn(0)
+                        try: 
+                            ev = g.end_turn(0)
+                            log_events(ev, g)
                         except IllegalAction: pass
                         selected_attacker = None
                         waiting_target_for_play = None
@@ -864,8 +997,11 @@ def main():
                             def on_finish(i=idx):
                                 try:
                                     ev = g.play_card(0, i, target_player=1)
-                                    apply_post_summon_hooks(g, ev)
+                                    log_events(ev, g)
+                                    ev = apply_post_summon_hooks(g, ev)
+                                    log_events(ev, g)
                                     enqueue_flash(enemy_face_rect(layout_board(g)))
+                                    
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
@@ -881,8 +1017,11 @@ def main():
                             def on_finish(i=idx):
                                 try:
                                     ev = g.play_card(0, i, target_player=0)
-                                    apply_post_summon_hooks(g, ev)
+                                    log_events(ev, g)
+                                    ev = apply_post_summon_hooks(g, ev)
+                                    log_events(ev, g)
                                     enqueue_flash(my_face_rect(layout_board(g)))
+                                    
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
@@ -900,8 +1039,11 @@ def main():
                                 def on_finish(i=idx, mid_target=mid):
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
-                                        apply_post_summon_hooks(g, ev)
+                                        log_events(ev, g)
+                                        ev = apply_post_summon_hooks(g, ev)
+                                        log_events(ev, g)
                                         enqueue_flash(r)
+                                        
                                     except IllegalAction: pass
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": r, "label": db[cid].name},
@@ -920,8 +1062,11 @@ def main():
                                 def on_finish(i=idx, mid_target=mid):
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
-                                        apply_post_summon_hooks(g, ev)
+                                        log_events(ev, g)
+                                        ev = apply_post_summon_hooks(g, ev)
+                                        log_events(ev, g)
                                         enqueue_flash(r)
+                                        
                                     except IllegalAction: pass
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": r, "label": db[cid].name},
@@ -948,7 +1093,9 @@ def main():
                                 def on_finish(i=i):
                                     try:
                                         ev = g.play_card(0, i)
-                                        apply_post_summon_hooks(g, ev)
+                                        log_events(ev, g)
+                                        ev = apply_post_summon_hooks(g, ev)
+                                        log_events(ev, g)
                                     except IllegalAction: pass
                                 dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
@@ -982,7 +1129,9 @@ def main():
                         for emid, r in hot["enemy_minions"]:
                             if r.collidepoint(mx, my) and emid in hilite_enemy_min:
                                 def on_hit(attacker=selected_attacker, em=emid):
-                                    try: g.attack(0, attacker, target_minion=em)
+                                    try: 
+                                        ev = g.attack(0, attacker, target_minion=em)
+                                        log_events(ev, g)
                                     except IllegalAction: pass
                                 enqueue_attack_anim(hot, attacker_mid=selected_attacker, target_rect=r, enemy=False, on_hit=on_hit)
                                 selected_attacker = None
@@ -993,7 +1142,9 @@ def main():
                         if did: continue
                         if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
                             def on_hit(attacker=selected_attacker):
-                                try: g.attack(0, attacker, target_player=1)
+                                try: 
+                                    ev = g.attack(0, attacker, target_player=1)
+                                    log_events(ev, g)
                                 except IllegalAction: return
                                 enqueue_flash(enemy_face_rect(layout_board(g)))
                             enqueue_attack_anim(hot, attacker_mid=selected_attacker, target_rect=enemy_face_rect(hot), enemy=False, on_hit=on_hit)

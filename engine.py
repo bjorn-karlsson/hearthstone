@@ -107,11 +107,13 @@ class IllegalAction(Exception):
     pass
 
 class Game:
-    def __init__(self, cards_db: Dict[str, Card], p0_deck: List[str], p1_deck: List[str], seed: int=random.randint(1, 1337)):
+    def __init__(self, cards_db: Dict[str, Card], p0_deck: List[str], p1_deck: List[str], seed: Optional[int] = None):
         self.cards_db = cards_db
         self.players = [PlayerState(0, list(p0_deck)), PlayerState(1, list(p1_deck))]
         self.active_player = 0
         self.turn = 0
+        if seed is None:
+            seed = random.randint(1, 2_147_483_647)
         self.rng = random.Random(seed)
         self.next_minion_id = 1
         self.history: List[Event] = []
@@ -137,7 +139,7 @@ class Game:
             p.armor -= absorb
             dmg -= absorb
         p.health -= dmg
-        ev = [Event("PlayerDamaged", {"player": pid, "amount": amount, "source": source})]
+        ev = [Event("PlayerDamaged", {"player": pid, "amount": dmg, "absorbed": amount - dmg, "source": source})]
         if p.health <= 0:
             ev.append(Event("PlayerDefeated", {"player": pid}))
         return ev
@@ -185,7 +187,9 @@ class Game:
 
     def start_turn(self, pid:int) -> List[Event]:
         p = self.players[pid]
-        self.turn += 1 if pid == 0 else 0
+        if pid == 0:
+            self.turn += 1
+        turn_number = self.turn if pid == 0 else max(1, self.turn)
         p.max_mana = min(10, p.max_mana + 1)
         p.mana = p.max_mana
         for m in p.board:
@@ -193,7 +197,7 @@ class Game:
             m.has_attacked_this_turn = False
             m.summoned_this_turn = False
             m.can_attack = m.charge or (not m.exhausted)
-        ev = [Event("TurnStart", {"player": pid, "turn": self.turn})]
+        ev = [Event("TurnStart", {"player": pid, "turn": turn_number})]
         ev += p.draw(self, 1)
         return ev
 
@@ -565,8 +569,10 @@ def _fx_transform(params, json_db_tokens):
         # destroy target (without deathrattle)
         m.deathrattle = None
         ev = g.destroy_minion(m, reason="Transform")
-        # summon token at same side
-        spec = json_db_tokens[token_id]
+        # summon token at same side (ensure id present)
+        raw = json_db_tokens[token_id]
+        spec = dict(raw)
+        spec.setdefault("id", token_id)
         ev += _summon_from_card_spec(g, pid, spec, 1)
         return ev
     return run
