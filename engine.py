@@ -107,7 +107,7 @@ class IllegalAction(Exception):
     pass
 
 class Game:
-    def __init__(self, cards_db: Dict[str, Card], p0_deck: List[str], p1_deck: List[str], seed: int=1337):
+    def __init__(self, cards_db: Dict[str, Card], p0_deck: List[str], p1_deck: List[str], seed: int=random.randint(1, 1337)):
         self.cards_db = cards_db
         self.players = [PlayerState(0, list(p0_deck)), PlayerState(1, list(p1_deck))]
         self.active_player = 0
@@ -164,10 +164,20 @@ class Game:
     # ---------- Turn Flow ----------
     def start_game(self) -> List[Event]:
         ev: List[Event] = []
-        ev += self.players[0].draw(self, 3)
-        ev += self.players[1].draw(self, 4)
+
+        # Randomize starting player (0 = You, 1 = AI)
+        self.active_player = self.rng.choice([0, 1])
+        first  = self.active_player
+        second = self.other(first)
+
+        # Mulligan-size draws
+        ev += self.players[first].draw(self, 3)   # first: 3 cards
+        ev += self.players[second].draw(self, 4)  # second: 4 cards
+
+        # Give Coin to the player going second (if present in DB)
         if "THE_COIN" in self.cards_db:
-            self.players[1].hand.append("THE_COIN")
+            self.players[second].hand.append("THE_COIN")
+
         ev.append(Event("GameStart", {"active_player": self.active_player}))
         ev += self.start_turn(self.active_player)
         self.history += ev

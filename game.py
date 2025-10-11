@@ -80,7 +80,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEROY_JENKINS"
     ]
 
-    desired = ["LEGENDARY_LEROY_JENKINS"]  * 30
+    #desired = ["LEGENDARY_LEROY_JENKINS"]  * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -118,6 +118,33 @@ STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
 STARTER_DECK_AI = make_starter_deck(db, random.randint(1, 50000))
 
 # ---------- Drawing helpers (reworked cards) ----------
+
+def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
+    """Green-glow condition for cards in hand."""
+    c = g.cards_db[cid]
+    p = g.players[pid]
+
+    # Mana + basic board space for minions
+    if p.mana < c.cost:
+        return False
+    if c.type == "MINION" and len(p.board) >= 7:
+        return False
+
+    # Optional: simple target availability checks using JSON "_TARGETING"
+    targ_map = g.cards_db.get("_TARGETING", {})
+    need = (targ_map.get(cid, "none") or "none").lower()
+
+    if need in ("friendly_minion", "friendly_minions"):
+        return any(m.is_alive() for m in p.board)
+    if need in ("enemy_minion", "enemy_minions"):
+        opp = 1 - pid
+        return any(m.is_alive() for m in g.players[opp].board)
+    if need in ("any_minion", "any_minions"):
+        opp = 1 - pid
+        return any(m.is_alive() for m in p.board) or any(m.is_alive() for m in g.players[opp].board)
+
+    # "enemy_character" / "any_character" are always targetable (face exists)
+    return True
 
 def draw_rarity_droplet(r: pygame.Rect, rarity: Optional[str]):
     """Small gem centered at bottom of the card."""
@@ -472,6 +499,10 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         pygame.draw.rect(screen, (0, 0, 0, 40), shadow, border_radius=12)
         draw_card_frame(r, CARD_BG_HAND, card_obj=c, in_hand=True)
 
+        # NEW: playable glow for your turn
+        if g.active_player == 0 and card_is_playable_now(g, 0, cid):
+            pygame.draw.rect(screen, GREEN, r.inflate(10, 10), 3, border_radius=16)
+
     # hovered last (zoomed + lifted)
     if hover_idx is not None:
         # find its original rect
@@ -487,6 +518,8 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
             glow = rz.inflate(14, 14)
             pygame.draw.rect(screen, (255, 255, 255), glow, 6, border_radius=18)
             draw_card_frame(rz, CARD_BG_HAND, card_obj=c, in_hand=True)
+            if g.active_player == 0 and card_is_playable_now(g, 0, cid0):
+                pygame.draw.rect(screen, GREEN, rz.inflate(12, 12), 4, border_radius=18)
 
     # End turn
     pygame.draw.rect(screen, BLUE if g.active_player == 0 else (90, 90, 90), hot["end_turn"], border_radius=8)
@@ -668,8 +701,8 @@ def minion_under_point(g: Game, hot, mx, my) -> Optional[int]:
 # ---------- Main loop ----------
 GLOBAL_GAME: Game
 
-def start_game(seed=1317) -> Game:
-    g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy(), seed=seed)
+def start_game() -> Game:
+    g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy())
     apply_post_summon_hooks(g, g.start_game())
     return g
 
