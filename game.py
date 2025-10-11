@@ -741,7 +741,9 @@ class AnimQueue:
     def busy(self) -> bool: return len(self.queue) > 0
     def update_and_draw(self, g: Game, hot):
         hidden_ids = set()
-        if not self.queue: return hidden_ids
+        top_overlay = None                         # <-- NEW
+        if not self.queue:
+            return hidden_ids, top_overlay        # <-- changed
         step = self.queue[0]
         if step.start_ms is None: step.start()
         t = ease_out(step.progress())
@@ -770,9 +772,13 @@ class AnimQueue:
             screen.blit(s, (target.x, target.y))
 
         elif step.kind == "think_pause":
+            # build an overlay surface to draw LATER (on top)
             overlay = pygame.Surface((W, H), pygame.SRCALPHA)
             overlay.fill((0,0,0, min(120, int(150 * t))))
-            screen.blit(overlay, (0,0))
+            # render the text onto the overlay too
+            txt = BIG.render("AI is thinking...", True, WHITE)
+            overlay.blit(txt, txt.get_rect(center=(W//2, H//2)))
+            top_overlay = overlay 
             centered_text("AI is thinking...", H//2)
         elif step.kind == "start_game":
             overlay = pygame.Surface((W, H), pygame.SRCALPHA)
@@ -785,7 +791,7 @@ class AnimQueue:
             if step.on_finish:
                 try: step.on_finish()
                 except Exception as e: print("Animation callback error:", repr(e))
-        return hidden_ids
+        return hidden_ids, top_overlay 
 
 ANIMS = AnimQueue()
 
@@ -882,13 +888,14 @@ def main():
 
         draw_headers(g)
         draw_action_log()
-        hidden = ANIMS.update_and_draw(g, hot)
+        hidden, top_overlay = ANIMS.update_and_draw(g, hot)
+
         draw_board(g, hot,
-                   hidden_minion_ids=hidden,
-                   highlight_enemy_minions=hilite_enemy_min,
-                   highlight_my_minions=hilite_my_min,
-                   highlight_enemy_face=hilite_enemy_face,
-                   highlight_my_face=hilite_my_face)
+                hidden_minion_ids=hidden,
+                highlight_enemy_minions=hilite_enemy_min,
+                highlight_my_minions=hilite_my_min,
+                highlight_enemy_face=hilite_enemy_face,
+                highlight_my_face=hilite_my_face)
         if inspected_minion_id is not None:
             draw_card_inspector_for_minion(g, inspected_minion_id)
             # Input drain: allow close via right-click or ESC only
@@ -913,7 +920,8 @@ def main():
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: RUNNING = False
             pygame.display.flip()
             continue
-
+        if top_overlay is not None:
+            screen.blit(top_overlay, (0, 0))
         # ----- AI turn -----
         if g.active_player == 1:
             if not ANIMS.busy():
