@@ -91,6 +91,24 @@
             "targeting": "friendly_minion"
         },
         {
+            "id": "SHATTERED_SUN_CLERIC",
+            "name": "Shattered Sun Cleric",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 3,
+            "health": 2,
+            "rarity": "Common",
+            "text": "Battlecry: Give a friendly minion +1/+1",
+            "battlecry": [
+                {
+                    "effect": "add_stats",
+                    "attack": 1,
+                    "health": 1
+                }
+            ],
+            "targeting": "friendly_minion"
+        },
+        {
             "id": "SCRAPPY_SCAVENGER",
             "name": "Scrappy Scavenger",
             "type": "MINION",
@@ -129,6 +147,64 @@
             "cost": 3,
             "attack": 3,
             "health": 4,
+            "keywords": [
+                "Taunt"
+            ],
+            "text": "Taunt."
+        },
+        {
+            "id": "KOBOLD_GEOMANCER",
+            "name": "Kobold Geomancer",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "rarity": "Common",
+            "keywords": [
+                "Spell Damage"
+            ],
+            "spell_damage": 1,
+            "text": "Spell Damage +1"
+        },
+        {
+            "id": "RAID_LEADER",
+            "name": "Raid Leader",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 2,
+            "health": 3,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Your other minions have +1 damage.",
+            "aura": {
+                "scope": "other_friendly_minions",
+                "attack": 1
+            }
+        },
+        {
+            "id": "STORMWIND_CHAMPION",
+            "name": "Stormwind Champion",
+            "type": "MINION",
+            "cost": 7,
+            "attack": 6,
+            "health": 6,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Your other minions have +1/+1.",
+            "aura": {
+                "scope": "other_friendly_minions",
+                "attack": 1,
+                "health": 1
+            }
+        },
+        {
+            "id": "SHIELDMASTA",
+            "name": "Sen’jin Shieldmasta",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 4,
+            "attack": 3,
+            "health": 5,
             "keywords": [
                 "Taunt"
             ],
@@ -213,6 +289,23 @@
             "targeting": "none"
         },
         {
+            "id": "SPELLBREAKER",
+            "name": "Spellbreaker",
+            "type": "MINION",
+            "cost": 4,
+            "attack": 4,
+            "health": 3,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Battlecry: Silence a character.",
+            "targeting": "any_character",
+            "battlecry": [
+                {
+                    "effect": "silence"
+                }
+            ]
+        },
+        {
             "id": "WOLFRIDER",
             "name": "Wolfrider",
             "type": "MINION",
@@ -255,6 +348,41 @@
                 }
             ],
             "targeting": "any_character"
+        },
+        {
+            "id": "VOODOO_DOCTOR",
+            "name": "Voodoo Doctor",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 1,
+            "attack": 2,
+            "health": 1,
+            "text": "Battlecry: Restore 2 Health.",
+            "battlecry": [
+                {
+                    "effect": "heal",
+                    "amount": 2,
+                    "target": "any_character"
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
+            "id": "STORMPIKE_COMMANDO",
+            "name": "Stormpike Commando",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 5,
+            "attack": 4,
+            "health": 2,
+            "text": "Battlecry: Deal 2 damage to the enemy hero",
+            "battlecry": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 2,
+                    "target": "enemy_face"
+                }
+            ]
         },
         {
             "id": "KOBOLD_PING",
@@ -398,6 +526,15 @@
             "health": 5
         },
         {
+            "id": "OASIS_SNAPJAW",
+            "name": "Oasis Snapjaw",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 4,
+            "attack": 2,
+            "health": 7
+        },
+        {
             "id": "BOULDERFIST_OGRE",
             "name": "Boulderfist Ogre",
             "type": "MINION",
@@ -407,11 +544,29 @@
             "health": 7
         },
         {
+            "id": "CORE_HOUND",
+            "name": "Core Hound",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 7,
+            "attack": 9,
+            "health": 5
+        },
+        {
+            "id": "WAR_GOLEM",
+            "name": "War Golem",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 7,
+            "attack": 7,
+            "health": 7
+        },
+        {
             "id": "FIREBALL_LITE",
             "name": "Fireball",
             "type": "SPELL",
             "rarity": "Rare",
-            "cost": 4,
+            "cost": 1,
             "text": "Deal 4 damage.",
             "on_cast": [
                 {

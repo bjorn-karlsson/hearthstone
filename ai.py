@@ -1,22 +1,138 @@
 # ai.py
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 from engine import Game, IllegalAction
 
 Action = Tuple[str, ...]  # ('end',) or ('play', idx, target_player, target_minion) or ('attack', attacker_id, target_player, target_minion)
 
-# --- Card groups (update if you add new scripts) ---
-HEAL_SPELLS       = {"HOLY_LIGHT_LITE"}           # spell: heal 6 any character
-HEAL_BC_MINIONS   = {"EARTHEN_RING"}              # minion: battlecry heal 3 any character
-DIRECT_FACE_DMGS  = {"FIREBALL_LITE"}             # direct face damage we can count for lethal
-RANDOM_DMG_AOES   = {"ARCANE_MISSILES_LITE"}      # random split; we evaluate value
-AOE_BOARD_WIPES   = {"CONSECRATION_LITE", "FLAMESTRIKE_LITE"}  # minion-clear biased
-BUFF_MINION       = {"BLESSING_OF_MIGHT_LITE", "BLESSING_OF_KINGS_LITE", "GIVE_TAUNT", "GIVE_CHARGE", "GIVE_RUSH"}
-HARD_DISABLE      = {"SILENCE_LITE", "POLYMORPH_LITE"}
-DRAW_SPELLS       = {"ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT"}
-TOKEN_SUMMONERS   = {"MUSTER_FOR_BATTLE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE", "CHARGE_RUSH_2_2"}
 
 # If you let AI see The Coin:
 THE_COIN          = {"THE_COIN"}
+
+
+
+def _raw(g: Game, cid: str) -> Dict[str, Any]:
+    return g.cards_db.get("_RAW", {}).get(cid, {})
+
+def _card_effects(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+    # prefer on_cast for spells, battlecry for minions; support both
+    effs = []
+    if isinstance(raw.get("on_cast"), list):
+        effs += raw["on_cast"]
+    if isinstance(raw.get("battlecry"), list):
+        effs += raw["battlecry"]
+    return effs
+
+def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Returns (kind, info) where kind in:
+      'heal','buff','disable','burn','aoe','random_dmg','draw','summon','generic_minion','unknown'
+    """
+    raw = _raw(g, cid)
+    card = g.cards_db[cid]
+    effs = _card_effects(raw)
+
+    # scan effects
+    has = lambda name: any(e.get("effect") == name for e in effs)
+    get_first = lambda name, key, default=0: next((int(e.get(key, default)) for e in effs if e.get("effect")==name and isinstance(e.get(key, None),(int,str))), default)
+
+    if has("heal"):
+        amt = get_first("heal", "amount", 0)
+        return "heal", {"amount": amt, "targeting": raw.get("targeting", "").lower()}
+    if has("add_stats") or has("add_attack") or has("add_keyword"):
+        return "buff", {"targeting": raw.get("targeting", "").lower()}
+    if has("silence") or has("transform"):
+        return "disable", {"targeting": raw.get("targeting", "").lower()}
+    if has("aoe_damage") or has("aoe_damage_minions"):
+        amt = get_first("aoe_damage", "amount", get_first("aoe_damage_minions","amount",0))
+        return "aoe", {"amount": amt}
+    if has("random_pings"):
+        cnt = get_first("random_pings", "count", 0)
+        return "random_dmg", {"count": cnt}
+    if has("deal_damage"):
+        amt = get_first("deal_damage", "amount", 0)
+        tgt = next((e.get("target") for e in effs if e.get("effect")=="deal_damage" and "target" in e), None)
+        return "burn", {"amount": amt, "target": (tgt or raw.get("targeting","")).lower()}
+    if has("draw"):
+        cnt = get_first("draw","count",1)
+        return "draw", {"count": cnt}
+    if has("summon"):
+        # rough count (multiple 'summon' effects add up)
+        total = 0
+        for e in effs:
+            if e.get("effect") == "summon":
+                total += int(e.get("count", 1))
+        return "summon", {"count": total}
+
+    if card.type == "MINION":
+        return "generic_minion", {"attack": card.attack, "health": card.health, "cost": card.cost}
+
+    return "unknown", {}
+
+# --- Hero power gating/usage for AI ---
+
+def can_use_hero_power_ai(g: Game, pid: int) -> bool:
+    """Copy of the UI gating but engine-only; avoids importing UI code."""
+    p = g.players[pid]
+    cost = getattr(p.hero.power, "cost", 2)
+    if p.mana < cost or p.hero_power_used_this_turn:
+        return False
+    # Example: Paladin still needs board space
+    if p.hero.id.upper() == "PALADIN" and len(p.board) >= 7:
+        return False
+    return True
+
+
+def maybe_use_hero_power(g: Game, pid: int):
+    """
+    If the current hero power is affordable and makes sense, use it.
+    Returns the list of events ([]) if not used or on illegal.
+    Never raises.
+    """
+    if g.active_player != pid:
+        return []
+    try:
+        if not can_use_hero_power_ai(g, pid):
+            return []
+
+        hero_id = g.players[pid].hero.id.upper()
+        me = g.players[pid]
+        opp = g.players[1 - pid]
+
+        # Simple, readable heuristics matching your previous inline logic:
+
+        if hero_id == "HUNTER":
+            # Always shoot face.
+            return g.use_hero_power(pid)
+
+        if hero_id == "WARRIOR":
+            # Armor up is always fine.
+            return g.use_hero_power(pid)
+
+        if hero_id == "WARLOCK":
+            # Life tap early/mid is generally fine; avoid if hand too big or hp too low.
+            if len(me.hand) >= 9:
+                return []
+            if me.health <= 10:
+                return []
+            return g.use_hero_power(pid)
+
+        if hero_id == "PALADIN":
+            # Summon only if there is space.
+            if len(me.board) < 7:
+                return g.use_hero_power(pid)
+            return []
+
+        if hero_id == "MAGE":
+            # Prefer pinging any enemy minion with 1 HP, else face.
+            candidates = [m for m in opp.board if m.is_alive() and m.health <= 1]
+            if candidates:
+                return g.use_hero_power(pid, target_minion=candidates[0].id)
+            return g.use_hero_power(pid, target_player=(1 - pid))
+
+        # Default: don’t use (unknown hero)
+        return []
+    except IllegalAction:
+        return []
 
 # ----------------- Small helpers -----------------
 
@@ -113,124 +229,101 @@ def best_heal_target(g: Game, pid: int, heal_amount: int) -> Tuple[Optional[int]
 # ----------------- Play gating (do nothing if useless) -----------------
 
 def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int, Optional[int], Optional[int], int]]:
-    """
-    Returns a tuple (hand_index, target_player, target_minion, value_score)
-    *only if* the card has a meaningful effect right now. Otherwise returns None.
-    Chooses the *best* target when applicable.
-    """
     p = g.players[pid]
-    # find card index (first match)
     try:
         idx = next(i for i, x in enumerate(p.hand) if x == cid)
     except StopIteration:
         return None
-
     card = g.cards_db[cid]
     if card.cost > p.mana:
         return None
 
-    # Heals
-    if cid in HEAL_SPELLS:
-        tp, tm, sc = best_heal_target(g, pid, 6)
+    kind, info = classify_card(g, cid)
+
+    # ---- Heals
+    if kind == "heal":
+        amt = int(info.get("amount", 0))
+        tp, tm, sc = best_heal_target(g, pid, amt)
         if tp is None and tm is None:
             return None
-        return idx, tp, tm, sc + 400
+        return idx, tp, tm, sc + 350
 
-    if cid in HEAL_BC_MINIONS:
-        if len(p.board) >= 7:    # no room => pointless
-            return None
-        tp, tm, sc = best_heal_target(g, pid, 3)
-        if tp is None and tm is None:
-            return None
-        return idx, tp, tm, sc + 300
-
-    # Buffs: require at least one ally on board
-    if cid in BUFF_MINION:
+    # ---- Buffs
+    if kind == "buff":
         tm = best_friendly_to_buff(g, pid, cid)
         if tm is None:
             return None
-        # modest value; tweaked by spell identity
-        base = 60 if cid == "BLESSING_OF_MIGHT_LITE" else 85 if cid == "BLESSING_OF_KINGS_LITE" else 70
-        return idx, None, tm, base + 2 * getattr(g.find_minion(tm)[2], "attack", 0)
+        m = g.find_minion(tm)[2]
+        base = 80 + m.attack * 2 + getattr(m, "cost", 0)
+        return idx, None, tm, base
 
-    # Silence / Polymorph: require an enemy
-    if cid in HARD_DISABLE:
+    # ---- Disables (silence/transform)
+    if kind == "disable":
         tm = best_enemy_to_silence_or_poly(g, pid)
         if tm is None:
             return None
-        return idx, None, tm, 120 + threat_score_enemy_minion(g.find_minion(tm)[2])
+        threat = threat_score_enemy_minion(g.find_minion(tm)[2])
+        return idx, None, tm, 120 + threat
 
-    # Direct damage: Fireball (prefer lethal or premium removal)
-    if cid in DIRECT_FACE_DMGS:
+    # ---- Burn (single target / face)
+    if kind == "burn":
         opp = 1 - pid
+        amt = int(info.get("amount", 0))
         can_go_face = can_face(g, pid)
-        # lethal check vs face
-        if can_go_face and g.players[opp].health <= 6:
+        # lethal check
+        if can_go_face and g.players[opp].health <= amt:
             return idx, opp, None, 1000
-        # premium removal: pick best enemy we can kill with 6 dmg
-        enemies = _enemy_minions(g, pid)
-        killables = [m for m in enemies if m.health <= 6]
-        if killables:
-            target = max(killables, key=threat_score_enemy_minion)
-            return idx, None, target.id, 250 + threat_score_enemy_minion(target)
-        # else keep it for later (don’t waste)
+        # removal
+        enemies = [m for m in g.players[opp].board if m.is_alive() and m.health <= amt]
+        if enemies:
+            target = max(enemies, key=threat_score_enemy_minion)
+            return idx, None, target.id, 240 + threat_score_enemy_minion(target)
         return None
 
-    # Random missiles: require enough value (more enemies -> better)
-    if cid in RANDOM_DMG_AOES:
-        enemies = _enemy_minions(g, pid)
-        if not enemies and not can_face(g, pid):
-            return None  # would hit nothing “significant”
-        # rough value: sum of min(3, total enemy hp) and small face chip if open
-        total_hp = sum(m.health for m in enemies)
-        face_bonus = 6 if can_face(g, pid) else 0
-        v = min(3, total_hp) * 20 + face_bonus
-        if v < 30:
-            return None
-        return idx, None, None, 60 + v
-
-    # AoE wipes: prefer when we hit at least 2 units or a lot of hp
-    if cid in AOE_BOARD_WIPES:
-        enemies = _enemy_minions(g, pid)
+    # ---- AoE
+    if kind == "aoe":
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
         if not enemies:
             return None
-        if cid == "CONSECRATION_LITE":
-            hits = len(enemies)
-            total = sum(1 for m in enemies if m.health <= 2)
-            score = 70 + hits * 25 + total * 15
-            if hits >= 2 or total >= 1:
-                return idx, None, None, score
-            return None
-        if cid == "FLAMESTRIKE_LITE":
-            hits = len([m for m in enemies if m.health <= 4])
-            score = 90 + hits * 40 + len(enemies) * 10
-            if hits >= 2:
-                return idx, None, None, score
-            return None
+        # simple heuristic
+        hits = len(enemies)
+        lowhp_hits = sum(1 for m in enemies if m.health <= int(info.get("amount", 0)))
+        score = 80 + hits * 20 + lowhp_hits * 20
+        if hits >= 2 or lowhp_hits >= 1:
+            return idx, None, None, score
+        return None
 
-    # Draw spells: generally ok unless hand is near full
-    if cid in DRAW_SPELLS:
-        if len(p.hand) >= 9:  # avoid burns
+    # ---- Random pings
+    if kind == "random_dmg":
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
+        if not enemies and not can_face(g, pid):
+            return None
+        v = 50 + len(enemies) * 15 + (10 if can_face(g, pid) else 0)
+        return idx, None, None, v
+
+    # ---- Draw
+    if kind == "draw":
+        if len(p.hand) >= 9:
             return None
         return idx, None, None, 65
 
-    # Token / summoning spells: ensure board space
-    if cid in TOKEN_SUMMONERS:
+    # ---- Summon / tokens
+    if kind == "summon":
         if len(p.board) >= 7:
             return None
-        return idx, None, None, 70
+        return idx, None, None, 70 + info.get("count", 1) * 5
 
-    # Generic minions: ensure space
-    if card.type == "MINION":
+    # ---- Generic minions (curve + stats)
+    if kind == "generic_minion":
         if len(p.board) >= 7:
             return None
-        # value: prefer spending mana efficiently and higher stats
         stat_val = card.attack * 3 + card.health * 2
-        curve_val = min(card.cost, g.players[pid].mana) * 8
+        curve_val = min(card.cost, p.mana) * 8
         return idx, None, None, 60 + stat_val + curve_val
 
-    # Unknown card: be conservative
+    # Unknown: skip
     return None
+
 
 # ----------------- LETHAL PLANNER -----------------
 

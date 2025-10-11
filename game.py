@@ -112,6 +112,7 @@ KEYWORD_HELP = {
     "Rush": "Can attack minions immediately.",
     "Charge": "Can attack heroes and minions immediately.",
     "Silence": "Remove text and keywords from a minion.",
+    "Spell Damage": "Your spells deal +N damage.",
     # add more as you add mechanics: Divine Shield, Stealth, Windfury, etc.
 }
 
@@ -162,19 +163,20 @@ def format_event(e, g, skip=False) -> str:
         return f"{who} drew a card."
     if k == "CardDiscovered":
         who = "You" if p["player"] == 0 else "AI"
-        nm  = g.cards_db.get(p.get("card"), type("x",(object,),{"name":"a card"})).name
+        cid = p.get("card")
+        nm  = card_name_from_db(g.cards_db, cid)
         return f"{who} discovered {nm}."
+
     if k == "CardBurned":
         who = "You" if p["player"] == 0 else "AI"
-        # try to show the card name if available
         cid = p.get("card", "")
-        name = g.cards_db.get(cid).name if cid in g.cards_db else cid or "a card"
+        name = card_name_from_db(g.cards_db, cid) if cid else "a card"
         return f"{who} burned {name} (hand full)."
     if k == "CardPlayed":
         who = "You" if p["player"] == 0 else "AI"
-        cid = p.get("card","")
-        name = p.get("name", g.cards_db.get(cid, type("x",(object,),{"name":cid})).name)
-        return f"{who} played {name}."
+        cid = p.get("card", "")
+        name = card_name_from_db(g.cards_db, cid) if cid else "a card"
+        return f"{who} burned {name} (hand full)."
     if k == "MinionSummoned":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} summoned {p.get('name','a minion')}."
@@ -241,19 +243,22 @@ def make_starter_deck(db, seed=None):
     desired = [
         # 1-cost
         "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT", "SCRAPPY_SCAVENGER",
+        "VOODOO_DOCTOR",
         # 2-cost
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER",
         # 3-cost
         "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
-        "CHARGE_RUSH_2_2",
+        "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER"
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
         "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
+        "SPELLBREAKER", "SHIELDMASTA"
         # 5+ cost
         "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
-        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS"
+        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS",
+        "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION"
     ]
-    #desired = ["SCRAPPY_SCAVENGER"] * 30
+    desired = ["KOBOLD_GEOMANCER", "SHIELD_BEARER", "FIREBALL_LITE"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -438,6 +443,16 @@ def draw_keyword_help_panel(anchor_rect: pygame.Rect, lines: List[str], side: st
         y += surf.get_height() + 4
 
 # ui file
+def card_name_from_db(db, cid: str) -> str:
+    obj = db.get(cid)
+    if obj is None:
+        return cid or "a card"
+    if hasattr(obj, "name"):
+        return obj.name
+    if isinstance(obj, dict):
+        return obj.get("name", cid)
+    return str(cid)
+
 def draw_silence_overlay(r: pygame.Rect):
     # diagonal ribbon across the card
     s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
@@ -680,6 +695,27 @@ def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool
     if rush:  pygame.draw.rect(screen, RED,  r.inflate(4, 4), 3, border_radius=12)
     if ready: pygame.draw.rect(screen, GREEN,r.inflate(10,10), 3, border_radius=16)
 
+def flash_from_events(g: Game, ev_list: List[Any]):
+    """Reads damage events and enqueues appropriate flash overlays."""
+    post = layout_board(g)
+    for e in ev_list or []:
+        if getattr(e, "kind", "") == "PlayerDamaged":
+            pid = e.payload.get("player")
+            face = my_face_rect(post) if pid == 0 else enemy_face_rect(post)
+            enqueue_flash(face)
+        elif getattr(e, "kind", "") == "MinionDamaged":
+            mid = e.payload.get("minion")
+            loc = g.find_minion(mid)
+            if not loc:
+                continue
+            pid2, _, _m2 = loc
+            post2 = layout_board(g)
+            coll = "my_minions" if pid2 == 0 else "enemy_minions"
+            for mid2, r2 in post2[coll]:
+                if mid2 == mid:
+                    enqueue_flash(r2)
+                    break
+
 # ---------- Layout ----------
 def _centered_row_rects(n: int, y: int, container: Optional[pygame.Rect] = None) -> List[pygame.Rect]:
     if n <= 0: return []
@@ -760,50 +796,37 @@ def minion_ready_to_act(g: Game, m) -> bool:
     return False
 
 # ---------- Targeting logic (for highlights) ----------
-def targets_for_spell(g: Game, cid: str):
+def targets_for_card(g: Game, cid: str, pid: int):
     """
-    Return legal target sets for a given card id.
-    Returns: (enemy_min_ids, my_min_ids, enemy_face_ok, my_face_ok)
+    Data-driven target helper using cards.json 'targeting'.
+    Returns (enemy_min_ids, my_min_ids, enemy_face_ok, my_face_ok)
     """
-    # ----- Damage spells -----
-    if cid in ("FIREBALL_LITE",):
-        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
-        return enemy_min, set(), True, False
+    spec = (g.cards_db.get("_TARGETING", {}).get(cid, "none") or "none").lower()
+    opp = 1 - pid
 
-    if cid in ("SWIPE_LITE",):
-        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
+    enemy_min = {m.id for m in g.players[opp].board if m.is_alive()}
+    my_min    = {m.id for m in g.players[pid].board if m.is_alive()}
+
+    if spec == "none":
+        return set(), set(), False, False
+    if spec == "enemy_face":
+        return set(), set(), True, False
+    if spec == "friendly_face":
+        return set(), set(), False, True
+    if spec == "any_character":
+        return enemy_min, my_min, True, True
+    if spec == "enemy_character":
+        return enemy_min, set(), True, False
+    if spec == "friendly_character":
+        return set(), my_min, False, True
+    if spec == "enemy_minion":
         return enemy_min, set(), False, False
-
-    # Pinger battlecry (minion that deals 1 on play)
-    if cid in ("KOBOLD_PING",):
-        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
-        return enemy_min, set(), True, False
-
-    # ----- Buffs (friendly minions only) -----
-    if cid in ("BLESSING_OF_MIGHT_LITE", "BLESSING_OF_KINGS_LITE", "GIVE_TAUNT", "GIVE_CHARGE", "GIVE_RUSH"):
-        my_min = {m.id for m in g.players[0].board if m.is_alive()}
+    if spec == "friendly_minion":
         return set(), my_min, False, False
-
-    # ----- Transform / Silence (any minion) -----
-    if cid in ("SILENCE_LITE", "POLYMORPH_LITE"):
-        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
-        my_min = {m.id for m in g.players[0].board if m.is_alive()}
+    if spec == "any_minion":
         return enemy_min, my_min, False, False
 
-    # ----- Heals -----
-    # Spell heal (choose any character)
-    if cid in ("HOLY_LIGHT",):
-        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
-        my_min    = {m.id for m in g.players[0].board if m.is_alive()}
-        return enemy_min, my_min, True, True
-
-    # Battlecry heal: EARTHEN_RING (minion) – choose ANY character (faces or minions on both sides)
-    if cid in ("EARTHEN_RING",):
-        enemy_min = {m.id for m in g.players[1].board if m.is_alive()}
-        my_min    = {m.id for m in g.players[0].board if m.is_alive()}
-        return enemy_min, my_min, True, True
-
-    # Non-targeted by default
+    # fallback
     return set(), set(), False, False
 
 def can_use_hero_power(g: Game, pid: int) -> bool:
@@ -1093,7 +1116,7 @@ class AnimQueue:
             self.queue.pop(0)
             if step.on_finish:
                 try: step.on_finish()
-                except Exception as e: print("Animation callback error:", repr(e))
+                except Exception: pass
         return hidden_ids, top_overlay 
     def peek_hidden_ids(self):
         hidden = set()
@@ -1166,6 +1189,7 @@ def minion_under_point(g: Game, hot, mx, my) -> Optional[int]:
         if r.collidepoint(mx, my):
             return mid
     return None
+
 
 # ---------- Main loop ----------
 GLOBAL_GAME: Game
@@ -1248,39 +1272,15 @@ def main():
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
-                    # 0) Try using hero power if affordable & sensible
+                    ev = []
                     try:
-                        if g.players[1].mana >= 2 and not g.players[1].hero_power_used_this_turn:
-                            h = g.players[1].hero.id.upper()
-                            if h == "HUNTER":
-                                ev = g.use_hero_power(1)  # face shot
-                                log_events(ev, g)
-                                post = layout_board(g)
-                                enqueue_flash(my_face_rect(post))
-                            elif h == "WARRIOR":
-                                ev = g.use_hero_power(1)
-                                log_events(ev, g)
-                            elif h == "WARLOCK":
-                                ev = g.use_hero_power(1)
-                                log_events(ev, g)
-                            elif h == "PALADIN" and len(g.players[1].board) < 7:
-                                ev = g.use_hero_power(1)
-                                log_events(ev, g)
-                            elif h == "MAGE":
-                                # prefer pinging a 1HP enemy minion, else face
-                                candidates = [m for m in g.players[0].board if m.is_alive() and m.health <= 1]
-                                if candidates:
-                                    ev = g.use_hero_power(1, target_minion=candidates[0].id)
-                                    log_events(ev, g)
-                                    post = layout_board(g)
-                                    for mid, r in post["my_minions"]:
-                                        if mid == candidates[0].id: enqueue_flash(r); break
-                                else:
-                                    ev = g.use_hero_power(1, target_player=0)
-                                    log_events(ev, g)
-                                    enqueue_flash(my_face_rect(layout_board(g)))
-                    except IllegalAction:
-                        pass
+                        from ai import maybe_use_hero_power
+                        ev = maybe_use_hero_power(g, 1)
+                    except Exception:
+                        ev = []
+                    if ev:
+                        log_events(ev, g)
+                        flash_from_events(g, ev)
                     act, _ = pick_best_action(g, 1)
                     kind = act[0]
                     if kind == 'end':
@@ -1302,19 +1302,7 @@ def main():
 
                                 apply_post_summon_hooks(g, ev)
                                 log_events(ev, g)
-                                post = layout_board(g)
-                                for e in ev:
-                                    if e.kind == "PlayerDamaged":
-                                        face = my_face_rect(post) if e.payload["player"] == 0 else enemy_face_rect(post)
-                                        enqueue_flash(face)
-                                    elif e.kind == "MinionDamaged":
-                                        mloc = g.find_minion(e.payload["minion"])
-                                        if mloc:
-                                            pid2, _, m2 = mloc
-                                            post2 = layout_board(g)
-                                            coll = "my_minions" if pid2 == 0 else "enemy_minions"
-                                            for mid2, r2 in post2[coll]:
-                                                if mid2 == m2.id: enqueue_flash(r2); break
+                                flash_from_events(g, ev)
                             except IllegalAction:
                                 pass
                         dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ENEMY, CARD_W, CARD_H)
@@ -1447,7 +1435,7 @@ def main():
                     # If selecting target for a spell
                     if waiting_target_for_play is not None:
                         idx, cid, src_rect = waiting_target_for_play
-                        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_spell(g, cid)
+                        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
 
                         # Enemy face?
                         if enemy_face_ok and enemy_face_rect(hot).collidepoint(mx, my):
@@ -1559,7 +1547,7 @@ def main():
                     for i, cid, r in hot["hand"]:
                         if r.collidepoint(mx, my):
                             clicked_hand = True
-                            enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_spell(g, cid)
+                            enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
                             if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
                                 waiting_target_for_play = (i, cid, r.copy())
                                 hilite_enemy_min = set(enemy_mins)
