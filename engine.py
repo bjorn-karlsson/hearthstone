@@ -154,6 +154,7 @@ class Game:
         self.rng = random.Random(seed)
         self.next_minion_id = 1
         self.history: List[Event] = []
+        self.pending_battlecry: Optional[Dict[str, Any]] = None
 
     def other(self, pid:int) -> int:
         return 1 - pid
@@ -444,10 +445,14 @@ class Game:
         return ev
 
 
-    def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
+    def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
         p = self.players[pid]
+
+        if len(p.board) >= 7:
+            raise IllegalAction("Board is full")
+
         if hand_index < 0 or hand_index >= len(p.hand):
             raise IllegalAction("Bad hand index")
         cid = p.hand[hand_index]
@@ -483,29 +488,52 @@ class Game:
                 
             )
             self.next_minion_id += 1
-            p.board.append(m)
+           
+            # --- place at requested index if provided ---
+            if insert_at is None:
+                p.board.append(m)
+            else:
+                # clamp to legal (n+1) slots
+                idx = max(0, min(int(insert_at), len(p.board)))
+                p.board.insert(idx, m)
+
             ev.append(Event("MinionSummoned", {"player": pid, "minion": m.id, "name": m.name}))
 
-            # NEW: if the minion provides an aura, enable it now
+            # if the minion provides an aura, enable it now
             ev += self._enable_aura(m)
-            # NEW: and let existing friendly auras affect this newcomer
+            # and let existing friendly auras affect this newcomer
             ev += self._apply_existing_auras_to(m)
 
 
+            # --- after you insert the minion and add MinionSummoned + auras ---
             if card.battlecry:
-                # Only forward a runtime target if the card actually requires one.
                 need = (self.cards_db.get("_TARGETING", {}).get(card.id, "none") or "none").lower()
-                if need != "none":
-                    if target_minion is not None:
-                        tagged = {"minion": target_minion}
-                    elif target_player in (0, 1):
-                        tagged = {"player": target_player}
+
+                # If a target was provided, resolve immediately (unchanged behavior)
+                if need != "none" and (target_minion is None and target_player not in (0, 1)):
+                    # No target yet → DEFER it and return an event so the UI can ask the user
+                    self.pending_battlecry = {
+                        "pid": pid,
+                        "card_id": card.id,
+                        "minion_id": m.id,
+                        "need": need,
+                        "fn": card.battlecry,   # compiled effect
+                    }
+                    ev.append(Event("BattlecryPending", {
+                        "player": pid, "minion": m.id, "card": card.id, "need": need
+                    }))
+                else:
+                    # Resolve now (existing flow)
+                    if need != "none":
+                        if target_minion is not None:
+                            tagged = {"minion": target_minion}
+                        elif target_player in (0, 1):
+                            tagged = {"player": target_player}
+                        else:
+                            tagged = None
                     else:
                         tagged = None
-                else:
-                    # Battlecry is fully specified in JSON (e.g., enemy_face) — do NOT override with a runtime target
-                    tagged = None
-                ev += card.battlecry(self, card, tagged)
+                    ev += card.battlecry(self, card, tagged)
         elif card.type == "SPELL":
             if card.on_cast:
                 tagged = None
@@ -519,6 +547,58 @@ class Game:
             raise IllegalAction("Unknown card type")
         self.history += ev
         return ev
+
+    def resolve_pending_battlecry(self, pid:int,
+                                target_player:Optional[int]=None,
+                                target_minion:Optional[int]=None) -> List[Event]:
+        if self.pending_battlecry is None:
+            raise IllegalAction("No pending battlecry")
+        pb = self.pending_battlecry
+        if pid != self.active_player or pid != pb["pid"]:
+            raise IllegalAction("Not your pending battlecry")
+
+        # Make sure the minion is still alive/on board
+        loc = self.find_minion(pb["minion_id"])
+        if not loc:
+            self.pending_battlecry = None
+            return []  # minion died / left play; nothing to do
+
+        need = pb["need"]
+        # Validate target against 'need' (friendly_minion, enemy_minion, any_character, etc.)
+        # We piggyback the same checks your hero power uses.
+        tagged = None
+        if target_minion is not None:
+            loc2 = self.find_minion(target_minion)
+            if not loc2:
+                raise IllegalAction("Target minion not found")
+            tpid, _, _ = loc2
+            if need == "enemy_minion" and tpid == pid:
+                raise IllegalAction("Must target enemy minion")
+            if need == "friendly_minion" and tpid != pid:
+                raise IllegalAction("Must target friendly minion")
+            if need not in ("friendly_minion", "enemy_minion", "any_minion", "any_character", "friendly_character", "enemy_character"):
+                raise IllegalAction("This battlecry doesn't accept a minion target")
+            tagged = {"minion": target_minion}
+        elif target_player in (0, 1):
+            if need in ("enemy_minion", "friendly_minion", "any_minion"):
+                raise IllegalAction("This battlecry requires a minion target")
+            if need == "friendly_character" and target_player != pid:
+                raise IllegalAction("Must target friendly character")
+            if need == "enemy_character" and target_player == pid:
+                raise IllegalAction("Must target enemy character")
+            # For 'any_character' both faces are fine
+            tagged = {"player": target_player}
+        else:
+            raise IllegalAction("Battlecry needs a target")
+
+        # Run the stored compiled effect with the Card object
+        card_obj = self.cards_db[pb["card_id"]]
+        fn = pb["fn"]
+        self.pending_battlecry = None
+        ev = fn(self, card_obj, tagged)
+        self.history += ev
+        return ev
+
 
     def attack(self, pid:int, attacker_id:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
         if pid != self.active_player:

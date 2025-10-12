@@ -7,37 +7,6 @@ from collections import deque
 from engine import Game, load_cards_from_json, load_heros_from_json, IllegalAction
 from ai import pick_best_action
 
-# ----------- TODO LIST ------------
-# 
-# ------- Sorted ----------
-# 1.0 [] Instead of spawning minions, drop them on the field, even between minions etc
-# 2.0 [] Add Adjecent to minions, Defender of Argus
-# 3.0 [] Add freeze mechanic, Frost Elemental
-# 4.0 [] Add AoE Heal, Darkscale Healer
-# 5.0 [] Add Costs (x) less per minion on the battlefield, Sea Giant — 8/8
-# 5.1 [] Add Costs less per card in your hand, Mountain Giant — 8/8
-# 5.2 [] Add Costs less per damage your hero has taken, Molten Giant — 8/8
-# 6.0 [] Add Choose, Druid of the Claw, Choose One: Charge or +2 Health and Taunt
-# 7.0 [] Add Passive aura, Houndmaster — Battlecry: give a friendly Beast +2/+2 and Taunt
-# 7.1 [] Starving Buzzard — draw a card whenever you summon a Beast
-# 7.2 [] Water Elemental — 3/6, Freeze any character damaged by this minion
-# 7.3 [] Lightspawn — 0/5, Attack equal to Health
-# 8.0 [] Add weapon mechanic, Arathi Weaponsmith — 3/3, Battlecry: equip a 2/2 weapon
-# 9.0 [] Add stealth mechanic, Worgen Infiltrator 2/1 stealth
-#        * Enemies can’t attack, target, or affect it directly with spells.
-#        * It can still be hit by random effects (like Consecration or Arcane Explosion, etc).
-#        * It loses Stealth when it attacks or deals damage.
-#
-#------- Unordered General stuff ----------
-# [] Add weapon mechanic, drawing, logic, ai, etc
-# [] Add choose mechanic, drawing, logic, ai, etc
-# [] Add Class Druid
-# [] Add Class Priest
-# [] Add class Shaman
-# [] Add class Rougue
-# [] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
-# [] Add class card type: 
-
 DEBUG = False
 
 pygame.init()
@@ -291,7 +260,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    #desired = ["AMANI_BERSERKER", "HOLY_LIGHT", "STORMPIKE_COMMANDO"] * 30
+    #desired = ["NOVICE_ENGINEER"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -766,6 +735,48 @@ def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
     start_x = max((W - total_w) // 2, MARGIN)
     return [pygame.Rect(start_x + i * step, y, CARD_W, CARD_H) for i in range(n)]
 
+def insertion_slots_for_my_row(g: Game, arena: pygame.Rect) -> List[pygame.Rect]:
+    """
+    Returns n+1 drop slots, index = insertion index.
+    - If board is empty: one big slot spanning the entire arena width at the row.
+    - If not empty: wide left & right edge slots, slim 'between' slots.
+    """
+    board = g.players[0].board
+    if len(board) == 0:
+        # full-width easy target
+        full = pygame.Rect(arena.x + 10, ROW_Y_ME, arena.w - 20, CARD_H)
+        return [full]
+
+    card_rects = _centered_row_rects(len(board), ROW_Y_ME, arena)
+
+    slots: List[pygame.Rect] = []
+
+    # --- Wide LEFT edge slot (index 0) ---
+    left_edge_right = (card_rects[0].x + (card_rects[0].x - (arena.x + 10))) // 2
+    left_slot = pygame.Rect(arena.x + 10, ROW_Y_ME, max(24, card_rects[0].x - (arena.x + 10)), CARD_H)
+    slots.append(left_slot)
+
+    # --- Slim BETWEEN slots (indices 1..n-1) ---
+    for i in range(len(card_rects) - 1):
+        a, b = card_rects[i], card_rects[i + 1]
+        cx = (a.right + b.x) // 2
+        slots.append(pygame.Rect(cx - 8, ROW_Y_ME, 16, CARD_H))
+
+    # --- Wide RIGHT edge slot (index n) ---
+    right_slot = pygame.Rect(card_rects[-1].right + 1, ROW_Y_ME,
+                             max(24, (arena.right - 10) - (card_rects[-1].right + 1)), CARD_H)
+    slots.append(right_slot)
+
+    return slots
+
+
+def slot_index_at_point(slots: List[pygame.Rect], mx: int, my: int) -> Optional[int]:
+    for i, s in enumerate(slots):
+        if s.collidepoint(mx, my):
+            return i
+    return None
+
+
 def layout_board(g: Game) -> Dict[str, Any]:
     hot = {"hand": [], "my_minions": [], "enemy_minions": [], "end_turn": None,
            "face_enemy": None, "face_me": None, "hp_enemy": None, "hp_me": None}
@@ -926,7 +937,11 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
                highlight_enemy_minions: Optional[set] = None,
                highlight_my_minions: Optional[set] = None,
                highlight_enemy_face: bool = False,
-               highlight_my_face: bool = False):
+               highlight_my_face: bool = False,
+               *,
+               show_slots: bool = False,
+               active_slot_index: Optional[int] = None,
+               dragging_card: Optional[Tuple[str, pygame.Rect]] = None):
     hidden_minion_ids = hidden_minion_ids or set()
     highlight_enemy_minions = highlight_enemy_minions or set()
     highlight_my_minions = highlight_my_minions or set()
@@ -983,7 +998,7 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         if mid in highlight_my_minions:
             pygame.draw.rect(screen, RED, r.inflate(8, 8), 3, border_radius=12)
 
-     # My hand (stacked + hover zoom)
+    # My hand (stacked + hover zoom)
     mx, my = pygame.mouse.get_pos()
     hover_idx = hand_hover_index(hot, mx, my)
 
@@ -1027,6 +1042,22 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     pygame.draw.rect(screen, BLUE if g.active_player == 0 else (90, 90, 90), hot["end_turn"], border_radius=8)
     t = FONT.render("End Turn", True, WHITE)
     screen.blit(t, t.get_rect(center=hot["end_turn"].center))
+
+    # --- insertion slots (when dragging a minion) ---
+    if show_slots:
+        arena = battle_area_rect()
+        slots = insertion_slots_for_my_row(g, arena)
+        for i, s in enumerate(slots):
+            col = (255, 255, 255) if i == active_slot_index else (120, 140, 180)
+            pygame.draw.rect(screen, col, s, 0, border_radius=6)
+            pygame.draw.rect(screen, (30, 40, 55), s, 2, border_radius=6)
+
+    # --- draw dragged hand card on top ---
+    if dragging_card is not None:
+        cid, rdrag = dragging_card
+        cobj = g.cards_db[cid]
+        draw_card_frame(rdrag, CARD_BG_HAND, card_obj=cobj, in_hand=True)
+        pygame.draw.rect(screen, (255,255,255), rdrag.inflate(12,12), 4, border_radius=18)
 
 
 
@@ -1250,6 +1281,12 @@ def main():
     hilite_enemy_face: bool = False
     hilite_my_face: bool = False
     inspected_minion_id: Optional[int] = None
+    # --- drag state for minion placement ---
+    dragging_from_hand: Optional[Tuple[int, str, pygame.Rect]] = None  # (hand_index, cid, original_rect)
+    drag_offset: Tuple[int, int] = (0, 0)  # mouse-to-card offset while dragging
+    dragging_pos: Tuple[int, int] = (0, 0)
+    hover_slot_index: Optional[int] = None  # 0..len(board)
+
     
     
     RUNNING = True
@@ -1264,12 +1301,27 @@ def main():
         hidden = ANIMS.peek_hidden_ids()
 
         # 2) draw the board first (so the arena is underneath)
-        draw_board(g, hot,
-                hidden_minion_ids=hidden,
-                highlight_enemy_minions=hilite_enemy_min,
-                highlight_my_minions=hilite_my_min,
-                highlight_enemy_face=hilite_enemy_face,
-                highlight_my_face=hilite_my_face)
+        # compute dragging preview rect if any
+        drag_preview = None
+        if dragging_from_hand is not None:
+            _, cid_drag, _r0 = dragging_from_hand
+            mx, my = pygame.mouse.get_pos()
+            dx, dy = drag_offset
+            drag_rect = pygame.Rect(mx - dx, my - dy, CARD_W, CARD_H)
+            drag_preview = (cid_drag, drag_rect)
+
+        show_slots = dragging_from_hand is not None and len(g.players[0].board) < 7
+        draw_board(
+            g, hot,
+            hidden_minion_ids=hidden,
+            highlight_enemy_minions=hilite_enemy_min,
+            highlight_my_minions=hilite_my_min,
+            highlight_enemy_face=hilite_enemy_face,
+            highlight_my_face=hilite_my_face,
+            show_slots=show_slots,
+            active_slot_index=hover_slot_index,
+            dragging_card=drag_preview
+        )
         # 3) now draw the animations ON TOP
         _, top_overlay = ANIMS.update_and_draw(g, hot)
         if top_overlay is not None:
@@ -1464,6 +1516,116 @@ def main():
                                     break
                             if did:
                                 continue
+                    
+                    # ---- Resolve a pending MINION that needs a battlecry target (pre-play) ----
+                    if waiting_target_for_play is not None and waiting_target_for_play[0] == "__PENDING_MINION__":
+                        _, idx, cid, src_rect, slot_idx = waiting_target_for_play
+                        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
+
+                        def _finish_with(target_player=None, target_minion=None, target_rect=None):
+                            if len(g.players[0].board) >= 7:
+                                # Board filled up while choosing a target; cancel safely.
+                                waiting_target_for_play = None
+                                hilite_enemy_min.clear(); hilite_my_min.clear()
+                                hilite_enemy_face = False; hilite_my_face = False
+                                add_log("Board is full. You can't play more minions.")
+                                return
+
+
+                            # animate from hand to the chosen slot (or to target rect for nice feel)
+                            slot_rect = insertion_slots_for_my_row(g, battle_area_rect())[slot_idx]
+                            dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
+
+                            def on_finish(i=idx, tp=target_player, tm=target_minion, sl=slot_idx):
+                                try:
+                                    ev = g.play_card(0, i, insert_at=sl, target_player=tp, target_minion=tm)
+                                    log_events(ev, g)
+                                    apply_post_summon_hooks(g, ev)
+                                    flash_from_events(g, ev)
+                                except IllegalAction:
+                                    pass
+
+                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                                on_finish=on_finish))
+
+                        # enemy face?
+                        if enemy_face_ok and enemy_face_rect(hot).collidepoint(mx, my):
+                            _finish_with(target_player=1, target_minion=None, target_rect=enemy_face_rect(hot))
+                        # my face?
+                        elif my_face_ok and my_face_rect(hot).collidepoint(mx, my):
+                            _finish_with(target_player=0, target_minion=None, target_rect=my_face_rect(hot))
+                        else:
+                            # enemy minion?
+                            done = False
+                            for mid, r in hot["enemy_minions"]:
+                                if r.collidepoint(mx, my) and mid in enemy_mins:
+                                    _finish_with(target_player=None, target_minion=mid, target_rect=r)
+                                    done = True
+                                    break
+                            if not done:
+                                # my minion?
+                                for mid, r in hot["my_minions"]:
+                                    if r.collidepoint(mx, my) and mid in my_mins:
+                                        _finish_with(target_player=None, target_minion=mid, target_rect=r)
+                                        break
+
+                        # clear highlights if we completed
+                        waiting_target_for_play = None
+                        hilite_enemy_min.clear(); hilite_my_min.clear()
+                        hilite_enemy_face = False; hilite_my_face = False
+                        continue
+
+
+                    if waiting_target_for_play is not None and waiting_target_for_play[0] == "__PENDING_BC__":
+                        # resolve the pending battlecry target
+                        handled = False
+
+                        # enemy face?
+                        if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
+                            try:
+                                ev = g.resolve_pending_battlecry(0, target_player=1)
+                                log_events(ev, g); flash_from_events(g, ev)
+                            except IllegalAction: pass
+                            handled = True
+
+                        # my face?
+                        elif hilite_my_face and my_face_rect(hot).collidepoint(mx, my):
+                            try:
+                                ev = g.resolve_pending_battlecry(0, target_player=0)
+                                log_events(ev, g); flash_from_events(g, ev)
+                            except IllegalAction: pass
+                            handled = True
+
+                        # enemy minion?
+                        if not handled:
+                            for mid, r in hot["enemy_minions"]:
+                                if r.collidepoint(mx, my) and mid in hilite_enemy_min:
+                                    try:
+                                        ev = g.resolve_pending_battlecry(0, target_minion=mid)
+                                        log_events(ev, g); flash_from_events(g, ev)
+                                    except IllegalAction: pass
+                                    handled = True
+                                    break
+
+                        # my minion?
+                        if not handled:
+                            for mid, r in hot["my_minions"]:
+                                if r.collidepoint(mx, my) and mid in hilite_my_min:
+                                    try:
+                                        ev = g.resolve_pending_battlecry(0, target_minion=mid)
+                                        log_events(ev, g); flash_from_events(g, ev)
+                                    except IllegalAction: pass
+                                    handled = True
+                                    break
+
+                        # clear targeting highlights if resolved
+                        if handled:
+                            waiting_target_for_play = None
+                            hilite_enemy_min.clear(); hilite_my_min.clear()
+                            hilite_enemy_face = False; hilite_my_face = False
+                        continue
+
 
                     # If selecting target for a spell
                     if waiting_target_for_play is not None:
@@ -1575,35 +1737,46 @@ def main():
                             hilite_my_face = m_face
                         continue
 
-                    # Click hand to play
-                    clicked_hand = False
+                    # Click/drag from hand
+                    started_drag = False
                     for i, cid, r in hot["hand"]:
                         if r.collidepoint(mx, my):
-                            clicked_hand = True
-                            enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
-                            if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
-                                waiting_target_for_play = (i, cid, r.copy())
-                                hilite_enemy_min = set(enemy_mins)
-                                hilite_my_min = set(my_mins)
-                                hilite_enemy_face = enemy_face_ok
-                                hilite_my_face = my_face_ok
+                            cobj = g.cards_db[cid]
+                            if g.active_player == 0 and cobj.type == "MINION" and card_is_playable_now(g, 0, cid) and len(g.players[0].board) < 7:
+                                # ALWAYS begin drag for minions (targeted or not) ✅
+                                dragging_from_hand = (i, cid, r.copy())
+                                dx, dy = mx - r.x, my - r.y
+                                drag_offset = (dx, dy)
+                                dragging_pos = (mx, my)
+                                slots = insertion_slots_for_my_row(g, battle_area_rect())
+                                hover_slot_index = slot_index_at_point(slots, mx, my)
+                                started_drag = True
                             else:
-                                def on_finish(i=i):
-                                    try:
-                                        ev = g.play_card(0, i)
-                                        log_events(ev, g)
-                                        apply_post_summon_hooks(g, ev)
-                                    except IllegalAction: pass
-                                dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                    {"src": r.copy(), "dst": dst, "label": db[cid].name},
-                                                    on_finish=on_finish))
-                                hilite_enemy_min.clear(); hilite_my_min.clear()
-                                hilite_enemy_face = False; hilite_my_face = False
-                            selected_attacker = None
+                                # Spells or unplayable minions keep the old click-to-play flow
+                                enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
+                                if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
+                                    waiting_target_for_play = (i, cid, r.copy())
+                                    hilite_enemy_min = set(enemy_mins)
+                                    hilite_my_min = set(my_mins)
+                                    hilite_enemy_face = enemy_face_ok
+                                    hilite_my_face = my_face_ok
+                                else:
+                                    def on_finish(i=i):
+                                        try:
+                                            ev = g.play_card(0, i)
+                                            log_events(ev, g)
+                                            apply_post_summon_hooks(g, ev)
+                                        except IllegalAction:
+                                            pass
+                                    dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
+                                    ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                        {"src": r.copy(), "dst": dst, "label": db[cid].name},
+                                                        on_finish=on_finish))
                             break
-                    if clicked_hand:
+
+                    if started_drag:
                         continue
+
 
                     # Select attacker (only if has legal targets)
                     for mid, r in hot["my_minions"]:
@@ -1671,6 +1844,59 @@ def main():
                     if mid is not None:
                         inspected_minion_id = mid
                         continue
+                elif event.type == pygame.MOUSEMOTION:
+                    if dragging_from_hand is not None:
+                        mx, my = event.pos
+                        dragging_pos = (mx, my)
+                        slots = insertion_slots_for_my_row(g, battle_area_rect())
+                        hover_slot_index = slot_index_at_point(slots, mx, my)
+                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    if dragging_from_hand is not None:
+                        mx, my = event.pos
+                        idx, cid, src_rect = dragging_from_hand
+                        dragging_from_hand = None
+                        # Did we drop over a valid slot?
+                        slots = insertion_slots_for_my_row(g, battle_area_rect())
+                        slot_idx = slot_index_at_point(slots, mx, my)
+                        if slot_idx is None or len(g.players[0].board) >= 7:
+                            # cancel: no action
+                            hover_slot_index = None
+                            continue
+                        
+                        need = (g.cards_db.get("_TARGETING", {}).get(cid, "none") or "none").lower()
+
+                        if need == "none":
+                            # same as before: animate and play immediately
+                            slot_rect = slots[slot_idx]
+                            dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
+
+                            def on_finish(i=idx):
+                                try:
+                                    ev = g.play_card(0, i, insert_at=slot_idx)
+                                    log_events(ev, g)
+                                    apply_post_summon_hooks(g, ev)
+                                    flash_from_events(g, ev)
+                                except IllegalAction:
+                                    pass
+
+                            ANIMS.push(AnimStep(
+                                "play_move", ANIM_PLAY_MS,
+                                {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                on_finish=on_finish
+                            ))
+                            hover_slot_index = None
+                            continue
+
+                        # needs a target: DO NOT play yet — enter targeting mode and remember slot
+                        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
+                        waiting_target_for_play = ("__PENDING_MINION__", idx, cid, src_rect, slot_idx)
+                        hilite_enemy_min = set(enemy_mins)
+                        hilite_my_min = set(my_mins)
+                        hilite_enemy_face = enemy_face_ok or (need in ("any_character", "enemy_character"))
+                        hilite_my_face = my_face_ok or (need in ("any_character", "friendly_character"))
+                        hover_slot_index = slot_idx
+                        continue
+                        
         pygame.display.flip()
 
     pygame.quit()
