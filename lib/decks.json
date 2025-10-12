@@ -1,0 +1,82 @@
+{
+    "decks": [
+        {
+            "name": "Classic Hunter Deck (Midrange / Face Hybrid)",
+            "hero": "HUNTER",
+            "cards": {
+                "TIMBER_WOLF": 2,
+                "LEPER_GNOME": 2,
+                "KNIFE_JUGGLER": 2,
+                "ANIMAL_COMPANION": 2,
+                "IRONFUR_GRIZZLY": 2,
+                "HOUNDMASTER": 2,
+                "STARVING_BUZZARD": 2,
+                "SAVANNAH_HIGHMANE": 2,
+                "RIVER_CROCOLISK": 2,
+                "CHILLWIND_YETI": 2,
+                "ARCANE_SHOT": 2,
+                "KILL_COMMAND": 2,
+                "EXPLOSIVE_TRAP": 2,
+                "HUNTERS_MARK": 2,
+                "EAGLEHORN_BOW": 2
+            }
+        },
+        {
+            "name": "Weaponsmith Test",
+            "hero": "WARRIOR",
+            "cards": {
+                "ARATHI_WEAPONSMITH": 2,
+                "ACIDIC_SWAMP_OOZE": 2,
+                "CHILLWIND_YETI": 2,
+                "BOULDERFIST_OGRE": 2,
+                "RIVER_CROCOLISK": 2,
+                "KOBOLD_GEOMANCER": 2,
+                "TAUNT_BEAR": 2,
+                "SPELLBREAKER": 2,
+                "HARVEST_GOLEM": 2,
+                "WOLFRIDER": 2,
+                "FIREBALL_LITE": 2,
+                "STORMWIND_CHAMPION": 2,
+                "NOVICE_ENGINEER": 2,
+                "HOLY_LIGHT": 2,
+                "RAID_LEADER": 2
+            }
+        },
+        {
+            "name": "Legendary Sprinkle",
+            "hero": "MAGE",
+            "list": [
+                "LEGENDARY_LEEROY_JENKINS",
+                "ACIDIC_SWAMP_OOZE",
+                "ACIDIC_SWAMP_OOZE",
+                "CHILLWIND_YETI",
+                "CHILLWIND_YETI",
+                "BOULDERFIST_OGRE",
+                "BOULDERFIST_OGRE",
+                "RIVER_CROCOLISK",
+                "RIVER_CROCOLISK",
+                "KOBOLD_GEOMANCER",
+                "KOBOLD_GEOMANCER",
+                "TAUNT_BEAR",
+                "TAUNT_BEAR",
+                "SPELLBREAKER",
+                "SPELLBREAKER",
+                "HARVEST_GOLEM",
+                "HARVEST_GOLEM",
+                "WOLFRIDER",
+                "WOLFRIDER",
+                "FIREBALL_LITE",
+                "FIREBALL_LITE",
+                "STORMWIND_CHAMPION",
+                "STORMWIND_CHAMPION",
+                "NOVICE_ENGINEER",
+                "NOVICE_ENGINEER",
+                "HOLY_LIGHT",
+                "HOLY_LIGHT",
+                "RAID_LEADER",
+                "RAID_LEADER",
+                "ARATHI_WEAPONSMITH"
+            ]
+        }
+    ]
+}

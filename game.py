@@ -3,8 +3,11 @@ import sys
 from typing import Optional, Tuple, List, Dict, Any
 import random
 from collections import deque
+import json
+from pathlib import Path
 
-from engine import Game, load_cards_from_json, load_heros_from_json, IllegalAction
+
+from engine import Game, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, IllegalAction
 from ai import pick_best_action
 
 DEBUG = False
@@ -248,7 +251,7 @@ def log_events(ev_list, g):
         if s: add_log(s)
 
 
-# --------- Randomized starter deck ----------
+# --------- starter deck ----------
 def select_random_hero(hero_db):
     return random.choice(list(hero_db.values()))
 
@@ -260,13 +263,13 @@ def make_starter_deck(db, seed=None):
     desired = [
         # 1-cost
         "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT", "SCRAPPY_SCAVENGER",
-        "VOODOO_DOCTOR",
+        "VOODOO_DOCTOR", "TIMBER_WOLF",
         # 2-cost
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER", 
         "KOBOLD_GEOMANCER", "AMANI_BERSERKER", "ACIDIC_SWAMP_OOZE",
         # 3-cost
         "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
-        "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER",
+        "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER", "KOBOLD_BLASTER",
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
         "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
@@ -276,7 +279,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    #desired = ["ARATHI_WEAPONSMITH", "ACIDIC_SWAMP_OOZE"] * 30
+    desired = ["CONSECRATION_LITE", "ACIDIC_SWAMP_OOZE", "KOBOLD_BLASTER"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -312,11 +315,48 @@ def make_starter_deck(db, seed=None):
 db      = load_cards_from_json("lib/cards.json")
 hero_db = load_heros_from_json("lib/heroes.json")
 
-HERO_PLAYER = select_random_hero(hero_db)
-HERO_AI     = select_random_hero(hero_db)
+# Try to load preconfigured decks
+try:
+    loaded_decks = load_decks_from_json("lib/decks.json", db)
+except Exception as e:
+    print("[DeckLoader] Failed to read decks.json:", e)
+    loaded_decks = {}
+
+# Pick a deck for each side (by name or first valid), else fall back to your random builder
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Weaponsmith Test")
+ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Legendary Sprinkle")
+
+if not player_deck:
+    player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
+if not ai_deck:
+    ai_deck = make_starter_deck(db, random.randint(1, 5_000_000))
+
+# Choose heroes (use deck hero hint if present and valid)
+def _pick_hero(hint, default):
+    if hint:
+        h = hero_db.get(str(hint).upper())
+        if h: return h
+    return default
+
+
+HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
+HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
 STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
-STARTER_DECK_AI     = make_starter_deck(db, random.randint(1, 50000))
+STARTER_DECK_AI     = ai_deck
+
+# Surface invalid deck errors (optional)
+for name, d in loaded_decks.items():
+    if "errors" in d:
+        print(f"[DeckLoader] Deck '{name}' invalid:")
+        for msg in d["errors"]:
+            print("  -", msg)
+
+#HERO_PLAYER = select_random_hero(hero_db)
+#HERO_AI     = select_random_hero(hero_db)
+
+#STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
+#STARTER_DECK_AI     = make_starter_deck(db, random.randint(1, 50000))
 
 
 # ---------- Drawing helpers (reworked cards) ----------
@@ -669,13 +709,19 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         header = " / ".join(kw) 
         body   = header if header and not text else (header + ("\n" + text if text else ""))
         draw_text_box(r, body, max_lines=6, title=card_obj.name, font_body=RULE_FONT)
-        draw_name_footer(r, card_obj.type)
+        
         draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"))
         if card_obj.type == "MINION":
             draw_minion_stats(
                 r, card_obj.attack, card_obj.health, card_obj.health,
                 base_attack=card_obj.attack, base_health=card_obj.health
             )
+            if card_obj.minion_type != "None":
+                draw_name_footer(r, card_obj.minion_type)
+            else:
+                draw_name_footer(r, "Neutral") 
+        else: 
+            draw_name_footer(r, card_obj.type)
 
     elif minion_obj:
         draw_cost_gem(r, getattr(minion_obj, "cost", 0))

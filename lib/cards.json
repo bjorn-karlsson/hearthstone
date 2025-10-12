@@ -6,7 +6,8 @@
             "cost": 0,
             "attack": 1,
             "health": 1,
-            "rarity": "Common"
+            "rarity": "Common",
+            "minion_type": "None"
         },
         "WHELP": {
             "name": "Whelp",
@@ -14,7 +15,8 @@
             "cost": 0,
             "attack": 1,
             "health": 1,
-            "rarity": "Common"
+            "rarity": "Common",
+            "minion_type": "Dragon"
         },
         "SHEEP_1_1": {
             "name": "Sheep",
@@ -22,7 +24,8 @@
             "cost": 1,
             "attack": 1,
             "health": 1,
-            "rarity": "Common"
+            "rarity": "Common",
+            "minion_type": "Beast"
         },
         "NERUBIAN_4_4": {
             "name": "Nerubian",
@@ -30,7 +33,8 @@
             "cost": 4,
             "attack": 4,
             "health": 4,
-            "rarity": "Common"
+            "rarity": "Common",
+            "minion_type": "Undead"
         },
         "DAMAGED_GOLEM": {
             "name": "Damaged Golem",
@@ -38,7 +42,8 @@
             "cost": 1,
             "attack": 2,
             "health": 1,
-            "rarity": "Common"
+            "rarity": "Common",
+            "minion_type": "Mech"
         },
         "SILVER_HAND_RECRUIT": {
             "name": "Silver Hand Recruit",
@@ -46,7 +51,8 @@
             "cost": 1,
             "attack": 1,
             "health": 1,
-            "rarity": "Common"
+            "rarity": "Common",
+            "minion_type": "None"
         },
         "SPIRIT_WOLF": {
             "name": "Spirit Wolf",
@@ -55,6 +61,7 @@
             "attack": 2,
             "health": 3,
             "rarity": "Rare",
+            "minion_type": "Beast",
             "keywords": [
                 "Taunt"
             ]
@@ -77,6 +84,7 @@
             "attack": 1,
             "health": 1,
             "rarity": "Common",
+            "minion_type": "Beast",
             "keywords": [
                 "Charge"
             ],
@@ -106,6 +114,7 @@
             "attack": 3,
             "health": 2,
             "rarity": "Common",
+            "minion_type": "None",
             "text": "Battlecry: Give a friendly minion +1/+1",
             "battlecry": [
                 {
@@ -121,6 +130,7 @@
             "name": "Scrappy Scavenger",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 1,
             "attack": 1,
             "health": 1,
@@ -139,6 +149,7 @@
             "name": "Arena Rusher",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 2,
             "attack": 2,
             "health": 1,
@@ -152,6 +163,7 @@
             "name": "Stoneshell Bear",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "Beast",
             "cost": 3,
             "attack": 3,
             "health": 4,
@@ -164,10 +176,11 @@
             "id": "KOBOLD_GEOMANCER",
             "name": "Kobold Geomancer",
             "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "None",
             "cost": 2,
             "attack": 2,
             "health": 2,
-            "rarity": "Common",
             "keywords": [
                 "Spell Damage"
             ],
@@ -175,9 +188,26 @@
             "text": "Spell Damage +1"
         },
         {
+            "id": "TIMBER_WOLF",
+            "name": "Timber Wolf",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 1,
+            "attack": 1,
+            "health": 2,
+            "minion_type": "Beast",
+            "text": "Your other Beasts have +1 Attack.",
+            "aura": {
+                "scope": "other_friendly_minions",
+                "attack": 1,
+                "tribe": "Beast"
+            }
+        },
+        {
             "id": "RAID_LEADER",
             "name": "Raid Leader",
             "type": "MINION",
+            "minion_type": "None",
             "cost": 3,
             "attack": 2,
             "health": 3,
@@ -193,6 +223,7 @@
             "id": "STORMWIND_CHAMPION",
             "name": "Stormwind Champion",
             "type": "MINION",
+            "minion_type": "None",
             "cost": 7,
             "attack": 6,
             "health": 6,
@@ -210,6 +241,7 @@
             "name": "Sen’jin Shieldmasta",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 4,
             "attack": 3,
             "health": 5,
@@ -223,6 +255,7 @@
             "name": "Stormrunner",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 3,
             "attack": 2,
             "health": 2,
@@ -300,6 +333,7 @@
             "id": "SPELLBREAKER",
             "name": "Spellbreaker",
             "type": "MINION",
+            "minion_type": "None",
             "cost": 4,
             "attack": 4,
             "health": 3,
@@ -317,6 +351,7 @@
             "id": "ACIDIC_SWAMP_OOZE",
             "name": "Acidic Swamp Ooze",
             "type": "MINION",
+            "minion_type": "None",
             "rarity": "COMMON",
             "cost": 2,
             "attack": 3,
@@ -338,6 +373,7 @@
             "name": "Arathi Weaponsmith",
             "type": "MINION",
             "rarity": "COMMON",
+            "minion_type": "None",
             "cost": 4,
             "attack": 3,
             "health": 3,
@@ -358,6 +394,7 @@
             "name": "Wolfrider",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 3,
             "attack": 3,
             "health": 1,
@@ -371,6 +408,7 @@
             "name": "Shieldbearer",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 1,
             "attack": 0,
             "health": 4,
@@ -384,6 +422,7 @@
             "name": "Earthen Ring Farseer",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 3,
             "attack": 3,
             "health": 3,
@@ -402,6 +441,7 @@
             "name": "Voodoo Doctor",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 1,
             "attack": 2,
             "health": 1,
@@ -420,6 +460,7 @@
             "name": "Stormpike Commando",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 5,
             "attack": 4,
             "health": 2,
@@ -437,6 +478,7 @@
             "name": "Kobold Pinger",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 2,
             "attack": 2,
             "health": 2,
@@ -455,6 +497,7 @@
             "name": "Kobold Blaster",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 3,
             "attack": 2,
             "health": 3,
@@ -473,6 +516,7 @@
             "name": "Defender of Argus",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 5,
             "attack": 2,
             "health": 3,
@@ -495,6 +539,7 @@
             "name": "Novice Engineer",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "None",
             "cost": 2,
             "attack": 1,
             "health": 1,
@@ -511,6 +556,7 @@
             "name": "Leper Gnome",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "Undead",
             "cost": 1,
             "attack": 2,
             "health": 1,
@@ -528,6 +574,7 @@
             "name": "Silver Hand Knight",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 5,
             "attack": 4,
             "health": 4,
@@ -547,6 +594,7 @@
             "name": "Harvest Golem",
             "type": "MINION",
             "rarity": "Rare",
+            "minion_type": "Mech",
             "cost": 3,
             "attack": 2,
             "health": 3,
@@ -564,6 +612,7 @@
             "name": "Nerubian Egg",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 2,
             "attack": 0,
             "health": 2,
@@ -581,6 +630,7 @@
             "name": "River Crocolisk",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "Beast",
             "cost": 2,
             "attack": 2,
             "health": 3
@@ -590,6 +640,7 @@
             "name": "Chillwind Yeti",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 4,
             "attack": 4,
             "health": 5
@@ -599,6 +650,7 @@
             "name": "Oasis Snapjaw",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "Beast",
             "cost": 4,
             "attack": 2,
             "health": 7
@@ -608,6 +660,7 @@
             "name": "Boulderfist Ogre",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 6,
             "attack": 6,
             "health": 7
@@ -617,6 +670,7 @@
             "name": "Core Hound",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "Beast",
             "cost": 7,
             "attack": 9,
             "health": 5
@@ -626,6 +680,7 @@
             "name": "War Golem",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 7,
             "attack": 7,
             "health": 7
@@ -635,6 +690,7 @@
             "name": "Amani Berserker",
             "type": "MINION",
             "rarity": "Common",
+            "minion_type": "None",
             "cost": 2,
             "attack": 2,
             "health": 3,
@@ -858,6 +914,7 @@
             "name": "Leeroy Jenkins",
             "type": "MINION",
             "rarity": "Legendary",
+            "minion_type": "None",
             "cost": 4,
             "attack": 6,
             "health": 2,

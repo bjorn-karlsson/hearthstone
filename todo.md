@@ -26,6 +26,8 @@
 # [] Add Class Priest
 # [] Add class Shaman
 # [] Add class Rougue
-# [] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
+# [x] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
 # [] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
 # [] Draw hero health damaged
+# [x] Loading stored deck
+# [] Creating, managing and saving decks

@@ -60,6 +60,7 @@ class Minion:
     attack: int
     health: int
     max_health: int
+    minion_type: str = "None"
     spell_damage: int = 0
     taunt: bool = False
     charge: bool = False
@@ -73,11 +74,8 @@ class Minion:
     enrage_spec: Optional[Dict[str, Any]] = None
     enrage_active: bool = False
     
-    # internal flags
     has_attacked_this_turn: bool = False
 
-
-    # NEW: for UI/logic
     summoned_this_turn: bool = True
     cost: int = 0  # original mana cost to display on-board
     rarity: str = ""
@@ -87,6 +85,7 @@ class Minion:
     base_attack: int = 0
     base_health: int = 0
     base_text: str = ""
+    base_minion_type: str = "None"
     base_keywords: List[str] = field(default_factory=list)
 
     def is_alive(self) -> bool:
@@ -108,6 +107,7 @@ class Card:
     aura_spec: Optional[Dict[str, Any]] = None
     text: str = "" 
     rarity: str = ""
+    minion_type: str = ""
 
 @dataclass
 class PlayerState:
@@ -269,8 +269,12 @@ class Game:
         - "other_friendly_minions"
         """
         scope = str(spec.get("scope", "other_friendly_minions")).lower()
+        tribe = str(spec.get("tribe", "") or "").strip()  # NEW: optional
         if scope == "other_friendly_minions":
-            return [m for m in self.players[owner].board if m.is_alive() and m.id != source_id]
+            pool = [m for m in self.players[owner].board if m.is_alive() and m.id != source_id]
+            if tribe:
+                pool = [m for m in pool if _has_tribe(m, tribe)]     # NEW
+            return pool
         # Fallback: no targets
         return []
 
@@ -328,8 +332,10 @@ class Game:
                 spec = src.aura_spec
                 scope = str(spec.get("scope", "other_friendly_minions")).lower()
                 if scope == "other_friendly_minions":
-                    # newcomer is “other” to src by definition (we skipped src.id == newcomer.id)
-                    ev += self._apply_aura_delta([newcomer], spec, +1)
+                    tribe = str(spec.get("tribe", "") or "").strip()
+                    # newcomer is "other" by definition; apply only if tribe matches (or no tribe filter)
+                    if (not tribe) or _has_tribe(newcomer, tribe):
+                        ev += self._apply_aura_delta([newcomer], spec, +1)
         return ev
 
     # ---------- Turn Flow ----------
@@ -588,6 +594,8 @@ class Game:
                 spell_damage=getattr(card, "spell_damage", 0),
                 enrage_spec=getattr(card, "enrage_spec", None),
                 enrage_active=False,
+                minion_type=getattr(card, "minion_type", "None"),
+                base_minion_type=getattr(card, "minion_type", "None"),
                 
             )
             self.next_minion_id += 1
@@ -938,6 +946,15 @@ def _apply_adjacent_buff(g, owner_pid: int, summoned_minion_id: int, *, attack=0
 
     return events
 
+
+def _has_tribe(m: 'Minion', tribe: str) -> bool:
+    """Return True if minion counts as the given tribe. 'All' counts as every tribe."""
+    if not tribe or tribe.lower() == "none":
+        return True
+    mt = (getattr(m, "minion_type", "None") or "None").lower()
+    if mt == "all":
+        return True
+    return mt == tribe.lower()
 
 
 # ---- Effect factories ----
@@ -1300,18 +1317,18 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             exhausted=not ("Charge" in kws or "Rush" in kws),
             cost=int(card_spec.get("cost", 0)),
             rarity=str(card_spec.get("rarity", "Common")),
-            # base/origin info for the inspector
             card_id=card_spec.get("id", ""),
             base_attack=int(card_spec.get("attack", 0)),
             base_health=int(card_spec.get("health", 1)),
             base_text=str(card_spec.get("text", "")),
             base_keywords=list(kws),
-            # NEW: carry aura from token spec if present
             aura_spec=card_spec.get("aura"),
             aura_active=False,
             spell_damage=int(card_spec.get("spell_damage", 0)),
             enrage_spec=card_spec.get("enrage"),
             enrage_active=False,
+            minion_type=str(card_spec.get("minion_type", "None")),
+            base_minion_type=str(card_spec.get("minion_type", "None")),
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
@@ -1507,6 +1524,7 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         aura_spec = raw.get("aura")  # dict or None
         spell_dmg = int(raw.get("spell_damage", 0))
         enrage_spec = raw.get("enrage")  # dict or None
+        mtype = str(raw.get("minion_type", "None"))
 
 
         bc = oc = None
@@ -1522,7 +1540,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             id=cid, name=name, cost=cost, type=typ, attack=atk, health=hp,
             keywords=kwords, battlecry=bc, on_cast=oc, rarity=rarity,
             aura_spec=aura_spec,
-            spell_damage=spell_dmg
+            spell_damage=spell_dmg,
+            minion_type=mtype
         )
 
         setattr(card, "enrage_spec", enrage_spec)
@@ -1553,3 +1572,97 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
     db["_RAW"]        = raw_cards
     return db
 
+def _is_real_card(db, cid: str) -> bool:
+    return (cid in db) and (not cid.startswith("_")) and hasattr(db[cid], "type")
+
+def _is_legendary(db, cid: str) -> bool:
+    try:
+        return str(getattr(db[cid], "rarity", "")).upper() == "LEGENDARY"
+    except Exception:
+        return False
+
+def _expand_counts_to_list(counts: Dict[str, int]) -> List[str]:
+    lst: List[str] = []
+    for cid, n in counts.items():
+        lst.extend([cid] * int(n))
+    return lst
+
+def _validate_deck_list(db, deck_list: List[str]) -> Tuple[bool, List[str]]:
+    """
+    Enforces:
+      - exactly 30 cards
+      - up to 2 copies non-legendary
+      - up to 1 copy legendary
+      - all card ids exist in db
+    Returns (ok, errors[])
+    """
+    errors: List[str] = []
+    if len(deck_list) != 30:
+        errors.append(f"Deck must have exactly 30 cards (got {len(deck_list)}).")
+
+    # Existence + counts
+    counts: Dict[str, int] = {}
+    for cid in deck_list:
+        if not _is_real_card(db, cid):
+            errors.append(f"Unknown card id: {cid}")
+        counts[cid] = counts.get(cid, 0) + 1
+
+    for cid, n in counts.items():
+        if _is_legendary(db, cid):
+            if n > 1:
+                errors.append(f"Legendary '{cid}' appears {n} times (max 1).")
+        else:
+            if n > 2:
+                errors.append(f"'{cid}' appears {n} times (max 2).")
+
+    return (len(errors) == 0), errors
+
+def load_decks_from_json(path: str, cards_db) -> Dict[str, Dict[str, object]]:
+    """
+    Loads and validates decks. Returns:
+      {
+        deck_name: {
+          "list": [<30 card ids>],
+          "hero": <optional hero id or None>,
+          "errors": []   # present only if invalid
+        },
+        ...
+      }
+    Invalid decks are included with an 'errors' key so you can surface issues in UI/log.
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    out: Dict[str, Dict[str, object]] = {}
+
+    for entry in raw.get("decks", []):
+        name = str(entry.get("name", "")).strip() or f"Deck_{len(out)+1}"
+        hero_hint = entry.get("hero")
+        if "cards" in entry:
+            deck_list = _expand_counts_to_list(entry["cards"])
+        elif "list" in entry:
+            deck_list = list(entry["list"])
+        else:
+            deck_list = []
+
+        ok, errs = _validate_deck_list(cards_db, deck_list)
+        if ok:
+            out[name] = {"list": deck_list[:30], "hero": hero_hint}
+        else:
+            out[name] = {"list": deck_list, "hero": hero_hint, "errors": errs}
+    return out
+
+def choose_loaded_deck(decks: Dict[str, Dict[str, object]],
+                       preferred_name: str | None) -> Tuple[List[str], str | None]:
+    """
+    Picks a valid deck by name (if provided) else the first valid one.
+    Returns (deck_list, hero_hint) or ([], None) if none valid.
+    """
+    # prefer by name
+    if preferred_name and preferred_name in decks:
+        d = decks[preferred_name]
+        if "errors" not in d:
+            return list(d["list"]), (d.get("hero") or None)
+    # otherwise first valid
+    for d in decks.values():
+        if "errors" not in d:
+            return list(d["list"]), (d.get("hero") or None)
+    return [], None
