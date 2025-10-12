@@ -155,6 +155,8 @@ class Game:
         self.next_minion_id = 1
         self.history: List[Event] = []
         self.pending_battlecry: Optional[Dict[str, Any]] = None
+        self.current_battlecry_minion_id: Optional[int] = None
+        self.current_battlecry_owner: Optional[int] = None
 
     def other(self, pid:int) -> int:
         return 1 - pid
@@ -448,15 +450,19 @@ class Game:
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
+        
         p = self.players[pid]
-
-        if len(p.board) >= 7:
-            raise IllegalAction("Board is full")
 
         if hand_index < 0 or hand_index >= len(p.hand):
             raise IllegalAction("Bad hand index")
+        
         cid = p.hand[hand_index]
         card = self.cards_db[cid]
+
+        # Only block MINION plays when board is full
+        if card.type == "MINION" and len(p.board) >= 7:
+            raise IllegalAction("Board full")
+
         if p.mana < card.cost:
             raise IllegalAction("Not enough mana")
         p.mana -= card.cost
@@ -533,7 +539,15 @@ class Game:
                             tagged = None
                     else:
                         tagged = None
-                    ev += card.battlecry(self, card, tagged)
+
+                    self.current_battlecry_minion_id = m.id
+                    self.current_battlecry_owner = pid
+
+                    try:
+                        ev += card.battlecry(self, card, tagged)
+                    finally:
+                        self.current_battlecry_minion_id = None
+                        self.current_battlecry_owner = None
         elif card.type == "SPELL":
             if card.on_cast:
                 tagged = None
@@ -595,7 +609,13 @@ class Game:
         card_obj = self.cards_db[pb["card_id"]]
         fn = pb["fn"]
         self.pending_battlecry = None
-        ev = fn(self, card_obj, tagged)
+        self.current_battlecry_minion_id = pb["minion_id"]
+        self.current_battlecry_owner = pid
+        try:
+            ev = fn(self, card_obj, tagged)
+        finally:
+            self.current_battlecry_minion_id = None
+            self.current_battlecry_owner = None
         self.history += ev
         return ev
 
@@ -715,6 +735,40 @@ def _resolve_tagged_target(g, target):
     return (None, None)
 
 
+def _apply_adjacent_buff(g, owner_pid: int, summoned_minion_id: int, *, attack=0, health=0, taunt=False):
+    loc = g.find_minion(summoned_minion_id)
+    if not loc:
+        return []
+    pid, idx, _self = loc
+    if pid != owner_pid:
+        return []
+
+    board = g.players[pid].board
+    events = []
+
+    def buff_minion(m):
+        if attack or health:
+            m.attack += int(attack)
+            m.max_health += int(health)
+            m.health += int(health)
+            events.append(Event("Buff", {
+                "minion": m.id,
+                "attack_delta": int(attack),
+                "health_delta": int(health)
+            }))
+            # keep enrage correct if you use it
+            events.extend(g._update_enrage(m))
+        if taunt and not getattr(m, "taunt", False):
+            m.taunt = True
+            events.append(Event("BuffKeyword", {"minion": m.id, "keyword": "Taunt"}))
+
+    if idx - 1 >= 0 and board[idx - 1].is_alive():
+        buff_minion(board[idx - 1])
+    if idx + 1 < len(board) and board[idx + 1].is_alive():
+        buff_minion(board[idx + 1])
+
+    return events
+
 # ---- Effect factories ----
 
 def _fx_gain_armor(params):
@@ -814,6 +868,21 @@ def _fx_heal(params):
         return []
     return run
 
+
+
+def _fx_adjacent_buff(params):
+    a = int(params.get("attack", 0))
+    h = int(params.get("health", 0))
+    give_taunt = bool(params.get("taunt", False))
+
+    def run(g, source_obj, target):
+        # Use the context set by play_card()/resolve_pending_battlecry
+        mid = getattr(g, "current_battlecry_minion_id", None)
+        owner = getattr(g, "current_battlecry_owner", getattr(source_obj, "owner", g.active_player))
+        if mid is None:
+            return []  # safety
+        return _apply_adjacent_buff(g, owner, mid, attack=a, health=h, taunt=give_taunt)
+    return run
 
 
 def _fx_discover_equal_remaining_mana(params):
@@ -1109,7 +1178,9 @@ def _effect_factory(name, params, json_tokens):
         "summon":             lambda p: _fx_summon(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
         "gain_armor":         _fx_gain_armor,
+        "adjacent_buff":      _fx_adjacent_buff,
         "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,
+        
     }
     if name not in table:
         raise ValueError(f"Unknown effect: {name}")

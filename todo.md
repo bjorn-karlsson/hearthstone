@@ -1,8 +1,8 @@
 # ----------- TODO LIST ------------
 # 
 # ------- Sorted ----------
-# 1.0 [] Instead of spawning minions, drop them on the field, even between minions etc
-# 2.0 [] Add Adjecent to minions, Defender of Argus
+# 1.0 [x] Instead of spawning minions, drop them on the field, even between minions etc
+# 2.0 [x] Add Adjecent to minions, Defender of Argus
 # 3.0 [] Add freeze mechanic, Frost Elemental
 # 4.0 [] Add AoE Heal, Darkscale Healer
 # 5.0 [] Add Costs (x) less per minion on the battlefield, Sea Giant — 8/8

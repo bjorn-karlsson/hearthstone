@@ -421,6 +421,28 @@
             "targeting": "enemy_character"
         },
         {
+            "id": "DEFENDER_OF_ARGUS",
+            "name": "Defender of Argus",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 1,
+            "attack": 2,
+            "health": 3,
+            "text": "Battlecry: Give adjacent minions +1/+1 and Taunt.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "adjacent_buff",
+                    "attack": 1,
+                    "health": 1,
+                    "taunt": true
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "NOVICE_ENGINEER",
             "name": "Novice Engineer",
             "type": "MINION",
