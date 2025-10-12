@@ -83,11 +83,6 @@ def can_use_hero_power_ai(g: Game, pid: int) -> bool:
 
 
 def maybe_use_hero_power(g: Game, pid: int):
-    """
-    If the current hero power is affordable and makes sense, use it.
-    Returns the list of events ([]) if not used or on illegal.
-    Never raises.
-    """
     if g.active_player != pid:
         return []
     try:
@@ -98,18 +93,13 @@ def maybe_use_hero_power(g: Game, pid: int):
         me = g.players[pid]
         opp = g.players[1 - pid]
 
-        # Simple, readable heuristics matching your previous inline logic:
-
         if hero_id == "HUNTER":
-            # Always shoot face.
             return g.use_hero_power(pid)
 
         if hero_id == "WARRIOR":
-            # Armor up is always fine.
             return g.use_hero_power(pid)
 
         if hero_id == "WARLOCK":
-            # Life tap early/mid is generally fine; avoid if hand too big or hp too low.
             if len(me.hand) >= 9:
                 return []
             if me.health <= 10:
@@ -117,22 +107,23 @@ def maybe_use_hero_power(g: Game, pid: int):
             return g.use_hero_power(pid)
 
         if hero_id == "PALADIN":
-            # Summon only if there is space.
             if len(me.board) < 7:
                 return g.use_hero_power(pid)
             return []
 
         if hero_id == "MAGE":
-            # Prefer pinging any enemy minion with 1 HP, else face.
-            candidates = [m for m in opp.board if m.is_alive() and m.health <= 1]
-            if candidates:
-                return g.use_hero_power(pid, target_minion=candidates[0].id)
+            taunt_1hp = [m for m in opp.board if m.is_alive() and m.taunt and m.health <= 1]
+            if taunt_1hp:
+                return g.use_hero_power(pid, target_minion=taunt_1hp[0].id)
+            ones = [m for m in opp.board if m.is_alive() and m.health <= 1]
+            if ones:
+                return g.use_hero_power(pid, target_minion=ones[0].id)
             return g.use_hero_power(pid, target_player=(1 - pid))
 
-        # Default: don’t use (unknown hero)
         return []
     except IllegalAction:
         return []
+
 
 # ----------------- Small helpers -----------------
 
@@ -236,6 +227,13 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
         return None
     card = g.cards_db[cid]
     if card.cost > p.mana:
+        return None
+
+    #hard stop—no minion plays on full board, and also abort if this card summons when full
+    if card.type == "MINION" and len(p.board) >= 7:
+        return None
+    raw = _raw(g, cid)
+    if any(e.get("effect") == "summon" for e in _card_effects(raw)) and len(p.board) >= 7:
         return None
 
     kind, info = classify_card(g, cid)
@@ -372,56 +370,103 @@ def find_lethal_action(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
 
 # ----------------- ATTACK PICKER (trades first) -----------------
 
+def _face_allowed_for_attacker(g: Game, pid: int, m) -> bool:
+    if not can_face(g, pid):
+        return False
+    # Rush can never go face on the summoning turn
+    if getattr(m, "rush", False) and getattr(m, "summoned_this_turn", True):
+        return False
+    return True
+
+def _face_priority_score(g: Game, pid: int, attacker) -> int:
+    """
+    Estimate how good going face is with this attacker.
+    Boosts when opponent is low, when we can set up lethal soon, and for high attack.
+    """
+    opp = 1 - pid
+    # base from attack (more attack => more valuable face hit)
+    score = 80 + attacker.attack * 12
+
+    # race/lethal pressure
+    opp_hp = g.players[opp].health
+    # if this hit represents >= 20% of their remaining health, reward it
+    score += int( (attacker.attack / max(1, opp_hp)) * 120 )
+
+    # If we already have lots of board damage ready, prefer racing
+    total_ready = sum(m.attack for m in _ally_minions(g, pid) if minion_ready(m) and not (getattr(m, "rush", False) and getattr(m, "summoned_this_turn", True)))
+    score += min(total_ready * 4, 60)
+
+    # If there are taunts, face is illegal anyway; caller checks that.
+    return score
+
 def pick_attack(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
     opp = 1 - pid
-    # Value trades first
+    enemies = _enemy_minions(g, pid)
+    taunts  = [m for m in enemies if m.taunt and m.is_alive()]
+
     for a in _ally_minions(g, pid):
         if not minion_ready(a):
             continue
-        taunts = [m for m in _enemy_minions(g, pid) if m.taunt]
-        pool = taunts if taunts else _enemy_minions(g, pid)
-        best = None
-        best_score = -1
+
+        # 1) Evaluate best trade (respect taunts if any)
+        pool = taunts if taunts else enemies
+        best_trade = None
+        best_trade_score = -1
         for m in pool:
             kill_enemy = a.attack >= m.health
             die_self   = m.attack >= a.health
-            # weight enemy’s threat & cost
+
             m_val = threat_score_enemy_minion(m)
             score = 0
             if kill_enemy and not die_self:
-                score = 200 + m_val
+                score = 240 + m_val                    # very good trade
             elif kill_enemy and die_self:
-                score = 120 + int(m_val * 0.6)
+                score = 140 + int(m_val * 0.6)         # even trade weighted by target value
             else:
-                # chip: prefer softening high-threat targets
-                score = 40 + min(a.attack, m.health) + int(m_val * 0.1)
-            if score > best_score:
-                best, best_score = m, score
-        if best is not None:
-            return (('attack', a.id, None, best.id), best_score)
+                # chip into a high-value minion is ok but not great
+                score = 50 + min(a.attack, m.health) + int(m_val * 0.1)
 
-    # If no good trades or nothing to hit, go face when allowed
-    if can_face(g, pid):
-        for a in _ally_minions(g, pid):
-            if not minion_ready(a):
-                continue
-            if getattr(a, "rush", False) and getattr(a, "summoned_this_turn", True):
-                continue
-            return (('attack', a.id, opp, None), 80 + a.attack)
+            # Don’t dump huge attack into a truly worthless target unless it’s a taunt
+            if not m.taunt and m.attack == 0 and m.health <= 1 and a.attack >= 4:
+                score -= 80
+
+            if score > best_trade_score:
+                best_trade_score = score
+                best_trade = m
+
+        # 2) Evaluate face (if legal for this attacker)
+        best_face = None
+        best_face_score = -1
+        if _face_allowed_for_attacker(g, pid, a) and not taunts:
+            face_score = _face_priority_score(g, pid, a)
+            best_face, best_face_score = (opp, None), face_score
+
+        # 3) Special casing for “charge” burst (e.g., Leeroy): lean to face unless trade is clearly great
+        if getattr(a, "charge", False) and not taunts:
+            # require a *really* valuable trade to override face with charge
+            if best_trade_score >= best_face_score + 120:
+                return (('attack', a.id, None, best_trade.id), best_trade_score)
+            else:
+                return (('attack', a.id, opp, None), best_face_score)
+
+        # 4) Normal choice: whichever is better
+        if best_trade is None and best_face is None:
+            continue
+        if best_face_score > best_trade_score:
+            return (('attack', a.id, opp, None), best_face_score)
+        else:
+            return (('attack', a.id, None, best_trade.id), best_trade_score)
+
     return None
 
-# ----------------- DEVELOPMENT / CASTS -----------------
 
+# ----------------- DEVELOPMENT / CASTS -----------------
 def pick_best_play(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
-    """
-    Consider all cards in hand and select the *useful* one with the highest value.
-    Also (optionally) consider spending The Coin if it unlocks a strictly better play.
-    """
     p = g.players[pid]
     best = None
     best_score = -1
 
-    # direct pass: useful cards only
+    # useful cards only
     for i, cid in enumerate(p.hand):
         usable = has_useful_play_for_card(g, pid, cid)
         if not usable:
@@ -431,35 +476,44 @@ def pick_best_play(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
             best_score = score
             best = ('play', idx, tp, tm)
 
-    # Optional: Coin trick — if we have The Coin and it unlocks a significantly better play
-    if any(c in THE_COIN for c in p.hand):
-        # simulate +1 mana budget and scan again
+    # Consider Coin only if it's **our turn** (it is, but keep it explicit) and in hand
+    if g.active_player == pid and any(c in THE_COIN for c in p.hand):
         mana_now = p.mana
-        p.mana += 1
+        p.mana += 1  # simulate
         try:
             coin_best = None
             coin_score = -1
+            coin_best_is_minion = False
+
             for i, cid in enumerate(p.hand):
                 if cid in THE_COIN:
                     continue
                 usable = has_useful_play_for_card(g, pid, cid)
                 if not usable:
                     continue
-                _, tp, tm, score = usable
-                if score > coin_score:
-                    coin_score = score
-                    coin_best = (cid, tp, tm)
-            # If using Coin yields a *much* better play, do it
+                idx2, tp2, tm2, sc2 = usable
+
+                # If board is full, do not consider a minion/summon as a candidate
+                cobj = g.cards_db[cid]
+                if cobj.type == "MINION" and len(p.board) >= 7:
+                    continue
+
+                if sc2 > coin_score:
+                    coin_score = sc2
+                    coin_best = (idx2, tp2, tm2)
+                    coin_best_is_minion = (cobj.type == "MINION")
+
+            # Only Coin if it unlocks a significantly better *legal* play
             if coin_best and coin_score >= best_score + 40:
-                # First, play Coin
                 coin_idx = next(i for i, x in enumerate(p.hand) if x in THE_COIN)
-                return (('play', coin_idx, None, None), coin_score + 1)  # next frame will use the unlocked play
+                return (('play', coin_idx, None, None), coin_score + 1)
         finally:
             p.mana = mana_now
 
     if best is not None:
         return (best, best_score)
     return None
+
 
 # ----------------- TOP-LEVEL POLICY -----------------
 
