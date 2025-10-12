@@ -971,6 +971,37 @@ def _fx_equip_weapon(params, json_db_tokens):
 
     return run
 
+def _fx_destroy_weapon(params):
+    """
+    Destroy a weapon. Owner resolution:
+      - "enemy" (default), "opponent"
+      - "friendly", "ally", "self", "player"
+      - "active", "inactive"
+      - or an absolute pid: 0 / 1
+    """
+    owner_param = params.get("owner", "enemy")
+
+    def _resolve_victim(g, source_owner):
+        if isinstance(owner_param, int):
+            return 0 if owner_param == 0 else 1
+        s = str(owner_param).lower()
+        if s in ("enemy", "opponent"):
+            return g.other(source_owner)
+        if s in ("friendly", "ally", "self", "player"):
+            return source_owner
+        if s == "active":
+            return g.active_player
+        if s == "inactive":
+            return g.other(g.active_player)
+        return g.other(source_owner)  # default
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        victim = _resolve_victim(g, owner)
+        # uses your existing weapon API; no-op if none equipped
+        return g.destroy_weapon(victim, reason="Effect")
+    return run
+
 def _fx_gain_armor(params):
     amt = int(params.get("amount", 0))
     t_spec = params.get("target")  # optional: "self"/"friendly_face"/"enemy_face"
@@ -1378,6 +1409,7 @@ def _effect_factory(name, params, json_tokens):
         "summon":             lambda p: _fx_summon(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
         "equip_weapon":       lambda p: _fx_equip_weapon(p, json_tokens),
+        "destroy_weapon":     _fx_destroy_weapon,
         "gain_armor":         _fx_gain_armor,
         "adjacent_buff":      _fx_adjacent_buff,
         "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,

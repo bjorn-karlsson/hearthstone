@@ -58,7 +58,7 @@
             "keywords": [
                 "Taunt"
             ]
-        }, 
+        },
         "ARATHI_AXE": {
             "id": "ARATHI_AXE",
             "name": "Arathi Axe",
@@ -314,11 +314,31 @@
             ]
         },
         {
+            "id": "ACIDIC_SWAMP_OOZE",
+            "name": "Acidic Swamp Ooze",
+            "type": "MINION",
+            "rarity": "COMMON",
+            "cost": 2,
+            "attack": 3,
+            "health": 2,
+            "text": "Battlecry: Destroy your opponent's weapon.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "destroy_weapon",
+                    "owner": "enemy"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "ARATHI_WEAPONSMITH",
             "name": "Arathi Weaponsmith",
             "type": "MINION",
             "rarity": "COMMON",
-            "cost": 1,
+            "cost": 4,
             "attack": 3,
             "health": 3,
             "text": "Battlecry: Equip a 2/2 weapon.",
@@ -326,7 +346,10 @@
                 "Battlecry"
             ],
             "battlecry": [
-                { "effect": "equip_weapon", "card_id": "ARATHI_AXE" }
+                {
+                    "effect": "equip_weapon",
+                    "card_id": "ARATHI_AXE"
+                }
             ],
             "targeting": "none"
         },
