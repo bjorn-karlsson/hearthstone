@@ -147,6 +147,12 @@ def format_event(e, g, skip=False) -> str:
     if DEBUG and not skip:
         return f"{k}: {format_event(e, g, True)}"
 
+    if k == "SecretPlayed":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} set a Secret."
+    if k == "SecretRevealed":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who}'s Secret revealed: {p.get('name','Secret')}!"
     if k == "WeaponEquipped":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} equiped {p.get('name')}."
@@ -279,7 +285,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["HUNTERS_MARK", "IRONFUR_GRIZZLY", "STARVING_BUZZARD", "SAVANNAH_HIGHMANE", "KILL_COMMAND"] * 30
+    desired = ["EXPLOSIVE_TRAP", "EAGLEHORN_BOW"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -539,6 +545,16 @@ def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
         return False
     if c.type == "MINION" and len(p.board) >= 7:
         return False
+    
+    # --- Secret duplicate check for UI ---
+    is_secret = ("Secret" in getattr(c, "keywords", [])) or getattr(c, "is_secret", False)
+    if is_secret and hasattr(p, "active_secrets"):
+        if isinstance(p.active_secrets, dict):
+            if cid in p.active_secrets:
+                return False
+        else:  # set-like
+            if cid in p.active_secrets:
+                return False
 
     # Optional: simple target availability checks using JSON "_TARGETING"
     targ_map = g.cards_db.get("_TARGETING", {})

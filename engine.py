@@ -47,6 +47,8 @@ class Weapon:
     attack: int
     durability: int
     max_durability: int = 0
+    card_id: str = ""
+    triggers_map: Dict[str, List[Callable]] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.max_durability <= 0:
@@ -119,6 +121,7 @@ class PlayerState:
     board: List[Minion] = field(default_factory=list)
     graveyard: List[str] = field(default_factory=list)
     dead_minions: List[Minion] = field(default_factory=list)
+    active_secrets: List[dict] = field(default_factory=list)
     health: int = 30
     armor: int = 0
     max_mana: int = 0
@@ -127,7 +130,7 @@ class PlayerState:
     hero: Hero = None   
     hero_power_used_this_turn: bool = False
     weapon: Optional[Weapon] = None
-    hero_has_attacked_this_turn: bool = False   
+    hero_has_attacked_this_turn: bool = False
     
 
     def draw(self, g:'Game', n:int=1) -> List[Event]:
@@ -544,6 +547,15 @@ class Game:
                 raise IllegalAction("Taunt blocks attacking face")
 
             ev.append(Event("HeroAttack", {"player": pid, "target": f"player:{opp}"}))
+
+            # Defender secrets first
+            ev += self._trigger_secrets(opp, "hero_attacked")   
+
+            # >>> RECHECK hero can still attack (weapon removed, atk 0, or hero died)
+            if not self.hero_can_attack(pid):
+                self.history += ev
+                return ev
+
             ev += self.deal_damage_to_player(opp, w.attack, source=w.name)
             ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
             p.hero_has_attacked_this_turn = True
@@ -551,6 +563,28 @@ class Game:
             return ev
 
         raise IllegalAction("Hero attack needs a target")
+
+    def _trigger_secrets(self, victim_pid: int, trigger: str) -> List[Event]:
+        p = self.players[victim_pid]
+        if not p.active_secrets:
+            return []
+        fired = [s for s in p.active_secrets if s.get("trigger") == trigger]
+        if not fired:
+            return []
+        ev: List[Event] = []
+        for s in fired:
+            # 1) reveal
+            ev.append(Event("SecretRevealed", {"player": victim_pid, "card": s["card_id"], "name": s["name"]}))
+            # 2) run the secret's effect (from defender POV)
+            class _Src: pass
+            src = _Src(); src.owner = victim_pid; src.name = s["name"]
+            ev += s["runner"](self, src, None)
+            # 3) consume
+            p.active_secrets.remove(s)
+            self.players[victim_pid].graveyard.append(s["card_id"])
+            # 4) notify friendly weapon triggers (Eaglehorn Bow, etc.)
+            ev += self._run_weapon_triggers(victim_pid, "friendly_secret_revealed", {"secret": s["card_id"]})
+        return ev
 
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
@@ -568,8 +602,20 @@ class Game:
         if card.type == "MINION" and len(p.board) >= 7:
             raise IllegalAction("Board full")
 
+        # --- Secret duplicate check (must happen BEFORE paying mana or popping the card) ---
+        is_secret = ("Secret" in card.keywords) or getattr(card, "is_secret", False)
+        if is_secret:
+            # Ensure the store exists (some projects already have this as a dict or set)
+            if not hasattr(p, "active_secrets"):
+                p.active_secrets = {}  # or set(), just be consistent with your registration code
+            # Use card.id as the uniqueness key (no duplicate of the same Secret)
+            already_active = (card.id in p.active_secrets) if isinstance(p.active_secrets, dict) else (card.id in p.active_secrets)
+            if already_active:
+                raise IllegalAction("You already have this Secret active.")
+
         if p.mana < card.cost:
             raise IllegalAction("Not enough mana")
+        
         p.mana -= card.cost
         p.hand.pop(hand_index)
         ev: List[Event] = [Event("CardPlayed", {"player": pid, "card": cid, "name": card.name})]
@@ -668,18 +714,13 @@ class Game:
                 ev += card.on_cast(self, card, tagged)
             self.players[pid].graveyard.append(card.id)
         elif card.type == "WEAPON":
-            # equipping a weapon does not go to graveyard; it replaces the current one
-            # Use the same naming as the card unless JSON overrides via battlecry/on_cast
-            # If the weapon card also has a battlecry/effects, run them now (rare, but supported)
-            # Basic equip from card stats:
-            # - card.attack: weapon attack
-            # - card.health: durability
-            # If the card has an explicit equip effect in battlecry/on_cast, it can override.
-            # Default equip:
             old = p.weapon
             if old is not None:
                 ev.append(Event("WeaponBroken", {"player": pid, "name": old.name}))
-            p.weapon = Weapon(name=card.name, attack=card.attack, durability=card.health)
+            p.weapon = Weapon(name=card.name, attack=card.attack, 
+                              durability=card.health, card_id=card.id,
+                              triggers_map=dict(getattr(card, "triggers_map", {})),
+            )
             ev.append(Event("WeaponEquipped", {
                 "player": pid, "name": card.name,
                 "attack": card.attack, "durability": card.health
@@ -690,6 +731,23 @@ class Game:
                 ev += card.battlecry(self, card, None)
             if card.on_cast:
                 ev += card.on_cast(self, card, None)
+        elif card.type == "SECRET":
+            # no duplicate of same secret for that player
+            if any(s["card_id"] == card.id for s in p.active_secrets):
+                raise IllegalAction("You already have that Secret active")
+            # require it has a compiled trigger/runner
+            trig = getattr(card, "secret_trigger", None)
+            run  = getattr(card, "secret_runner", None)
+            if not trig or not callable(run):
+                raise IllegalAction("Malformed Secret")
+            p.active_secrets.append({
+                "card_id": card.id,
+                "name": card.name,
+                "trigger": trig,
+                "runner": run,
+            })
+            ev.append(Event("SecretPlayed", {"player": pid}))  # no name: hidden information
+            # (stays armed; not in graveyard yet)
         else:
             raise IllegalAction("Unknown card type")
         self.history += ev
@@ -763,25 +821,19 @@ class Game:
         self.history += ev
         return ev
 
-    def equip_weapon(self, pid: int, name: str, attack: int, durability: int) -> List[Event]:
-        """Equip a weapon, destroying the old one if present. Emits logs."""
+    def equip_weapon(self, pid: int, name: str, attack: int, durability: int,
+                 *, card_id: str = "", triggers_map: Optional[Dict[str, List[Callable]]] = None) -> List[Event]:
         p = self.players[pid]
         ev: List[Event] = []
-        # Replace old weapon (log destruction)
         if p.weapon is not None:
             old = p.weapon
             p.weapon = None
-            ev.append(Event("WeaponDestroyed", {
-                "player": pid, "name": old.name, "reason": "Replaced"
-            }))
-        # Equip new (log equip)
-        p.weapon = Weapon(name=name, attack=attack, durability=durability)
-        ev.append(Event("WeaponEquipped", {
-            "player": pid,
-            "name": name,
-            "attack": attack,
-            "durability": durability
-        }))
+            ev.append(Event("WeaponDestroyed", {"player": pid, "name": old.name, "reason": "Replaced"}))
+        p.weapon = Weapon(
+            name=name, attack=attack, durability=durability,
+            card_id=card_id, triggers_map=dict(triggers_map or {})
+        )
+        ev.append(Event("WeaponEquipped", {"player": pid, "name": name, "attack": attack, "durability": durability}))
         self.history += ev
         return ev
 
@@ -843,6 +895,22 @@ class Game:
                 # Effects may generate damage events, deaths, etc.
                 ev += run(self, src, {"minion": summoned_minion_id})
         # Log a synthetic event if you want (optional)
+        return ev
+    
+    def _run_weapon_triggers(self, pid: int, trigger_name: str, context: Optional[Dict[str, Any]] = None) -> List[Event]:
+        p = self.players[pid]
+        if not p.weapon:
+            return []
+        fns = p.weapon.triggers_map.get(trigger_name, [])
+        if not fns:
+            return []
+        class _Src: pass
+        src = _Src()
+        src.owner = pid
+        src.name  = p.weapon.name
+        ev: List[Event] = []
+        for fn in fns:
+            ev += fn(self, src, context)
         return ev
 
     def attack(self, pid:int, attacker_id:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
@@ -913,7 +981,20 @@ class Game:
 
         att.has_attacked_this_turn = True
         ev = [Event("Attack", {"attacker": att.id, "target": f"player:{opp}"})]
+
+        # SECRETS: defender 'opp' hero is being attacked
+        ev += self._trigger_secrets(opp, "hero_attacked")
+
+
+        # >>> RECHECK attacker still present & alive (secret may have killed/bounced it)
+        loc_after = self.find_minion(att.id)
+        if (not loc_after) or (not loc_after[2].is_alive()):
+            # Attack fizzles; do NOT deal face damage
+            self.history += ev
+            return ev
+                
         ev += self.deal_damage_to_player(opp, att.attack, source=att.name)
+
         self.history += ev
         return ev
 
@@ -995,6 +1076,8 @@ def _apply_adjacent_buff(g, owner_pid: int, summoned_minion_id: int, *, attack=0
     return events
 
 
+
+
 def _has_tribe(m: 'Minion', tribe: str) -> bool:
     """Return True if minion counts as the given tribe. 'All' counts as every tribe."""
     if not tribe or tribe.lower() == "none":
@@ -1045,6 +1128,26 @@ def _minion_owner_matches(source_pid: int, target_pid: int, scope: str) -> bool:
     return True  # "any"
 
 # ---- Effect factories ----
+
+def _fx_weapon_durability_delta(params):
+    delta = int(params.get("amount", 0))
+    def run(g, source_obj, target):
+        pid = getattr(source_obj, "owner", g.active_player)
+        p = g.players[pid]
+        if not p.weapon or delta == 0:
+            return []
+        if delta < 0:
+            # Use existing path so 0 auto-breaks & logs consistently
+            return g.lose_weapon_durability(pid, -delta, source="WeaponTrigger")
+        before = p.weapon.durability
+        p.weapon.durability = before + delta
+        ev = [Event("WeaponDurabilityChanged", {
+            "player": pid, "name": p.weapon.name, "from": before, "to": p.weapon.durability, "source": "WeaponTrigger"
+        })]
+        g.history += ev
+        return ev
+    return run
+
 def _fx_if_control_tribe(params, json_db_tokens):
     """
     If the source owner controls at least one friendly minion of 'tribe',
@@ -1135,26 +1238,27 @@ def _fx_equip_weapon(params, json_db_tokens):
 
     def run(g, source_obj, target):
         pid = getattr(source_obj, "owner", g.active_player)
-        # resolve stats (token or inline)
+        card_id = ""
+        trig_map = {}
         if token_id:
             spec = dict(json_db_tokens.get(token_id, {}))
             if not spec and token_id in g.cards_db:
                 c = g.cards_db[token_id]
                 spec = {
                     "id": c.id, "name": c.name, "type": getattr(c, "type", "WEAPON"),
-                    "attack": getattr(c, "attack", 0),
-                    "durability": getattr(c, "health", 0),  # if using health as durability on cards
+                    "attack": getattr(c, "attack", 0), "durability": getattr(c, "health", inline_d or 0),
                 }
+                trig_map = dict(getattr(c, "triggers_map", {}))  # NEW
             name = spec.get("name", inline_name)
             atk  = int(spec.get("attack", inline_a or 0))
-            dur  = int(spec.get("durability", spec.get("health", inline_d or 0)))
+            dur  = int(spec.get("durability", inline_d or 0))
+            card_id = spec.get("id", "")
         else:
             name, atk, dur = inline_name, int(inline_a or 0), int(inline_d or 0)
 
-        # <-- this emits WeaponDestroyed (if replaced) + WeaponEquipped logs
-        return g.equip_weapon(pid, name, atk, dur)
-
+        return g.equip_weapon(pid, name, atk, dur, card_id=card_id, triggers_map=trig_map)  # NEW
     return run
+
 
 def _fx_destroy_weapon(params):
     """
@@ -1615,27 +1719,30 @@ def _fx_set_health(params):
 # Registry maps effect name -> factory
 def _effect_factory(name, params, json_tokens):
     table = {
-        "deal_damage":        _fx_deal_damage,
-        "heal":               _fx_heal,
-        "draw":               _fx_draw,
-        "gain_temp_mana":     _fx_gain_temp_mana,
-        "random_pings":       _fx_random_pings,
-        "aoe_damage":         _fx_aoe_damage,
-        "aoe_damage_minions": _fx_aoe_damage_minions,
-        "add_attack":         _fx_add_attack,
-        "add_stats":          _fx_add_stats,
-        "silence":            _fx_silence,
-        "add_keyword":        _fx_add_keyword,
-        "summon":             lambda p: _fx_summon(p, json_tokens),
-        "summon_from_pool":   lambda p: _fx_summon_from_pool(p, json_tokens),
-        "transform":          lambda p: _fx_transform(p, json_tokens),
-        "equip_weapon":       lambda p: _fx_equip_weapon(p, json_tokens),
-        "if_summoned_tribe":  lambda p: _fx_if_summoned_tribe(p, json_tokens),
-        "if_control_tribe":   lambda p: _fx_if_control_tribe(p, json_tokens),
-        "destroy_weapon":     _fx_destroy_weapon,
-        "gain_armor":         _fx_gain_armor,
-        "adjacent_buff":      _fx_adjacent_buff,
-        "set_health":         _fx_set_health,
+        "deal_damage":              _fx_deal_damage,
+        "heal":                     _fx_heal,
+        "draw":                     _fx_draw,
+        "gain_temp_mana":           _fx_gain_temp_mana,
+        "random_pings":             _fx_random_pings,
+        "aoe_damage":               _fx_aoe_damage,
+        "aoe_damage_minions":       _fx_aoe_damage_minions,
+        "add_attack":               _fx_add_attack,
+        "add_stats":                _fx_add_stats,
+        "silence":                  _fx_silence,
+        "add_keyword":              _fx_add_keyword,
+        "summon":                   lambda p: _fx_summon(p, json_tokens),
+        "summon_from_pool":         lambda p: _fx_summon_from_pool(p, json_tokens),
+        "transform":                lambda p: _fx_transform(p, json_tokens),
+        "equip_weapon":             lambda p: _fx_equip_weapon(p, json_tokens),
+        "if_summoned_tribe":        lambda p: _fx_if_summoned_tribe(p, json_tokens),
+        "if_control_tribe":         lambda p: _fx_if_control_tribe(p, json_tokens),
+        "destroy_weapon":           _fx_destroy_weapon,
+        "gain_armor":               _fx_gain_armor,
+        "adjacent_buff":            _fx_adjacent_buff,
+        "set_health":               _fx_set_health,
+        "weapon_durability_delta":  _fx_weapon_durability_delta,
+
+        
         
         
         "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,
@@ -1734,6 +1841,7 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         spell_dmg = int(raw.get("spell_damage", 0))
         enrage_spec = raw.get("enrage")  # dict or None
         mtype = str(raw.get("minion_type", "None"))
+        secret_spec = raw.get("secret")
 
         triggers_map: Dict[str, List[Callable]] = {}
         for tr in raw.get("triggers", []) or []:
@@ -1767,6 +1875,13 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             setattr(card, "text", text)
         except Exception:
             pass
+
+        # compile secret (if present)
+        if secret_spec:
+            trig = str(secret_spec.get("trigger","")).lower()
+            effs = secret_spec.get("effects", []) or []
+            setattr(card, "secret_trigger", trig)
+            setattr(card, "secret_runner", _compile_effects(effs, tokens))
 
         db[cid] = card
         targeting[cid] = raw.get("targeting", "none")

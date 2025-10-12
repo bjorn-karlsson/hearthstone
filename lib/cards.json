@@ -699,6 +699,24 @@
             ]
         },
         {
+        "id": "EAGLEHORN_BOW",
+        "name": "Eaglehorn Bow",
+        "type": "WEAPON",
+        "rarity": "RARE",
+        "cost": 3,
+        "attack": 3,
+        "health": 2,
+        "text": "Whenever a friendly Secret is revealed, gain +1 Durability.",
+        "triggers": [
+            {
+            "on": "friendly_secret_revealed",
+            "effects": [
+                { "effect": "weapon_durability_delta", "amount": 1 }
+            ]
+            }
+        ]
+        },
+                {
             "id": "LEPER_GNOME",
             "name": "Leper Gnome",
             "type": "MINION",
@@ -753,6 +771,24 @@
                     "count": 1
                 }
             ]
+        },
+        {
+            "id": "EXPLOSIVE_TRAP",
+            "name": "Explosive Trap",
+            "type": "SECRET",
+            "rarity": "Common",
+            "cost": 2,
+            "text": "Secret: When your hero is attacked, deal 2 damage to all enemies.",
+            "secret": {
+                "trigger": "hero_attacked",
+                "effects": [
+                    {
+                        "effect": "aoe_damage",
+                        "amount": 2
+                    }
+                ]
+            },
+            "targeting": "none"
         },
         {
             "id": "HUNTERS_MARK",
