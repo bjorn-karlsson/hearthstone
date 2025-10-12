@@ -45,6 +45,15 @@
             "rarity": "Common",
             "minion_type": "Mech"
         },
+        "HYENA": {
+            "name": "Hyena",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "rarity": "Common",
+            "minion_type": "Beast"
+        },
         "SILVER_HAND_RECRUIT": {
             "name": "Silver Hand Recruit",
             "type": "MINION",
@@ -73,9 +82,147 @@
             "attack": 2,
             "durability": 2,
             "text": "2/2."
+        },
+        "HUFFER": {
+            "name": "Huffer",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 4,
+            "health": 2,
+            "rarity": "Common",
+            "keywords": [
+                "Charge"
+            ],
+            "minion_type": "Beast",
+            "text": "Charge."
+        },
+        "MISHA": {
+            "name": "Misha",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 4,
+            "health": 4,
+            "rarity": "Common",
+            "keywords": [
+                "Taunt"
+            ],
+            "minion_type": "Beast",
+            "text": "Taunt."
+        },
+        "LEOKK": {
+            "name": "Leokk",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 2,
+            "health": 4,
+            "rarity": "Common",
+            "keywords": [],
+            "minion_type": "Beast",
+            "text": "Your other minions have +1 Attack.",
+            "aura": {
+                "scope": "other_friendly_minions",
+                "attack": 1
+            }
         }
     },
     "cards": [
+        {
+            "id": "KNIFE_JUGGLER",
+            "name": "Knife Juggler",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 2,
+            "attack": 3,
+            "health": 2,
+            "minion_type": "None",
+            "text": "After you summon a minion, deal 1 damage to a random enemy.",
+            "triggers": [
+                {
+                    "on": "friendly_summon",
+                    "effects": [
+                        {
+                            "effect": "random_pings",
+                            "count": 1
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "STARVING_BUZZARD",
+            "name": "Starving Buzzard",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 1,
+            "minion_type": "Beast",
+            "text": "Whenever you summon a Beast, draw a card.",
+            "triggers": [
+                {
+                    "on": "friendly_summon",
+                    "effects": [
+                        {
+                            "effect": "if_summoned_tribe",
+                            "tribe": "beast",
+                            "then": [
+                                {
+                                    "effect": "draw",
+                                    "count": 1
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "HOUNDMASTER",
+            "name": "Houndmaster",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "None",
+            "cost": 4,
+            "attack": 4,
+            "health": 3,
+            "text": "Battlecry: Give a friendly Beast +2/+2 and Taunt.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "add_stats",
+                    "attack": 2,
+                    "health": 2
+                },
+                {
+                    "effect": "add_keyword",
+                    "keyword": "Taunt"
+                }
+            ],
+            "targeting": "friendly_tribe:beast"
+        },
+        {
+            "id": "ANIMAL_COMPANION",
+            "name": "Animal Companion",
+            "type": "SPELL",
+            "rarity": "Rare",
+            "cost": 3,
+            "text": "Summon a random Beast Companion.",
+            "on_cast": [
+                {
+                    "effect": "summon_from_pool",
+                    "pool": [
+                        "HUFFER",
+                        "MISHA",
+                        "LEOKK"
+                    ],
+                    "count": 1,
+                    "owner": "player"
+                }
+            ],
+            "targeting": "none"
+        },
         {
             "id": "CHARGING_BOAR",
             "name": "Charging Boar",
@@ -159,14 +306,14 @@
             "text": "Rush."
         },
         {
-            "id": "TAUNT_BEAR",
-            "name": "Stoneshell Bear",
+            "id": "IRONFUR_GRIZZLY",
+            "name": "Ironfur Grizzly",
             "type": "MINION",
             "rarity": "Rare",
             "minion_type": "Beast",
             "cost": 3,
             "attack": 3,
-            "health": 4,
+            "health": 3,
             "keywords": [
                 "Taunt"
             ],
@@ -608,6 +755,69 @@
             ]
         },
         {
+            "id": "HUNTERS_MARK",
+            "name": "Hunter's Mark",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 0,
+            "text": "Change a minion’s Health to 1.",
+            "on_cast": [
+                {
+                    "effect": "set_health",
+                    "amount": 1,
+                    "target": "any_minion"
+                }
+            ],
+            "targeting": "any_minion"
+        },
+        {
+            "id": "KILL_COMMAND",
+            "name": "Kill Command",
+            "type": "SPELL",
+            "rarity": "Rare",
+            "cost": 3,
+            "text": "Deal 3 damage; deal 5 damage instead if you control a Beast.",
+            "on_cast": [
+                {
+                    "effect": "if_control_tribe",
+                    "tribe": "beast",
+                    "then": [
+                        {
+                            "effect": "deal_damage",
+                            "amount": 5,
+                            "target": "enemy_character"
+                        }
+                    ],
+                    "else": [
+                        {
+                            "effect": "deal_damage",
+                            "amount": 3,
+                            "target": "enemy_character"
+                        }
+                    ]
+                }
+            ],
+            "targeting": "enemy_character"
+        },
+        {
+            "id": "SAVANNAH_HIGHMANE",
+            "name": "Savannah Highmane",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "Beast",
+            "cost": 6,
+            "attack": 6,
+            "health": 5,
+            "text": "Deathrattle: Summon two 2/2 Hyenas.",
+            "deathrattle": [
+                {
+                    "effect": "summon",
+                    "card_id": "HYENA",
+                    "count": 2
+                }
+            ]
+        },
+        {
             "id": "NERUBIAN_EGG",
             "name": "Nerubian Egg",
             "type": "MINION",
@@ -699,6 +909,22 @@
                 "attack": 3
             },
             "keywords": []
+        },
+        {
+            "id": "ARCANE_SHOT",
+            "name": "Arcane Shot",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 1,
+            "text": "Deal 2 damage.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 2,
+                    "target": "enemy_character"
+                }
+            ],
+            "targeting": "enemy_character"
         },
         {
             "id": "FIREBALL_LITE",

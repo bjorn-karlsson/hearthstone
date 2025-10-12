@@ -268,7 +268,7 @@ def make_starter_deck(db, seed=None):
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER", 
         "KOBOLD_GEOMANCER", "AMANI_BERSERKER", "ACIDIC_SWAMP_OOZE",
         # 3-cost
-        "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
+        "IRONFUR_GRIZZLY", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
         "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER", "KOBOLD_BLASTER",
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
@@ -276,10 +276,10 @@ def make_starter_deck(db, seed=None):
         "SPELLBREAKER", "SHIELDMASTA", "DEFENDER_OF_ARGUS", "ARATHI_WEAPONSMITH",
         # 5+ cost
         "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
-        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS",
+        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["CONSECRATION_LITE", "ACIDIC_SWAMP_OOZE", "KOBOLD_BLASTER"] * 30
+    desired = ["HUNTERS_MARK", "IRONFUR_GRIZZLY", "STARVING_BUZZARD", "SAVANNAH_HIGHMANE", "KILL_COMMAND"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -340,7 +340,7 @@ def _pick_hero(hint, default):
 
 
 HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
-HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
+#HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
 STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
 STARTER_DECK_AI     = ai_deck
@@ -353,7 +353,7 @@ for name, d in loaded_decks.items():
             print("  -", msg)
 
 #HERO_PLAYER = select_random_hero(hero_db)
-#HERO_AI     = select_random_hero(hero_db)
+HERO_AI     = select_random_hero(hero_db)
 
 #STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
 #STARTER_DECK_AI     = make_starter_deck(db, random.randint(1, 50000))
@@ -913,37 +913,63 @@ def minion_ready_to_act(g: Game, m) -> bool:
 
 # ---------- Targeting logic (for highlights) ----------
 def targets_for_card(g: Game, cid: str, pid: int):
-    """
-    Data-driven target helper using cards.json 'targeting'.
-    Returns (enemy_min_ids, my_min_ids, enemy_face_ok, my_face_ok)
-    """
     spec = (g.cards_db.get("_TARGETING", {}).get(cid, "none") or "none").lower()
     opp = 1 - pid
 
-    enemy_min = {m.id for m in g.players[opp].board if m.is_alive()}
-    my_min    = {m.id for m in g.players[pid].board if m.is_alive()}
+    enemy_all = [m for m in g.players[opp].board if m.is_alive()]
+    my_all    = [m for m in g.players[pid].board if m.is_alive()]
 
-    if spec == "none":
-        return set(), set(), False, False
-    if spec == "enemy_face":
-        return set(), set(), True, False
-    if spec == "friendly_face":
-        return set(), set(), False, True
-    if spec == "any_character":
-        return enemy_min, my_min, True, True
-    if spec == "enemy_character":
-        return enemy_min, set(), True, False
-    if spec == "friendly_character":
-        return set(), my_min, False, True
-    if spec == "enemy_minion":
-        return enemy_min, set(), False, False
-    if spec == "friendly_minion":
-        return set(), my_min, False, False
-    if spec == "any_minion":
-        return enemy_min, my_min, False, False
+    def is_tribe(m, t: str):
+        if not t: return True
+        mt = (getattr(m, "minion_type", "None") or "None").lower()
+        return mt == "all" or mt == t
 
-    # fallback
-    return set(), set(), False, False
+    # Parse generic pattern + legacy
+    def parse(spec: str):
+        # legacy like "friendly_beast"
+        for t in ("beast","mech","demon","dragon","murloc","pirate","totem","elemental","naga","undead","all"):
+            if spec == f"friendly_{t}": return ("friendly","minion",t)
+            if spec == f"enemy_{t}":    return ("enemy","minion",t)
+            if spec == f"any_{t}":      return ("any","minion",t)
+        if "_tribe:" in spec:
+            side, t = spec.split("_tribe:", 1)
+            side = side.replace("target_", "")
+            if side not in ("friendly","enemy","any"): side = "any"
+            return (side, "minion", t.strip())
+        if spec.endswith("_minion"):
+            if spec.startswith("friendly_"): return ("friendly","minion",None)
+            if spec.startswith("enemy_"):    return ("enemy","minion",None)
+            if spec.startswith("any_"):      return ("any","minion",None)
+        # character scopes (for faces)
+        if spec == "any_character":      return ("any","character",None)
+        if spec == "enemy_character":    return ("enemy","character",None)
+        if spec == "friendly_character": return ("friendly","character",None)
+        if spec == "enemy_face":         return ("enemy","face",None)
+        if spec == "friendly_face":      return ("friendly","face",None)
+        return ("none","none",None)
+
+    side, kind, tribe = parse(spec)
+
+    enemy_min = set()
+    my_min    = set()
+    e_face = m_face = False
+
+    if kind == "minion":
+        if side in ("enemy","any"):
+            enemy_min = {m.id for m in enemy_all if is_tribe(m, tribe)}
+        if side in ("friendly","any"):
+            my_min = {m.id for m in my_all if is_tribe(m, tribe)}
+    elif kind == "character":
+        e_face = side in ("enemy","any")
+        m_face = side in ("friendly","any")
+        enemy_min = {m.id for m in enemy_all}
+        my_min    = {m.id for m in my_all}
+    elif kind == "face":
+        e_face = (side in ("enemy","any"))
+        m_face = (side in ("friendly","any"))
+
+    return enemy_min, my_min, e_face, m_face
+
 
 def can_use_hero_power(g: Game, pid: int) -> bool:
     p = g.players[pid]
@@ -1172,6 +1198,7 @@ def draw_card_inspector_for_minion(g: Game, minion_id: int):
     vc.keywords = list(getattr(m, "base_keywords", []))
     vc.text = getattr(m, "base_text", "")
     vc.rarity = getattr(m, "rarity", "Common")
+    vc.minion_type = getattr(m, "minion_type", "None")
 
     # Darken background
     overlay = pygame.Surface((W, H), pygame.SRCALPHA)

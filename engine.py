@@ -73,6 +73,7 @@ class Minion:
     aura_active: bool = False
     enrage_spec: Optional[Dict[str, Any]] = None
     enrage_active: bool = False
+    triggers_map: Dict[str, List[Callable[['Game','Minion', Optional[Dict]] , List[Event]]]] = field(default_factory=dict)
     
     has_attacked_this_turn: bool = False
 
@@ -105,6 +106,7 @@ class Card:
     battlecry: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     on_cast: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     aura_spec: Optional[Dict[str, Any]] = None
+    triggers_map: Dict[str, List[Callable]] = field(default_factory=dict)
     text: str = "" 
     rarity: str = ""
     minion_type: str = ""
@@ -596,6 +598,7 @@ class Game:
                 enrage_active=False,
                 minion_type=getattr(card, "minion_type", "None"),
                 base_minion_type=getattr(card, "minion_type", "None"),
+                triggers_map=dict(getattr(card, "triggers_map", {})),
                 
             )
             self.next_minion_id += 1
@@ -614,6 +617,8 @@ class Game:
             ev += self._enable_aura(m)
             # and let existing friendly auras affect this newcomer
             ev += self._apply_existing_auras_to(m)
+
+            ev += self._handle_friendly_summon(pid, m.id)
 
 
             # --- after you insert the minion and add MinionSummoned + auras ---
@@ -691,49 +696,60 @@ class Game:
         return ev
 
     def resolve_pending_battlecry(self, pid:int,
-                                target_player:Optional[int]=None,
-                                target_minion:Optional[int]=None) -> List[Event]:
+                              target_player:Optional[int]=None,
+                              target_minion:Optional[int]=None) -> List[Event]:
         if self.pending_battlecry is None:
             raise IllegalAction("No pending battlecry")
         pb = self.pending_battlecry
         if pid != self.active_player or pid != pb["pid"]:
             raise IllegalAction("Not your pending battlecry")
 
-        # Make sure the minion is still alive/on board
         loc = self.find_minion(pb["minion_id"])
         if not loc:
             self.pending_battlecry = None
-            return []  # minion died / left play; nothing to do
+            return []
 
         need = pb["need"]
-        # Validate target against 'need' (friendly_minion, enemy_minion, any_character, etc.)
-        # We piggyback the same checks your hero power uses.
+        owner_scope, tribe = _parse_minion_targeting(need)
+
         tagged = None
         if target_minion is not None:
             loc2 = self.find_minion(target_minion)
             if not loc2:
                 raise IllegalAction("Target minion not found")
-            tpid, _, _ = loc2
-            if need == "enemy_minion" and tpid == pid:
-                raise IllegalAction("Must target enemy minion")
-            if need == "friendly_minion" and tpid != pid:
-                raise IllegalAction("Must target friendly minion")
-            if need not in ("friendly_minion", "enemy_minion", "any_minion", "any_character", "friendly_character", "enemy_character"):
+            tpid, _, tgtm = loc2
+
+            # If the spec is character-wide, reject minion targets
+            char_scopes = ("any_character","friendly_character","enemy_character")
+            if need in char_scopes:
+                raise IllegalAction("This battlecry requires a character (face) target")
+
+            # Owner scope gate (friendly/enemy/any)
+            if not _minion_owner_matches(pid, tpid, owner_scope):
+                raise IllegalAction("Wrong side for this target")
+
+            # Tribe gate (if a tribe is requested)
+            if tribe is not None and not _has_tribe(tgtm, tribe):
+                raise IllegalAction("Target does not match required tribe")
+
+            # If no tribe was requested, still ensure it's a minion-scope card
+            if tribe is None and not any(need.startswith(x) for x in ("friendly_minion","enemy_minion","any_minion","friendly_tribe","enemy_tribe","any_tribe")):
                 raise IllegalAction("This battlecry doesn't accept a minion target")
+
             tagged = {"minion": target_minion}
+
         elif target_player in (0, 1):
-            if need in ("enemy_minion", "friendly_minion", "any_minion"):
+            # Any *_tribe or *_minion targeting cannot accept a face
+            if any(need.startswith(x) for x in ("friendly_minion","enemy_minion","any_minion","friendly_tribe","enemy_tribe","any_tribe")):
                 raise IllegalAction("This battlecry requires a minion target")
             if need == "friendly_character" and target_player != pid:
                 raise IllegalAction("Must target friendly character")
             if need == "enemy_character" and target_player == pid:
                 raise IllegalAction("Must target enemy character")
-            # For 'any_character' both faces are fine
             tagged = {"player": target_player}
         else:
             raise IllegalAction("Battlecry needs a target")
 
-        # Run the stored compiled effect with the Card object
         card_obj = self.cards_db[pb["card_id"]]
         fn = pb["fn"]
         self.pending_battlecry = None
@@ -746,6 +762,7 @@ class Game:
             self.current_battlecry_owner = None
         self.history += ev
         return ev
+
     def equip_weapon(self, pid: int, name: str, attack: int, durability: int) -> List[Event]:
         """Equip a weapon, destroying the old one if present. Emits logs."""
         p = self.players[pid]
@@ -795,6 +812,37 @@ class Game:
             # Destroy emits its own WeaponDestroyed log
             ev += self.destroy_weapon(pid, reason="DurabilityZero")
         self.history += ev
+        return ev
+    
+    def _handle_friendly_summon(self, owner: int, summoned_minion_id: int) -> List[Event]:
+        """
+        Fires 'friendly_summon' triggers for OWNER (including the minion just summoned).
+        Each trigger contains precompiled effect runners (no targets; they decide).
+        """
+        ev: List[Event] = []
+        # Copy list to be safe if effects summon/kill minions
+        for m in list(self.players[owner].board):
+            if not m.is_alive() or m.silenced:
+                continue
+
+            if m.id == summoned_minion_id:
+                # Do not let a minion trigger from its own summon.
+                continue
+
+            runs = m.triggers_map.get("friendly_summon", [])
+            if not runs:
+                continue
+
+            # Provide a small source object: owner + name
+            class _Src: pass
+            src = _Src()
+            src.owner = owner
+            src.name  = m.name
+
+            for run in runs:
+                # Effects may generate damage events, deaths, etc.
+                ev += run(self, src, {"minion": summoned_minion_id})
+        # Log a synthetic event if you want (optional)
         return ev
 
     def attack(self, pid:int, attacker_id:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
@@ -956,8 +1004,128 @@ def _has_tribe(m: 'Minion', tribe: str) -> bool:
         return True
     return mt == tribe.lower()
 
+def _parse_minion_targeting(spec: str):
+    """
+    Returns (owner_scope, tribe) where:
+      owner_scope ∈ {"friendly", "enemy", "any"} (default "any")
+      tribe is a lowercase string or None
+    Supported:
+      "friendly_minion", "enemy_minion", "any_minion"
+      "friendly_tribe:beast", "enemy_tribe:mech", "any_tribe:dragon", ...
+      Legacy shortcuts also work: "friendly_beast", "enemy_beast", "any_beast"
+    """
+    s = (spec or "none").lower().strip()
+
+    # Legacy shortcuts -> normalize to tribe pattern
+    legacy = ("beast","mech","demon","dragon","murloc","pirate","totem",
+              "elemental","naga","undead","all")
+    for t in legacy:
+        if s == f"friendly_{t}": return ("friendly", t)
+        if s == f"enemy_{t}":    return ("enemy", t)
+        if s == f"any_{t}":      return ("any", t)
+
+    if s.endswith("_minion"):
+        if s.startswith("friendly_"): return ("friendly", None)
+        if s.startswith("enemy_"):    return ("enemy", None)
+        if s.startswith("any_"):      return ("any", None)
+
+    # Pattern *_tribe:<name>
+    if "_tribe:" in s:
+        side, tribe = s.split("_tribe:", 1)
+        side = side.replace("target_", "")
+        if side not in ("friendly","enemy","any"): side = "any"
+        return (side, tribe.strip().lower() or None)
+
+    # Fallback: no tribe/any side
+    return ("any", None)
+
+def _minion_owner_matches(source_pid: int, target_pid: int, scope: str) -> bool:
+    if scope == "friendly": return target_pid == source_pid
+    if scope == "enemy":    return target_pid != source_pid
+    return True  # "any"
 
 # ---- Effect factories ----
+def _fx_if_control_tribe(params, json_db_tokens):
+    """
+    If the source owner controls at least one friendly minion of 'tribe',
+    run 'then' effects; otherwise run optional 'else' effects.
+    """
+    tribe = str(params.get("tribe", "")).lower().strip()
+    then_spec = params.get("then", []) or []
+    else_spec = params.get("else", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+    else_fn = _compile_effects(else_spec, json_db_tokens)
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        has = any(
+            m.is_alive() and _has_tribe(m, tribe)
+            for m in g.players[owner].board
+        ) if tribe else False
+        return then_fn(g, source_obj, target) if has else else_fn(g, source_obj, target)
+    return run
+
+
+def _fx_if_summoned_tribe(params, json_db_tokens):
+    """Run nested 'then' effects only if the current target minion is of the given tribe."""
+    tribe = str(params.get("tribe", "")).lower().strip()
+    then_spec = params.get("then", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)  # expect ("minion", Minion)
+        if kind != "minion" or not obj:
+            return []
+        if not tribe or _has_tribe(obj, tribe):
+            return then_fn(g, source_obj, target)
+        return []
+    return run
+
+
+def _fx_summon_from_pool(params, json_db_tokens):
+    """
+    params:
+      pool: [token_id, token_id, ...]   # choose 1 at random (or 'count' times with replacement)
+      count: int (default 1)
+      owner: same semantics as _fx_summon (player/enemy/both/active/inactive/0/1)
+    """
+
+    
+    pool = list(params.get("pool", []))
+    count = int(params.get("count", 1))
+    owner_param = params.get("owner", "player")
+
+    def _resolve_owners(g, source_owner):
+       
+        if isinstance(owner_param, int):
+            return [0 if owner_param == 0 else 1]
+        s = str(owner_param).lower()
+        if s in ("player", "friendly", "ally", "self"):     return [source_owner]
+        if s in ("enemy", "opponent", "foe"):               return [g.other(source_owner)]
+        if s in ("both", "each", "mirror"):                 return [source_owner, g.other(source_owner)]
+        if s in ("active", "current"):                      return [g.active_player]
+        if s in ("inactive", "other_active"):               return [g.other(g.active_player)]
+        return [source_owner]
+
+    def run(g, source_obj, target):
+        if not pool:
+            return []
+        source_owner = getattr(source_obj, "owner", g.active_player)
+        owners = _resolve_owners(g, source_owner)
+        evs = []
+        
+        for ow in owners:
+            for _ in range(count):
+                token_id = g.rng.choice(pool)
+                raw = json_db_tokens[token_id]
+                
+                spec = dict(raw); spec.setdefault("id", token_id)
+                
+                evs += _summon_from_card_spec(g, ow, spec, 1)
+        return evs
+
+    return run
+
 
 def _fx_equip_weapon(params, json_db_tokens):
     token_id = params.get("card_id")
@@ -1329,6 +1497,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             enrage_active=False,
             minion_type=str(card_spec.get("minion_type", "None")),
             base_minion_type=str(card_spec.get("minion_type", "None")),
+            triggers_map=dict(getattr(card_spec, "triggers_map", {})),
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
@@ -1337,6 +1506,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
         # NEW: enable the token's own aura (if any), then apply existing friendly auras to it
         ev += g._enable_aura(m)
         ev += g._apply_existing_auras_to(m)
+        ev += g._handle_friendly_summon(owner, m.id)
     return ev
 
 def _fx_summon(params, json_db_tokens):
@@ -1409,6 +1579,39 @@ def _fx_transform(params, json_db_tokens):
         return ev
     return run
 
+def _fx_set_health(params):
+    """
+    Set a minion's *current* health to a fixed value (doesn't change max_health).
+    JSON:
+      { "effect": "set_health", "amount": 1, "target": "any_minion" }
+    """
+    n = int(params.get("amount", 1))
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        m = obj
+        before = m.health
+        # clamp to [0, max_health] but DO NOT change max_health
+        m.health = n
+        m.max_health = n
+        ev = []
+        # Use a Buff event so your UI log shows a change (+/-)
+        ev.append(Event("MinionSet", {
+            "minion": m.id,
+            "attack_delta": 0,
+            "health_delta": m.health - before
+        }))
+        # If it somehow hits 0, kill it
+        if m.health <= 0:
+            ev += g.destroy_minion(m, reason="SetHealthZero")
+        else:
+            ev += g._update_enrage(m)
+        return ev
+    return run
+
+
 # Registry maps effect name -> factory
 def _effect_factory(name, params, json_tokens):
     table = {
@@ -1424,11 +1627,17 @@ def _effect_factory(name, params, json_tokens):
         "silence":            _fx_silence,
         "add_keyword":        _fx_add_keyword,
         "summon":             lambda p: _fx_summon(p, json_tokens),
+        "summon_from_pool":   lambda p: _fx_summon_from_pool(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
         "equip_weapon":       lambda p: _fx_equip_weapon(p, json_tokens),
+        "if_summoned_tribe":  lambda p: _fx_if_summoned_tribe(p, json_tokens),
+        "if_control_tribe":   lambda p: _fx_if_control_tribe(p, json_tokens),
         "destroy_weapon":     _fx_destroy_weapon,
         "gain_armor":         _fx_gain_armor,
         "adjacent_buff":      _fx_adjacent_buff,
+        "set_health":         _fx_set_health,
+        
+        
         "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,
         
         
@@ -1526,6 +1735,13 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         enrage_spec = raw.get("enrage")  # dict or None
         mtype = str(raw.get("minion_type", "None"))
 
+        triggers_map: Dict[str, List[Callable]] = {}
+        for tr in raw.get("triggers", []) or []:
+            on = str(tr.get("on","")).lower().strip()
+            effs = tr.get("effects", []) or []
+            if on:
+                triggers_map.setdefault(on, []).append(_compile_effects(effs, tokens))
+
 
         bc = oc = None
         if "battlecry" in raw:
@@ -1541,7 +1757,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             keywords=kwords, battlecry=bc, on_cast=oc, rarity=rarity,
             aura_spec=aura_spec,
             spell_damage=spell_dmg,
-            minion_type=mtype
+            minion_type=mtype,
+            triggers_map=triggers_map,
         )
 
         setattr(card, "enrage_spec", enrage_spec)
