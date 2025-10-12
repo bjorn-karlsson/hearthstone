@@ -493,11 +493,18 @@ class Game:
 
 
             if card.battlecry:
-                tagged = None
-                if target_minion is not None:
-                    tagged = {"minion": target_minion}
-                elif target_player in (0, 1):
-                    tagged = {"player": target_player}
+                # Only forward a runtime target if the card actually requires one.
+                need = (self.cards_db.get("_TARGETING", {}).get(card.id, "none") or "none").lower()
+                if need != "none":
+                    if target_minion is not None:
+                        tagged = {"minion": target_minion}
+                    elif target_player in (0, 1):
+                        tagged = {"player": target_player}
+                    else:
+                        tagged = None
+                else:
+                    # Battlecry is fully specified in JSON (e.g., enemy_face) — do NOT override with a runtime target
+                    tagged = None
                 ev += card.battlecry(self, card, tagged)
         elif card.type == "SPELL":
             if card.on_cast:

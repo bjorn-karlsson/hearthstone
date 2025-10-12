@@ -434,8 +434,7 @@
                     "effect": "draw",
                     "count": 1
                 }
-            ],
-            "targeting": "enemy_character"
+            ]
         },
         {
             "id": "LEPER_GNOME",

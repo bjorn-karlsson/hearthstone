@@ -7,6 +7,37 @@ from collections import deque
 from engine import Game, load_cards_from_json, load_heros_from_json, IllegalAction
 from ai import pick_best_action
 
+# ----------- TODO LIST ------------
+# 
+# ------- Sorted ----------
+# 1.0 [] Instead of spawning minions, drop them on the field, even between minions etc
+# 2.0 [] Add Adjecent to minions, Defender of Argus
+# 3.0 [] Add freeze mechanic, Frost Elemental
+# 4.0 [] Add AoE Heal, Darkscale Healer
+# 5.0 [] Add Costs (x) less per minion on the battlefield, Sea Giant — 8/8
+# 5.1 [] Add Costs less per card in your hand, Mountain Giant — 8/8
+# 5.2 [] Add Costs less per damage your hero has taken, Molten Giant — 8/8
+# 6.0 [] Add Choose, Druid of the Claw, Choose One: Charge or +2 Health and Taunt
+# 7.0 [] Add Passive aura, Houndmaster — Battlecry: give a friendly Beast +2/+2 and Taunt
+# 7.1 [] Starving Buzzard — draw a card whenever you summon a Beast
+# 7.2 [] Water Elemental — 3/6, Freeze any character damaged by this minion
+# 7.3 [] Lightspawn — 0/5, Attack equal to Health
+# 8.0 [] Add weapon mechanic, Arathi Weaponsmith — 3/3, Battlecry: equip a 2/2 weapon
+# 9.0 [] Add stealth mechanic, Worgen Infiltrator 2/1 stealth
+#        * Enemies can’t attack, target, or affect it directly with spells.
+#        * It can still be hit by random effects (like Consecration or Arcane Explosion, etc).
+#        * It loses Stealth when it attacks or deals damage.
+#
+#------- Unordered General stuff ----------
+# [] Add weapon mechanic, drawing, logic, ai, etc
+# [] Add choose mechanic, drawing, logic, ai, etc
+# [] Add Class Druid
+# [] Add Class Priest
+# [] Add class Shaman
+# [] Add class Rougue
+# [] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
+# [] Add class card type: 
+
 DEBUG = False
 
 pygame.init()
@@ -247,20 +278,20 @@ def make_starter_deck(db, seed=None):
         "VOODOO_DOCTOR",
         # 2-cost
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER", 
-        "KOBOLD_GEOMANCER", "AMANI_BERSERKER"
+        "KOBOLD_GEOMANCER", "AMANI_BERSERKER",
         # 3-cost
         "TAUNT_BEAR", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
         "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER",
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
         "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
-        "SPELLBREAKER", "SHIELDMASTA"
+        "SPELLBREAKER", "SHIELDMASTA",
         # 5+ cost
         "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS",
-        "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION"
+        "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["AMANI_BERSERKER", "HOLY_LIGHT"] * 30
+    #desired = ["AMANI_BERSERKER", "HOLY_LIGHT", "STORMPIKE_COMMANDO"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
