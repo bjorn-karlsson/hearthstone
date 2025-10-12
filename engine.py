@@ -590,6 +590,8 @@ class Game:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
         
+        
+
         p = self.players[pid]
 
         if hand_index < 0 or hand_index >= len(p.hand):
@@ -598,20 +600,14 @@ class Game:
         cid = p.hand[hand_index]
         card = self.cards_db[cid]
 
+        # --- Secret duplicate check (must happen BEFORE paying mana or popping the card) ---
+        if card.type == "SECRET" or ("Secret" in getattr(card, "keywords", [])):
+            if any(s.get("card_id") == card.id for s in self.players[pid].active_secrets):
+                raise IllegalAction("You already have that Secret active.")
+
         # Only block MINION plays when board is full
         if card.type == "MINION" and len(p.board) >= 7:
             raise IllegalAction("Board full")
-
-        # --- Secret duplicate check (must happen BEFORE paying mana or popping the card) ---
-        is_secret = ("Secret" in card.keywords) or getattr(card, "is_secret", False)
-        if is_secret:
-            # Ensure the store exists (some projects already have this as a dict or set)
-            if not hasattr(p, "active_secrets"):
-                p.active_secrets = {}  # or set(), just be consistent with your registration code
-            # Use card.id as the uniqueness key (no duplicate of the same Secret)
-            already_active = (card.id in p.active_secrets) if isinstance(p.active_secrets, dict) else (card.id in p.active_secrets)
-            if already_active:
-                raise IllegalAction("You already have this Secret active.")
 
         if p.mana < card.cost:
             raise IllegalAction("Not enough mana")

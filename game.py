@@ -261,7 +261,10 @@ def log_events(ev_list, g):
 def select_random_hero(hero_db):
     return random.choice(list(hero_db.values()))
 
-
+def shuffle_deck(deck, seed=None):
+    rng = random.Random(seed)
+    rng.shuffle(deck)
+    return deck
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
@@ -329,14 +332,17 @@ except Exception as e:
     loaded_decks = {}
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Weaponsmith Test")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Legendary Sprinkle")
+
 
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
     ai_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 
+player_deck = shuffle_deck(player_deck, random.randint(1, 5_000_000))
+ai_deck = shuffle_deck(ai_deck, random.randint(1, 5_000_000))
 # Choose heroes (use deck hero hint if present and valid)
 def _pick_hero(hint, default):
     if hint:
@@ -346,9 +352,9 @@ def _pick_hero(hint, default):
 
 
 HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
-#HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
+HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
-STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
+STARTER_DECK_PLAYER = player_deck
 STARTER_DECK_AI     = ai_deck
 
 # Surface invalid deck errors (optional)
@@ -547,14 +553,11 @@ def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
         return False
     
     # --- Secret duplicate check for UI ---
-    is_secret = ("Secret" in getattr(c, "keywords", [])) or getattr(c, "is_secret", False)
-    if is_secret and hasattr(p, "active_secrets"):
-        if isinstance(p.active_secrets, dict):
-            if cid in p.active_secrets:
-                return False
-        else:  # set-like
-            if cid in p.active_secrets:
-                return False
+    is_secret = ("Secret" in getattr(c, "keywords", [])) or getattr(c, "is_secret", False) or (c.type == "SECRET")
+    if is_secret:
+        # active_secrets is a list of dicts: {"card_id": ..., "name": ..., ...}
+        if any(s.get("card_id") == cid for s in p.active_secrets or []):
+            return False
 
     # Optional: simple target availability checks using JSON "_TARGETING"
     targ_map = g.cards_db.get("_TARGETING", {})
