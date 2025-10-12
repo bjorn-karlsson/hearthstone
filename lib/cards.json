@@ -58,6 +58,14 @@
             "keywords": [
                 "Taunt"
             ]
+        }, 
+        "ARATHI_AXE": {
+            "id": "ARATHI_AXE",
+            "name": "Arathi Axe",
+            "type": "WEAPON",
+            "attack": 2,
+            "durability": 2,
+            "text": "2/2."
         }
     },
     "cards": [
@@ -298,12 +306,29 @@
             "rarity": "Common",
             "keywords": [],
             "text": "Battlecry: Silence a character.",
-            "targeting": "any_character",
+            "targeting": "any_minion",
             "battlecry": [
                 {
                     "effect": "silence"
                 }
             ]
+        },
+        {
+            "id": "ARATHI_WEAPONSMITH",
+            "name": "Arathi Weaponsmith",
+            "type": "MINION",
+            "rarity": "COMMON",
+            "cost": 1,
+            "attack": 3,
+            "health": 3,
+            "text": "Battlecry: Equip a 2/2 weapon.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                { "effect": "equip_weapon", "card_id": "ARATHI_AXE" }
+            ],
+            "targeting": "none"
         },
         {
             "id": "WOLFRIDER",
@@ -425,7 +450,7 @@
             "name": "Defender of Argus",
             "type": "MINION",
             "rarity": "Rare",
-            "cost": 1,
+            "cost": 5,
             "attack": 2,
             "health": 3,
             "text": "Battlecry: Give adjacent minions +1/+1 and Taunt.",

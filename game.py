@@ -144,6 +144,20 @@ def format_event(e, g, skip=False) -> str:
     if DEBUG and not skip:
         return f"{k}: {format_event(e, g, True)}"
 
+    if k == "WeaponEquipped":
+        who = "You" if p["player"] == 0 else "AI"
+        return f"{who} equiped {p.get('name')}."
+    if k == "HeroAttack":
+        tgt = p.get("target")
+        who = "You" if p.get("player") == 0 else "AI"
+        if isinstance(tgt, str) and tgt.startswith("player:"):
+            side = "AI" if tgt.endswith("1") else "You"
+            return f"{who}'s hero attacked {side}'s face."
+        # else minion id
+        mid = p.get("target")
+        # try to resolve name:
+        nm = _minion_name(g, mid) if isinstance(mid, int) else "a minion"
+        return f"{who}'s hero attacked {nm}."
     if k == "HeroPowerUsed":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} used {p.get('hero','Hero')} power."
@@ -226,6 +240,8 @@ def format_event(e, g, skip=False) -> str:
             return f"{src} hits {_minion_name(g, mid)}."
         return ""
     
+    print(f"not logging {k}")
+    
 def log_events(ev_list, g):
     for e in ev_list or []:
         s = format_event(e, g)
@@ -260,7 +276,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "TAUNT_BEAR", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["DEFENDER_OF_ARGUS"] * 30
+    desired = ["ARATHI_WEAPONSMITH"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -382,6 +398,11 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
     if pstate.armor > 0:
         armor_center = (health_center[0], health_center[1] - 26)
         draw_badge_circle(armor_center, 11, ARMOR_BADGE, str(pstate.armor), text_color=WHITE, font=FONT)
+
+    # weapon badge (bottom-left)
+    if getattr(pstate, "weapon", None):
+        wtxt = f"{pstate.weapon.attack}/{pstate.weapon.durability}"
+        draw_badge_circle((face_rect.x + 26, face_rect.bottom - 18), 12, (120,120,120), wtxt, font=FONT)
 
     # mana crystal on the right side
     crystal = pygame.Rect(face_rect.right + CRYSTAL_PAD, face_rect.y + 6, CRYSTAL_W, face_rect.h - 12)
@@ -735,6 +756,11 @@ def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
     start_x = max((W - total_w) // 2, MARGIN)
     return [pygame.Rect(start_x + i * step, y, CARD_W, CARD_H) for i in range(n)]
 
+
+
+
+
+
 def insertion_slots_for_my_row(g: Game, arena: pygame.Rect) -> List[pygame.Rect]:
     """
     Returns n+1 drop slots, index = insertion index.
@@ -932,6 +958,13 @@ def legal_attack_targets(g: Game, attacker_id: int):
         face_allowed = False
     return mins, face_allowed
 
+def hero_ready_to_act(g: Game, pid:int) -> bool:
+    return g.hero_can_attack(pid)
+
+def hero_legal_targets(g: Game, pid:int):
+    """Return (enemy_min_ids, face_ok) for hero attacks."""
+    return g.hero_legal_targets(pid)
+
 # ---------- Rendering ----------
 def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
                highlight_enemy_minions: Optional[set] = None,
@@ -955,6 +988,13 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     # Hero plates (enemy + you)
     draw_hero_plate(hot["face_enemy"], g.players[1], friendly=False)
     draw_hero_plate(hot["face_me"],    g.players[0], friendly=True)
+
+    # after drawing hero plates:
+    if g.hero_can_attack(0):
+        pygame.draw.rect(screen, GREEN, hot["face_me"].inflate(12, 12), 3, border_radius=16)
+    if g.hero_can_attack(1):
+        # purely informative; AI uses this programmatically
+        pygame.draw.rect(screen, GREEN, hot["face_enemy"].inflate(12, 12), 3, border_radius=16)
 
     # Hero Power buttons
     me = g.players[0]; ai = g.players[1]
@@ -1274,6 +1314,7 @@ def main():
     GLOBAL_GAME = g
 
     selected_attacker: Optional[int] = None
+    selected_hero: bool = False
     waiting_target_for_play: Optional[Tuple[int, str, pygame.Rect]] = None
     waiting_target_for_power: Optional[int] = None  # holds pid (0 only for UI)
     hilite_enemy_min: set = set()
@@ -1366,6 +1407,31 @@ def main():
                     if ev:
                         log_events(ev, g)
                         flash_from_events(g, ev)
+
+                    # If hero can attack, do it first: hit Taunt if present, else face
+                    if g.hero_can_attack(1):
+                        mins, face_ok = g.hero_legal_targets(1)
+                        target_min = next(iter(mins), None)
+                        def do_attack():
+                            try:
+                                if target_min is not None:
+                                    ev2 = g.hero_attack(1, target_minion=target_min)
+                                    log_events(ev2, g)
+                                    # flash the minion
+                                    post = layout_board(g)
+                                    for mid, r in post["my_minions"]:
+                                        if mid == target_min: enqueue_flash(r); break
+                                elif face_ok:
+                                    ev2 = g.hero_attack(1, target_player=0)
+                                    log_events(ev2, g)
+                                    enqueue_flash(my_face_rect(layout_board(g)))
+                            except IllegalAction:
+                                pass
+
+                        # tiny "think" beat then perform
+                        ANIMS.push(AnimStep("think_pause", 300, {}, on_finish=do_attack))
+                        return  # don’t pick another action this frame
+
                     act, _ = pick_best_action(g, 1)
                     kind = act[0]
                     if kind == 'end':
@@ -1453,7 +1519,16 @@ def main():
                         hilite_enemy_min.clear(); hilite_my_min.clear()
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
-
+                    
+                    # Select hero attacker
+                    if hot["face_me"].collidepoint(mx, my) and hero_ready_to_act(g, 0):
+                        mins, face_ok = hero_legal_targets(g, 0)
+                        selected_hero = True
+                        selected_attacker = None
+                        hilite_enemy_min = mins
+                        hilite_enemy_face = face_ok
+                        hilite_my_min.clear(); hilite_my_face = False
+                        continue
                     # If selecting target for a HERO POWER (Mage)
                     if waiting_target_for_power is not None:
                         pid_power = waiting_target_for_power  # 0
@@ -1792,6 +1867,44 @@ def main():
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
                             break
+                    
+                    # If HERO is selected, try to attack a highlighted target
+                    if selected_hero:
+                        did = False
+                        for emid, r in hot["enemy_minions"]:
+                            if r.collidepoint(mx, my) and emid in hilite_enemy_min:
+                                def do_hit(mid=emid, rect=r):
+                                    try:
+                                        ev = g.hero_attack(0, target_minion=mid)
+                                        log_events(ev, g)
+                                        enqueue_flash(rect)
+                                    except IllegalAction:
+                                        return
+                                # small dash from hero to target (optional)
+                                ANIMS.push(AnimStep("attack_dash", ANIM_ATTACK_MS,
+                                                    {"src": hot["face_me"], "dst": r, "color": CARD_BG_MY},
+                                                    on_finish=do_hit))
+                                did = True
+                                break
+                        if did:
+                            selected_hero = False
+                            hilite_enemy_min.clear(); hilite_enemy_face = False
+                            continue
+
+                        if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
+                            def do_hit(rect=enemy_face_rect(hot)):
+                                try:
+                                    ev = g.hero_attack(0, target_player=1)
+                                    log_events(ev, g)
+                                    enqueue_flash(rect)
+                                except IllegalAction:
+                                    return
+                            ANIMS.push(AnimStep("attack_dash", ANIM_ATTACK_MS,
+                                                {"src": hot["face_me"], "dst": enemy_face_rect(hot), "color": CARD_BG_MY},
+                                                on_finish=do_hit))
+                            selected_hero = False
+                            hilite_enemy_min.clear(); hilite_enemy_face = False
+                            continue
 
                     # If an attacker is selected, attempt to attack a highlighted target
                     if selected_attacker is not None:
@@ -1828,6 +1941,7 @@ def main():
 
                     if selected_attacker is not None or waiting_target_for_play is not None or waiting_target_for_power is not None:
                         selected_attacker = None
+                        selected_hero = False
                         waiting_target_for_play = None
                         waiting_target_for_power = None
                         hilite_enemy_min.clear(); hilite_my_min.clear()

@@ -42,6 +42,17 @@ class Hero:
     power: HeroPower
 
 @dataclass
+class Weapon:
+    name: str
+    attack: int
+    durability: int
+    max_durability: int = 0
+
+    def __post_init__(self):
+        if self.max_durability <= 0:
+            self.max_durability = self.durability
+
+@dataclass
 class Minion:
     id: int
     owner: int
@@ -113,6 +124,9 @@ class PlayerState:
     fatigue: int = 0
     hero: Hero = None   
     hero_power_used_this_turn: bool = False
+    weapon: Optional[Weapon] = None
+    hero_has_attacked_this_turn: bool = False   
+    
 
     def draw(self, g:'Game', n:int=1) -> List[Event]:
         ev: List[Event] = []
@@ -348,6 +362,7 @@ class Game:
         p.max_mana = min(10, p.max_mana + 1)
         p.mana = p.max_mana
         p.hero_power_used_this_turn = False
+        p.hero_has_attacked_this_turn = False
         for m in p.board:
             m.exhausted = False
             m.has_attacked_this_turn = False
@@ -445,7 +460,89 @@ class Game:
 
         self.history += ev
         return ev
+    
+    def hero_can_attack(self, pid:int) -> bool:
+        p = self.players[pid]
+        return (
+            pid == self.active_player
+            and p.weapon is not None
+            and p.weapon.attack > 0
+            and not p.hero_has_attacked_this_turn
+        )
 
+    def hero_legal_targets(self, pid:int) -> Tuple[set, bool]:
+        """Return (enemy_minion_ids, face_ok). Taunt gates face."""
+        opp = self.other(pid)
+        if not self.hero_can_attack(pid):
+            return set(), False
+        taunts = [m for m in self.players[opp].board if m.taunt and m.is_alive()]
+        if taunts:
+            return {m.id for m in taunts}, False
+        return {m.id for m in self.players[opp].board if m.is_alive()}, True
+
+    def hero_attack(self, pid:int, *, target_player: Optional[int]=None, target_minion: Optional[int]=None) -> List[Event]:
+        if pid != self.active_player:
+            raise IllegalAction("Not your turn")
+        if not self.hero_can_attack(pid):
+            raise IllegalAction("Hero cannot attack")
+
+        p   = self.players[pid]
+        opp = self.other(pid)
+        w   = p.weapon
+        if w is None or w.attack <= 0:
+            raise IllegalAction("No usable weapon")
+
+        # Taunt / legality
+        allowed_mins, face_ok = self.hero_legal_targets(pid)
+
+        ev: List[Event] = []
+
+        # ----- vs MINION -----
+        if target_minion is not None:
+            loc = self.find_minion(target_minion)
+            if not loc:
+                raise IllegalAction("Target minion not found")
+            tpid, _, tgt = loc
+            if tpid != opp:
+                raise IllegalAction("Must target enemy")
+            if target_minion not in allowed_mins:
+                raise IllegalAction("Illegal target (Taunt)")
+
+            # announce
+            ev.append(Event("HeroAttack", {"player": pid, "target": tgt.id}))
+
+            # hero deals weapon damage to minion
+            tgt.health -= w.attack
+            ev.append(Event("MinionDamaged", {"minion": tgt.id, "amount": w.attack, "source": w.name}))
+            ev += self._update_enrage(tgt)
+            if tgt.health <= 0:
+                ev += self.destroy_minion(tgt, reason="LethalDamage")
+
+            # minion trades back (hero takes damage equal to minion attack if still alive)
+            if tgt.is_alive() and tgt.attack > 0:
+                ev += self.deal_damage_to_player(pid, tgt.attack, source=tgt.name)
+
+            # spend durability
+            ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
+            p.hero_has_attacked_this_turn = True
+            self.history += ev
+            return ev
+
+        # ----- vs FACE -----
+        if target_player is not None:
+            if target_player != opp:
+                raise IllegalAction("Must target enemy face")
+            if not face_ok:
+                raise IllegalAction("Taunt blocks attacking face")
+
+            ev.append(Event("HeroAttack", {"player": pid, "target": f"player:{opp}"}))
+            ev += self.deal_damage_to_player(opp, w.attack, source=w.name)
+            ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
+            p.hero_has_attacked_this_turn = True
+            self.history += ev
+            return ev
+
+        raise IllegalAction("Hero attack needs a target")
 
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
@@ -557,6 +654,29 @@ class Game:
                     tagged = {"player": target_player}
                 ev += card.on_cast(self, card, tagged)
             self.players[pid].graveyard.append(card.id)
+        elif card.type == "WEAPON":
+            # equipping a weapon does not go to graveyard; it replaces the current one
+            # Use the same naming as the card unless JSON overrides via battlecry/on_cast
+            # If the weapon card also has a battlecry/effects, run them now (rare, but supported)
+            # Basic equip from card stats:
+            # - card.attack: weapon attack
+            # - card.health: durability
+            # If the card has an explicit equip effect in battlecry/on_cast, it can override.
+            # Default equip:
+            old = p.weapon
+            if old is not None:
+                ev.append(Event("WeaponBroken", {"player": pid, "name": old.name}))
+            p.weapon = Weapon(name=card.name, attack=card.attack, durability=card.health)
+            ev.append(Event("WeaponEquipped", {
+                "player": pid, "name": card.name,
+                "attack": card.attack, "durability": card.health
+            }))
+
+            # If the weapon card ALSO defines effects (battlecry/on_cast), run them too
+            if card.battlecry:
+                ev += card.battlecry(self, card, None)
+            if card.on_cast:
+                ev += card.on_cast(self, card, None)
         else:
             raise IllegalAction("Unknown card type")
         self.history += ev
@@ -618,7 +738,56 @@ class Game:
             self.current_battlecry_owner = None
         self.history += ev
         return ev
+    def equip_weapon(self, pid: int, name: str, attack: int, durability: int) -> List[Event]:
+        """Equip a weapon, destroying the old one if present. Emits logs."""
+        p = self.players[pid]
+        ev: List[Event] = []
+        # Replace old weapon (log destruction)
+        if p.weapon is not None:
+            old = p.weapon
+            p.weapon = None
+            ev.append(Event("WeaponDestroyed", {
+                "player": pid, "name": old.name, "reason": "Replaced"
+            }))
+        # Equip new (log equip)
+        p.weapon = Weapon(name=name, attack=attack, durability=durability)
+        ev.append(Event("WeaponEquipped", {
+            "player": pid,
+            "name": name,
+            "attack": attack,
+            "durability": durability
+        }))
+        self.history += ev
+        return ev
 
+    def destroy_weapon(self, pid: int, reason: str = "Broken") -> List[Event]:
+        """Break the current weapon, if any. Emits logs."""
+        p = self.players[pid]
+        if p.weapon is None:
+            return []
+        w = p.weapon
+        p.weapon = None
+        ev = [Event("WeaponDestroyed", {"player": pid, "name": w.name, "reason": reason})]
+        self.history += ev
+        return ev
+
+    def lose_weapon_durability(self, pid: int, amount: int = 1, source: str = "HeroAttack") -> List[Event]:
+        """Lose durability, log the change, auto-break at 0."""
+        p = self.players[pid]
+        if p.weapon is None or amount <= 0:
+            return []
+        before = p.weapon.durability
+        p.weapon.durability = max(0, p.weapon.durability - amount)
+        after = p.weapon.durability
+        ev: List[Event] = [Event("WeaponDurabilityChanged", {
+            "player": pid, "name": p.weapon.name, "from": before, "to": after, "source": source
+        })]
+        # Break at 0 (log destruction)
+        if p.weapon.durability == 0:
+            # Destroy emits its own WeaponDestroyed log
+            ev += self.destroy_weapon(pid, reason="DurabilityZero")
+        self.history += ev
+        return ev
 
     def attack(self, pid:int, attacker_id:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
         if pid != self.active_player:
@@ -769,7 +938,38 @@ def _apply_adjacent_buff(g, owner_pid: int, summoned_minion_id: int, *, attack=0
 
     return events
 
+
+
 # ---- Effect factories ----
+
+def _fx_equip_weapon(params, json_db_tokens):
+    token_id = params.get("card_id")
+    inline_a = params.get("attack")
+    inline_d = params.get("durability")
+    inline_name = params.get("name", "Weapon")
+
+    def run(g, source_obj, target):
+        pid = getattr(source_obj, "owner", g.active_player)
+        # resolve stats (token or inline)
+        if token_id:
+            spec = dict(json_db_tokens.get(token_id, {}))
+            if not spec and token_id in g.cards_db:
+                c = g.cards_db[token_id]
+                spec = {
+                    "id": c.id, "name": c.name, "type": getattr(c, "type", "WEAPON"),
+                    "attack": getattr(c, "attack", 0),
+                    "durability": getattr(c, "health", 0),  # if using health as durability on cards
+                }
+            name = spec.get("name", inline_name)
+            atk  = int(spec.get("attack", inline_a or 0))
+            dur  = int(spec.get("durability", spec.get("health", inline_d or 0)))
+        else:
+            name, atk, dur = inline_name, int(inline_a or 0), int(inline_d or 0)
+
+        # <-- this emits WeaponDestroyed (if replaced) + WeaponEquipped logs
+        return g.equip_weapon(pid, name, atk, dur)
+
+    return run
 
 def _fx_gain_armor(params):
     amt = int(params.get("amount", 0))
@@ -1177,9 +1377,11 @@ def _effect_factory(name, params, json_tokens):
         "add_keyword":        _fx_add_keyword,
         "summon":             lambda p: _fx_summon(p, json_tokens),
         "transform":          lambda p: _fx_transform(p, json_tokens),
+        "equip_weapon":       lambda p: _fx_equip_weapon(p, json_tokens),
         "gain_armor":         _fx_gain_armor,
         "adjacent_buff":      _fx_adjacent_buff,
         "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,
+        
         
     }
     if name not in table:

@@ -172,6 +172,8 @@ def value_score_friendly_minion_for_buff(m, spell_id: str) -> int:
     if spell_id in {"GIVE_TAUNT", "GIVE_CHARGE", "GIVE_RUSH"}: nudge += 6
     return m.attack * 4 + m.max_health + kw_bonus + nudge + getattr(m, "cost", 0)
 
+
+
 def best_enemy_to_silence_or_poly(g: Game, pid: int) -> Optional[int]:
     candidates = _enemy_minions(g, pid)
     if not candidates:
