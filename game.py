@@ -10,6 +10,10 @@ from pathlib import Path
 from engine import Game, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, IllegalAction
 from ai import pick_best_action
 
+# --- Debug / dev toggles ---
+SHOW_ENEMY_HAND = False
+DEBUG_BTN_RECT = None
+
 DEBUG = False
 
 pygame.init()
@@ -1230,6 +1234,8 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     highlight_enemy_minions = highlight_enemy_minions or set()
     highlight_my_minions = highlight_my_minions or set()
 
+    global DEBUG_BTN_RECT
+    global SHOW_ENEMY_HAND
     # --- Battleground panel/background ---
     # A framed area spanning enemy row to your row
     arena = battle_area_rect()
@@ -1312,6 +1318,34 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     mx, my = pygame.mouse.get_pos()
     hover_idx = hand_hover_index(hot, mx, my)
 
+    # --- Enemy hand overlay (debug) ---
+    if SHOW_ENEMY_HAND:
+        panel_w = 760
+        panel_h = CARD_H + 24
+        panel_x = W - panel_w - 20
+        panel_y = DEBUG_BTN_RECT.bottom + 10
+
+        panel = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        pygame.draw.rect(screen, (18, 22, 26), panel, border_radius=12)
+        pygame.draw.rect(screen, (60, 90, 130), panel, 2, border_radius=12)
+
+        title = FONT.render("Enemy Hand", True, LOG_ACCENT)
+        screen.blit(title, (panel.x + 10, panel.y + 8))
+
+        # lay out stacked rects inside panel
+        cards = list(g.players[1].hand)
+        if cards:
+            inner = panel.inflate(-16, -36)
+            # reuse your stacked hand layout but clamp to the inner rect
+            step = max(1, int(CARD_W * (1.0 - HAND_OVERLAP)))
+            total_w = step * (len(cards) - 1) + CARD_W
+            start_x = max(inner.x, inner.centerx - total_w // 2)
+            y = inner.y + 4
+            rects = [pygame.Rect(start_x + i * step, y, CARD_W, CARD_H) for i in range(len(cards))]
+
+            for cid, r in zip(cards, rects):
+                cobj = g.cards_db[cid]
+                draw_card_frame(r, CARD_BG_EN, card_obj=cobj, in_hand=True)
     
 
     # draw non-hovered first (so hovered can render on top)
@@ -1385,6 +1419,16 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         draw_card_frame(R, CARD_BG_HAND, card_obj=preview_card, in_hand=True)
 
 
+    # --- Debug button (top-right) ---
+    
+    btn_w, btn_h = 220, 40
+    DEBUG_BTN_RECT = pygame.Rect(W - btn_w - 20, 20, btn_w, btn_h)
+
+    dbg_col = (40, 160, 100) if SHOW_ENEMY_HAND else (120, 120, 120)
+    pygame.draw.rect(screen, dbg_col, DEBUG_BTN_RECT, border_radius=10)
+    cap = FONT.render(("Hide" if SHOW_ENEMY_HAND else "Show") + " Enemy Hand  (H)", True, WHITE)
+    screen.blit(cap, cap.get_rect(center=DEBUG_BTN_RECT.center))
+
     # End turn
     pygame.draw.rect(screen, BLUE if g.active_player == 0 else (90, 90, 90), hot["end_turn"], border_radius=8)
     t = FONT.render("End Turn", True, WHITE)
@@ -1455,95 +1499,274 @@ def draw_card_inspector_for_minion(g: Game, minion_id: int):
     screen.blit(hint, (R.x + 8, R.bottom + 8))
 
 
-# ---------- Animation system ----------
-def lerp(a: float, b: float, t: float) -> float: return a + (b - a) * t
-def ease_out(t: float) -> float: return 1 - (1 - t) * (1 - t)
+# ---------- Animation system (overhauled) ----------
+def clamp(x, a=0.0, b=1.0): 
+    return a if x < a else (b if x > b else x)
+
+def lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+def ease_in_out_cubic(t: float) -> float:
+    t = clamp(t)
+    return 4*t*t*t if t < 0.5 else 1 - pow(-2*t + 2, 3)/2
+
+def ease_out_quart(t: float) -> float:
+    t = clamp(t); return 1 - pow(1 - t, 4)
+
+def back_out(t: float, s: float = 1.70158) -> float:
+    t = clamp(t); t -= 1
+    return (t*t*((s+1)*t + s) + 1)
+
+def smoothstep01(t: float) -> float:
+    t = clamp(t); return t*t*(3 - 2*t)
+
+def arc_lerp(src: pygame.Rect, dst: pygame.Rect, t: float, height_px: int) -> Tuple[int,int]:
+    """Parabolic arc between rect centers."""
+    t = clamp(t)
+    sx, sy = src.center; dx, dy = dst.center
+    x = lerp(sx, dx, t)
+    # y goes up then down
+    peak = -height_px
+    y = lerp(sy, dy, t) + peak * 4 * (t - t*t)  # 0 at ends, peak at t=0.5
+    return int(x), int(y)
 
 class AnimStep:
+    """
+    Compatible with your old step object, but adds:
+    - non_blocking: True → runs in parallel (great for flashes/banners)
+    - layer: z-order for non-blocking (0 below banners, 1 for HUD overlays)
+    - ease: which easing to use for progress shaping
+    - meta helpers (like scale/squash) handled per kind below
+    """
     def __init__(self, kind: str, duration_ms: int, data: dict, on_finish=None):
         self.kind = kind
-        self.duration_ms = duration_ms
-        self.data = data
+        self.duration_ms = max(1, int(duration_ms))
+        self.data = data or {}
         self.on_finish = on_finish
-        self.start_ms = None
-    def start(self): self.start_ms = pygame.time.get_ticks()
-    def progress(self) -> float:
-        if self.start_ms is None: return 0.0
+        self.start_ms: Optional[int] = None
+
+        # extras (with sensible defaults)
+        self.non_blocking: bool = bool(self.data.get("non_blocking", kind in ("flash", "banner")))
+        self.layer: int = int(self.data.get("layer", 1 if kind in ("banner", "start_game") else 0))
+        self.ease_name: str = str(self.data.get("ease", "cubic"))  # cubic | quart | back | linear
+
+    def start(self): 
+        self.start_ms = pygame.time.get_ticks()
+
+    def raw_progress(self) -> float:
+        if self.start_ms is None: 
+            return 0.0
         t = (pygame.time.get_ticks() - self.start_ms) / self.duration_ms
         return 0.0 if t < 0 else (1.0 if t > 1.0 else t)
-    def done(self) -> bool: return self.progress() >= 1.0
+
+    def eased(self) -> float:
+        t = self.raw_progress()
+        e = self.ease_name
+        if e == "quart": return ease_out_quart(t)
+        if e == "back":  return back_out(t)
+        if e == "linear":return clamp(t)
+        # default
+        return ease_in_out_cubic(t)
+
+    def done(self) -> bool: 
+        return self.raw_progress() >= 1.0
 
 class AnimQueue:
-    def __init__(self): self.queue: List[AnimStep] = []
-    def push(self, step: AnimStep): self.queue.append(step)
-    def busy(self) -> bool: return len(self.queue) > 0
-    def update_and_draw(self, g: Game, hot):
-        hidden_ids = set()
-        top_overlay = None                         # <-- NEW
-        if not self.queue:
-            return hidden_ids, top_overlay        # <-- changed
-        step = self.queue[0]
-        if step.start_ms is None: step.start()
-        t = ease_out(step.progress())
+    """
+    New model:
+      - One *blocking* track that behaves like your old queue (perfect compatibility).
+      - Many *non-blocking* ambient tracks (flash/banner) that run in parallel.
+    Composition order per frame:
+      board → blocking anim (0 or 1) → ambient layer 0 → ambient layer 1 (HUD/top).
+    """
+    def __init__(self):
+        self.blocking: List[AnimStep] = []
+        self.ambient: List[AnimStep]  = []  # any non_blocking steps
 
-        if step.kind == "play_move":
-            src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
-            color = step.data.get("color", CARD_BG_HAND)
-            lbl = step.data.get("label", "")
-            r = pygame.Rect(int(lerp(src.x, dst.x, t)), int(lerp(src.y, dst.y, t)), CARD_W, CARD_H)
-            pygame.draw.rect(screen, color, r, border_radius=8)
-            if lbl: screen.blit(FONT.render(lbl, True, WHITE), (r.x+6, r.y+6))
-            spawn_mid = step.data.get("spawn_mid")
-            if spawn_mid: hidden_ids.add(spawn_mid)
+    def push(self, step: AnimStep):
+        if step.non_blocking:
+            self.ambient.append(step)
+            if step.start_ms is None:
+                step.start()
+        else:
+            should_start = (len(self.blocking) == 0)
+            self.blocking.append(step)
+            if should_start and step.start_ms is None:
+                step.start()
 
-        elif step.kind == "attack_dash":
-            src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
-            color = step.data.get("color", CARD_BG_MY)
-            r = pygame.Rect(int(lerp(src.x, dst.x, t)), int(lerp(src.y, dst.y, t)), CARD_W, CARD_H)
-            pygame.draw.rect(screen, color, r, border_radius=8)
+    def busy(self) -> bool:
+        # Gameplay is "busy" if there is a blocking step executing.
+        # Ambient effects don't lock input (feels snappier).
+        return len(self.blocking) > 0
 
-        elif step.kind == "flash":
-            target: pygame.Rect = step.data["rect"]
-            alpha = int(255 * (1.0 - t))
-            s = pygame.Surface((target.w, target.h), pygame.SRCALPHA)
-            s.fill((255, 255, 255, alpha))
-            screen.blit(s, (target.x, target.y))
-
-        elif step.kind == "think_pause":
-            pass
-
-        elif step.kind == "start_game":
-            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-            overlay.fill((0,0,0, min(120, int(150 * t))))
-            screen.blit(overlay, (0,0))
-            centered_text("Game starting...", H//2)
-
-        elif step.kind == "banner":
-            # Fading, centered text banner (like the old think_pause)
-            msg = step.data.get("text", "")
-            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, min(120, int(150 * t))))  # fade-in dim
-            # draw text onto overlay
-            txt = BIG.render(str(msg), True, WHITE)
-            overlay.blit(txt, txt.get_rect(center=(W // 2, H // 2)))
-            top_overlay = overlay  # hand back to caller so it’s composited on top
-
-        if step.done():
-            self.queue.pop(0)
-            if step.on_finish:
-                try: step.on_finish()
-                except Exception: pass
-        return hidden_ids, top_overlay 
-    def peek_hidden_ids(self):
+    def peek_hidden_ids(self) -> set:
         hidden = set()
-        if not self.queue:
-            return hidden
-        step = self.queue[0]
-        if step.kind == "play_move":
-            spawn_mid = step.data.get("spawn_mid")
-            if spawn_mid:
-                hidden.add(spawn_mid)
+        if self.blocking:
+            step = self.blocking[0]
+            if step.kind == "play_move" and step.data.get("spawn_mid"):
+                hidden.add(step.data["spawn_mid"])
         return hidden
+
+    def _draw_play_move(self, step: AnimStep):
+        src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
+        color = step.data.get("color", CARD_BG_HAND)
+        label = step.data.get("label", "")
+
+        # shapely timing: accelerate then float → then settle
+        t = step.eased()
+        x, y = arc_lerp(src, dst, t, height_px=60)
+
+        # scale up a touch mid-flight, then down a bit on land (squash)
+        s = 1.0 + 0.06 * smoothstep01(1.0 - abs(t*2 - 1))  # 1.06 at mid-air
+        if t > 0.92:
+            s *= 1.0 - 0.08 * smoothstep01((t - 0.92)/0.08)  # tiny settle
+
+        w, h = int(CARD_W * s), int(CARD_H * s)
+        r = pygame.Rect(0, 0, w, h); r.center = (x, y)
+
+        # soft shadow under the card
+        sh = pygame.Surface((w+26, h+26), pygame.SRCALPHA)
+        pygame.draw.ellipse(sh, (0,0,0,120), sh.get_rect())
+        screen.blit(sh, (r.x-13, r.bottom-14))
+
+        pygame.draw.rect(screen, color, r, border_radius=10)
+        if label:
+            screen.blit(FONT.render(label, True, WHITE), (r.x+8, r.y+8))
+
+        # subtle motion trail (two faint ghosts)
+        ghost_t = max(0.0, t - 0.15)
+        gx, gy = arc_lerp(src, dst, ghost_t, height_px=60)
+        gr = pygame.Rect(0, 0, int(w*0.98), int(h*0.98)); gr.center = (gx, gy)
+        gsurf = pygame.Surface((gr.w, gr.h), pygame.SRCALPHA)
+        pygame.draw.rect(gsurf, (*color, 120), gsurf.get_rect(), border_radius=10)
+        screen.blit(gsurf, gr.topleft)
+
+        ghost_t2 = max(0.0, t - 0.30)
+        gx2, gy2 = arc_lerp(src, dst, ghost_t2, height_px=60)
+        gr2 = pygame.Rect(0, 0, int(w*0.96), int(h*0.96)); gr2.center = (gx2, gy2)
+        gsurf2 = pygame.Surface((gr2.w, gr2.h), pygame.SRCALPHA)
+        pygame.draw.rect(gsurf2, (*color, 70), gsurf2.get_rect(), border_radius=10)
+        screen.blit(gsurf2, gr2.topleft)
+
+        # hide spawned unit while animating (handled in peek_hidden_ids)
+
+    def _draw_attack_dash(self, step: AnimStep):
+        src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
+        color = step.data.get("color", CARD_BG_MY)
+
+        # fast start, back-out finish for a nice impact feel
+        t = step.eased()
+        x = lerp(src.x, dst.x, t)
+        y = lerp(src.y, dst.y, t)
+
+        # squash/stretch: more stretch mid-dash, squash on arrival
+        stretch = 1.0 + 0.15 * smoothstep01(1.0 - abs(t*2 - 1))  # 1.15 mid way
+        squash  = 1.0 - 0.10 * smoothstep01(max(0.0, t - 0.85)/0.15)  # 0.9 at very end
+        sx, sy = stretch, squash
+        w, h = int(CARD_W * sx), int(CARD_H * sy)
+        r = pygame.Rect(0, 0, w, h); r.center = (int(x + 0.5), int(y + 0.5))
+
+        # shadow smear
+        sh = pygame.Surface((w+30, 22), pygame.SRCALPHA)
+        pygame.draw.ellipse(sh, (0,0,0,110), sh.get_rect())
+        screen.blit(sh, (r.x-15, r.bottom-12))
+
+        pygame.draw.rect(screen, color, r, border_radius=10)
+
+    def _draw_flash(self, step: AnimStep):
+        target: pygame.Rect = step.data["rect"]
+        # fade out radial flash
+        t = step.raw_progress()
+        alpha = int(200 * (1.0 - t))
+        rad = int(max(target.w, target.h) * lerp(0.6, 1.1, t))
+        s = pygame.Surface((rad*2, rad*2), pygame.SRCALPHA)
+        pygame.draw.circle(s, (255,255,255, alpha), (rad, rad), rad)
+        screen.blit(s, (target.centerx - rad, target.centery - rad))
+
+    def _draw_start_game(self, step: AnimStep):
+        t = step.eased()
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0,0,0, int(160 * t)))
+        screen.blit(overlay, (0,0))
+        centered_text("Game starting...", H//2)
+
+    def _draw_banner(self, step: AnimStep):
+        # Fade in, hold, fade out
+        t = step.raw_progress()
+        if t < 0.2:
+            a = smoothstep01(t/0.2)
+        elif t > 0.8:
+            a = smoothstep01((1.0 - t)/0.2)
+        else:
+            a = 1.0
+
+        shade = pygame.Surface((W, H), pygame.SRCALPHA)
+        shade.fill((0,0,0, int(120 * a)))
+        screen.blit(shade, (0,0))
+
+        msg = step.data.get("text", "")
+        box = pygame.Surface((W, 1), pygame.SRCALPHA)  # just for text render baseline
+        txt = BIG.render(str(msg), True, WHITE)
+        screen.blit(txt, txt.get_rect(center=(W//2, H//2)))
+
+    def update_and_draw(self, g: Game, hot):
+        """
+        Return (hidden_ids, top_overlay) like before.
+        We now composite overlays directly; we return None for top_overlay.
+        """
+        # start steps if needed
+        if self.blocking:
+            if self.blocking[0].start_ms is None:
+                self.blocking[0].start()
+        # start ambient newcomers
+        for s in self.ambient:
+            if s.start_ms is None: s.start()
+
+        hidden_ids = self.peek_hidden_ids()
+
+        # ----- draw current blocking step (if any) -----
+        if self.blocking:
+            step = self.blocking[0]
+            k = step.kind
+            if k == "play_move":       self._draw_play_move(step)
+            elif k == "attack_dash":   self._draw_attack_dash(step)
+            elif k == "flash":         self._draw_flash(step)     # normally NB, but supported
+            elif k == "think_pause":   pass                       # invisible timing gate
+            elif k == "start_game":    self._draw_start_game(step)
+            elif k == "banner":        self._draw_banner(step)
+            # finish?
+            if step.done():
+                self.blocking.pop(0)
+                if step.on_finish:
+                    try: step.on_finish()
+                    except Exception: pass
+
+        # ----- draw ambient (non-blocking) steps -----
+        # sort by layer (0 below, 1 top/HUD)
+        if self.ambient:
+            self.ambient.sort(key=lambda s: s.layer)
+            to_remove = []
+            for s in self.ambient:
+                k = s.kind
+                if k == "flash":       self._draw_flash(s)
+                elif k == "banner":    self._draw_banner(s)
+                elif k == "start_game":self._draw_start_game(s)
+                elif k == "think_pause": pass
+                elif k == "attack_dash": self._draw_attack_dash(s)
+                elif k == "play_move":   self._draw_play_move(s)
+                if s.done():
+                    to_remove.append(s)
+                    if s.on_finish:
+                        try: s.on_finish()
+                        except Exception: pass
+            if to_remove:
+                for s in to_remove:
+                    try: self.ambient.remove(s)
+                    except ValueError: pass
+
+        # We now composite overlays internally; keep signature compatibility
+        return hidden_ids, None
+
 ANIMS = AnimQueue()
 
 def enqueue_attack_anim(hot, attacker_mid: int, target_rect: pygame.Rect, enemy: bool, on_hit):
@@ -1621,6 +1844,8 @@ def start_game() -> Game:
 
 def main():
     global GLOBAL_GAME
+    global SHOW_ENEMY_HAND
+    global DEBUG_BTN_RECT
     clock = pygame.time.Clock()
     g = start_game()
     GLOBAL_GAME = g
@@ -1710,9 +1935,14 @@ def main():
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
-                    queued_any = False  # track whether we queued at least one animation/action
+                    def schedule_if_ai_turn():
+                        # Only queue the next think if the AI still has the turn
+                        if g.active_player == 1:
+                            ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
-                    # 1) If hero can attack, do it first: hit Taunt if present, else face
+                    queued_any = False
+
+                    # 1) Try hero attack
                     if g.hero_can_attack(1):
                         mins, face_ok = g.hero_legal_targets(1)
                         target_min = next(iter(mins), None)
@@ -1733,29 +1963,32 @@ def main():
                                     enqueue_flash(my_face_rect(layout_board(g)))
                             except IllegalAction:
                                 pass
+                            # continue deciding after this resolves
+                            schedule_if_ai_turn()
 
                         ANIMS.push(AnimStep("think_pause", 300, {}, on_finish=do_attack))
                         queued_any = True
 
                     else:
-                        # 2) Pick best action (play/attack) via AI policy — guarded
+                        # 2) Otherwise use AI policy (play/attack)
                         result = None
                         try:
                             result = pick_best_action(g, 1)
                         except Exception:
-                            result = None  # fall through to power/end
+                            result = None
 
                         if not result:
-                            # 3) No development/attack picked this frame → try hero power, else end turn
+                            # 3) Try hero power, else end turn
                             def try_power_then_end():
                                 try:
                                     from ai import maybe_use_hero_power
-                                    ev = maybe_use_hero_power(g, 1)  # refuses Coin→Power shenanigans
+                                    ev = maybe_use_hero_power(g, 1)
                                 except Exception:
                                     ev = []
                                 if ev:
                                     log_events(ev, g)
                                     flash_from_events(g, ev)
+                                    schedule_if_ai_turn()
                                     return
                                 try:
                                     ev2 = g.end_turn(1)
@@ -1763,7 +1996,6 @@ def main():
                                     ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
                                 except IllegalAction:
                                     pass
-
                             ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=try_power_then_end))
                             queued_any = True
 
@@ -1784,6 +2016,7 @@ def main():
                                         flash_from_events(g, ev)
                                     except IllegalAction:
                                         pass
+                                    schedule_if_ai_turn()
 
                                 dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ENEMY, CARD_W, CARD_H)
                                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}))
@@ -1804,8 +2037,7 @@ def main():
                                 if tm is not None:
                                     for mid, r in before["my_minions"]:
                                         if mid == tm:
-                                            tr = r
-                                            break
+                                            tr = r; break
                                 if tr is None:
                                     tr = my_face_rect(before)
 
@@ -1823,12 +2055,13 @@ def main():
                                             if mid == tmm:
                                                 enqueue_flash(r)
                                                 break
+                                    schedule_if_ai_turn()
 
                                 enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
                                 queued_any = True
 
                             else:
-                                # Unknown kind — fall back to power/end path
+                                # Fallback to power/end
                                 def try_power_then_end_fallback():
                                     try:
                                         from ai import maybe_use_hero_power
@@ -1838,6 +2071,7 @@ def main():
                                     if ev:
                                         log_events(ev, g)
                                         flash_from_events(g, ev)
+                                        schedule_if_ai_turn()
                                         return
                                     try:
                                         ev2 = g.end_turn(1)
@@ -1845,11 +2079,10 @@ def main():
                                         ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
                                     except IllegalAction:
                                         pass
-
                                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=try_power_then_end_fallback))
                                 queued_any = True
 
-                    # 4) Failsafe: if nothing was queued (shouldn't happen), try to end the turn so we never hang
+                    # Failsafe if nothing queued at all
                     if not queued_any:
                         def _force_end():
                             try:
@@ -1858,10 +2091,11 @@ def main():
                             except IllegalAction:
                                 add_log("[AI] Failsafe: could not end turn.")
                         ANIMS.push(AnimStep("think_pause", 200, {}, on_finish=_force_end))
-                decide()
+
+                # IMPORTANT: only schedule the first decide; don't call decide() immediately
                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
-            # drain events while AI acts
+            # Drain events while AI acts
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: RUNNING = False
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: RUNNING = False
@@ -1883,6 +2117,10 @@ def main():
                     RUNNING = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     mx, my = event.pos
+
+                    if DEBUG_BTN_RECT and DEBUG_BTN_RECT.collidepoint(event.pos):
+                        SHOW_ENEMY_HAND = not SHOW_ENEMY_HAND
+                        continue
 
                     # End turn
                     if hot["end_turn"].collidepoint(mx, my):
@@ -2410,7 +2648,10 @@ def main():
                                                     on_finish=on_finish))
                                 hover_slot_index = None
                                 continue
-                        
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_h:
+                        SHOW_ENEMY_HAND = not SHOW_ENEMY_HAND
+                        continue
         pygame.display.flip()
 
     pygame.quit()

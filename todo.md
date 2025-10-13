@@ -15,7 +15,7 @@
 # [] Water Elemental — 3/6, Freeze any character damaged by this minion
 # [] Lightspawn — 0/5, Attack equal to Health
 # [] Add stealth mechanic, Worgen Infiltrator 2/1 stealth
-# [] Add Divine shield
+# [x] Add Divine shield
 #
 # ------- Unordered General stuff ----------
 # [x] Add weapon mechanic, drawing, logic, ai, etc
@@ -26,9 +26,9 @@
 # [] Add class Rougue
 # [x] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
 # [] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
-# [] Draw hero health damaged
+# [x] Draw hero health  damaged
 # [x] Add secrets
-# [] Draw secrets, ? and color by Hero color
+# [x] Draw secrets, ? and color by Hero color
 # [x] Loading stored deck
 # [] Creating, managing and saving decks
 # [x] Recreate a deck in hearthstone

@@ -417,6 +417,8 @@ def best_heal_target(g: Game, pid: int, heal_amount: int) -> Tuple[Optional[int]
 
     return best_tp, best_tm, best_score
 
+
+
 # ----------------- Play gating (do nothing if useless) -----------------
 
 def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int, Optional[int], Optional[int], int]]:
@@ -431,23 +433,21 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
     # --- Secrets (new): avoid duplicates; value higher if threats are likely, or if we have Eaglehorn Bow ---
     if card.type == "SECRET":
-        # Don’t try to play a duplicate of the same secret
-        already = False
         try:
-            already = any(s.get("card_id") == cid for s in g.players[pid].active_secrets)
+            s = g.players[pid].active_secrets or []
+            already = any(
+                (x == cid) or
+                (isinstance(x, dict) and (x.get("card_id") == cid or x.get("id") == cid))
+                for x in s
+            )
         except Exception:
-            pass
+            already = False
         if already:
             return None
-
-        # Base value: modest; higher if opponent likely attacks, or if we hold Eaglehorn Bow
         score = 70
-        if opponent_has_ready_threats(g, pid):
-            score += 40
+        if opponent_has_ready_threats(g, pid): score += 40
         w = g.players[pid].weapon
-        if w and getattr(w, "card_id", "") == "EAGLEHORN_BOW":
-            # secrets feed durability, give it a nice bump
-            score += 35
+        if w and getattr(w, "card_id", "") == "EAGLEHORN_BOW": score += 35
         return idx, None, None, score
 
     # --- Weapons (new): prefer when unarmed, or upgrading meaningfully ---
@@ -680,7 +680,8 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
     # Final safety: if the card *needs* a target and we don't have one, abort.
     # (Covers any future card types you add.)
     if _needs_any_target(g, cid):
-        if (tp is None) and (tm is None):
+        tm = _has_friendly_target_for_buff(g, pid, cid)
+        if tm is None:
             return None
 
     # Unknown: skip
