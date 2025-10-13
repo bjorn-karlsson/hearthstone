@@ -202,7 +202,7 @@ def format_event(e, g, skip=False) -> str:
         who = "You" if p["player"] == 0 else "AI"
         cid = p.get("card", "")
         name = card_name_from_db(g.cards_db, cid) if cid else "a card"
-        return f"{who} burned {name} (hand full)."
+        return f"{who} played {name}."
     if k == "MinionSummoned":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} summoned {p.get('name','a minion')}."
@@ -1510,19 +1510,23 @@ class AnimQueue:
             screen.blit(s, (target.x, target.y))
 
         elif step.kind == "think_pause":
-            # build an overlay surface to draw LATER (on top)
-            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
-            overlay.fill((0,0,0, min(120, int(150 * t))))
-            # render the text onto the overlay too
-            txt = BIG.render("AI is thinking...", True, WHITE)
-            overlay.blit(txt, txt.get_rect(center=(W//2, H//2)))
-            top_overlay = overlay 
-            centered_text("AI is thinking...", H//2)
+            pass
+
         elif step.kind == "start_game":
             overlay = pygame.Surface((W, H), pygame.SRCALPHA)
             overlay.fill((0,0,0, min(120, int(150 * t))))
             screen.blit(overlay, (0,0))
             centered_text("Game starting...", H//2)
+
+        elif step.kind == "banner":
+            # Fading, centered text banner (like the old think_pause)
+            msg = step.data.get("text", "")
+            overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, min(120, int(150 * t))))  # fade-in dim
+            # draw text onto overlay
+            txt = BIG.render(str(msg), True, WHITE)
+            overlay.blit(txt, txt.get_rect(center=(W // 2, H // 2)))
+            top_overlay = overlay  # hand back to caller so it’s composited on top
 
         if step.done():
             self.queue.pop(0)
@@ -1706,10 +1710,13 @@ def main():
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
+                    queued_any = False  # track whether we queued at least one animation/action
+
                     # 1) If hero can attack, do it first: hit Taunt if present, else face
                     if g.hero_can_attack(1):
                         mins, face_ok = g.hero_legal_targets(1)
                         target_min = next(iter(mins), None)
+
                         def do_attack():
                             try:
                                 if target_min is not None:
@@ -1718,83 +1725,140 @@ def main():
                                     post = layout_board(g)
                                     for mid, r in post["my_minions"]:
                                         if mid == target_min:
-                                            enqueue_flash(r); break
+                                            enqueue_flash(r)
+                                            break
                                 elif face_ok:
                                     ev2 = g.hero_attack(1, target_player=0)
                                     log_events(ev2, g)
                                     enqueue_flash(my_face_rect(layout_board(g)))
                             except IllegalAction:
                                 pass
+
                         ANIMS.push(AnimStep("think_pause", 300, {}, on_finish=do_attack))
-                        return  # don’t pick another action this frame
+                        queued_any = True
 
-                    # 2) Pick best action (play/attack) via AI policy
-                    act, score = pick_best_action(g, 1)
-                    kind = act[0]
-
-                    if kind == 'play':
-                        _, idx, tp, tm = act
-                        cid = g.players[1].hand[idx]
-                        src = pygame.Rect(W//2 - CARD_W//2, 20, CARD_W, CARD_H)
-                        def do_on_finish(i=idx, tpp=tp, tmm=tm):
-                            try:
-                                ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
-                                log_events(ev, g)
-                                apply_post_summon_hooks(g, ev)
-                                flash_from_events(g, ev)
-                            except IllegalAction:
-                                pass
-                        dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ENEMY, CARD_W, CARD_H)
-                        ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}))
-                        ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                            {"src": src, "dst": dst, "label": db[cid].name,
-                                            "color": CARD_BG_EN}, on_finish=do_on_finish))
-                        return
-
-                    elif kind == 'attack':
-                        _, aid, tp, tm = act
-                        before = layout_board(g)
-                        tr = None
-                        if tm is not None:
-                            for mid, r in before["my_minions"]:
-                                if mid == tm: tr = r; break
-                        if tr is None: tr = my_face_rect(before)
-                        def on_hit(aid=aid, tpp=tp, tmm=tm):
-                            try:
-                                ev = g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
-                                log_events(ev, g)
-                            except IllegalAction:
-                                return
-                            post = layout_board(g)
-                            if tmm is None:
-                                enqueue_flash(my_face_rect(post))
-                            else:
-                                for mid, r in post["my_minions"]:
-                                    if mid == tmm: enqueue_flash(r); break
-                        enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
-                        return
-
-                    # 3) No good play/attack picked this frame → *then* consider hero power conservatively
-                    def try_power_then_end():
+                    else:
+                        # 2) Pick best action (play/attack) via AI policy — guarded
+                        result = None
                         try:
-                            from ai import maybe_use_hero_power
-                            ev = maybe_use_hero_power(g, 1)  # this now refuses “Coin → Power” shenanigans
+                            result = pick_best_action(g, 1)
                         except Exception:
-                            ev = []
-                        if ev:
-                            log_events(ev, g)
-                            flash_from_events(g, ev)
-                            return  # spent our frame
+                            result = None  # fall through to power/end
 
-                        # 4) Finally end the turn
-                        try:
-                            ev2 = g.end_turn(1)
-                            log_events(ev2, g)
-                        except IllegalAction:
-                            pass
+                        if not result:
+                            # 3) No development/attack picked this frame → try hero power, else end turn
+                            def try_power_then_end():
+                                try:
+                                    from ai import maybe_use_hero_power
+                                    ev = maybe_use_hero_power(g, 1)  # refuses Coin→Power shenanigans
+                                except Exception:
+                                    ev = []
+                                if ev:
+                                    log_events(ev, g)
+                                    flash_from_events(g, ev)
+                                    return
+                                try:
+                                    ev2 = g.end_turn(1)
+                                    log_events(ev2, g)
+                                    ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
+                                except IllegalAction:
+                                    pass
 
-                    ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=try_power_then_end))
+                            ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=try_power_then_end))
+                            queued_any = True
 
+                        else:
+                            act, score = result
+                            kind = act[0]
+
+                            if kind == 'play':
+                                _, idx, tp, tm = act
+                                cid = g.players[1].hand[idx]
+                                src = pygame.Rect(W // 2 - CARD_W // 2, 20, CARD_W, CARD_H)
+
+                                def do_on_finish(i=idx, tpp=tp, tmm=tm):
+                                    try:
+                                        ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
+                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
+                                        flash_from_events(g, ev)
+                                    except IllegalAction:
+                                        pass
+
+                                dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ENEMY, CARD_W, CARD_H)
+                                ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}))
+                                ANIMS.push(
+                                    AnimStep(
+                                        "play_move",
+                                        ANIM_PLAY_MS,
+                                        {"src": src, "dst": dst, "label": db[cid].name, "color": CARD_BG_EN},
+                                        on_finish=do_on_finish,
+                                    )
+                                )
+                                queued_any = True
+
+                            elif kind == 'attack':
+                                _, aid, tp, tm = act
+                                before = layout_board(g)
+                                tr = None
+                                if tm is not None:
+                                    for mid, r in before["my_minions"]:
+                                        if mid == tm:
+                                            tr = r
+                                            break
+                                if tr is None:
+                                    tr = my_face_rect(before)
+
+                                def on_hit(aid=aid, tpp=tp, tmm=tm):
+                                    try:
+                                        ev = g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
+                                        log_events(ev, g)
+                                    except IllegalAction:
+                                        return
+                                    post = layout_board(g)
+                                    if tmm is None:
+                                        enqueue_flash(my_face_rect(post))
+                                    else:
+                                        for mid, r in post["my_minions"]:
+                                            if mid == tmm:
+                                                enqueue_flash(r)
+                                                break
+
+                                enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
+                                queued_any = True
+
+                            else:
+                                # Unknown kind — fall back to power/end path
+                                def try_power_then_end_fallback():
+                                    try:
+                                        from ai import maybe_use_hero_power
+                                        ev = maybe_use_hero_power(g, 1)
+                                    except Exception:
+                                        ev = []
+                                    if ev:
+                                        log_events(ev, g)
+                                        flash_from_events(g, ev)
+                                        return
+                                    try:
+                                        ev2 = g.end_turn(1)
+                                        log_events(ev2, g)
+                                        ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
+                                    except IllegalAction:
+                                        pass
+
+                                ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=try_power_then_end_fallback))
+                                queued_any = True
+
+                    # 4) Failsafe: if nothing was queued (shouldn't happen), try to end the turn so we never hang
+                    if not queued_any:
+                        def _force_end():
+                            try:
+                                ev2 = g.end_turn(1)
+                                log_events(ev2, g)
+                            except IllegalAction:
+                                add_log("[AI] Failsafe: could not end turn.")
+                        ANIMS.push(AnimStep("think_pause", 200, {}, on_finish=_force_end))
+                decide()
                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
             # drain events while AI acts
@@ -1822,10 +1886,12 @@ def main():
 
                     # End turn
                     if hot["end_turn"].collidepoint(mx, my):
-                        try: 
+                        try:
                             ev = g.end_turn(0)
                             log_events(ev, g)
-                        except IllegalAction: pass
+                            ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
+                        except IllegalAction:
+                            pass
                         selected_attacker = None
                         waiting_target_for_play = None
                         hilite_enemy_min.clear(); hilite_my_min.clear()
