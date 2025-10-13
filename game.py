@@ -335,7 +335,7 @@ except Exception as e:
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
 
-
+#player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -709,6 +709,8 @@ def draw_minion_stats(r: pygame.Rect, attack: int, health: int,
 def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool):
     pygame.draw.rect(screen, color_bg, r, border_radius=12)
 
+    
+
     if card_obj:
         draw_cost_gem(r, card_obj.cost)
         #draw_name_bar(r, card_obj.name)
@@ -738,7 +740,13 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
             if card_obj.minion_type != "None":
                 draw_name_footer(r, card_obj.minion_type)
             else:
-                draw_name_footer(r, "Neutral") 
+                draw_name_footer(r, "Neutral")
+        elif card_obj.type == "WEAPON":
+            draw_minion_stats(
+                r, card_obj.attack, card_obj.health, card_obj.health,
+                base_attack=card_obj.attack, base_health=card_obj.health
+            )
+            draw_name_footer(r, "Weapon")
         else: 
             draw_name_footer(r, card_obj.type)
 
@@ -762,7 +770,7 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         body   = header if header and not text else (header + ("\n" + text if text else ""))
         
 
-        draw_text_box(r, body, max_lines=6, title=minion_obj.name, font_body=RULE_FONT)
+        draw_text_box(r, body, max_lines=4, title=minion_obj.name, font_body=RULE_FONT)
 
         # Bottom UI
         #draw_name_footer(r, minion_obj.name)
@@ -775,6 +783,10 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
             base_attack=getattr(minion_obj, "base_attack", minion_obj.attack),
             base_health=getattr(minion_obj, "base_health", minion_obj.max_health),
         )
+        if minion_obj.minion_type != "None":
+            draw_name_footer(r, minion_obj.minion_type)
+        else:
+            draw_name_footer(r, "Neutral") 
     if getattr(minion_obj, "silenced", False):
         draw_silence_overlay(r)
 
@@ -1490,17 +1502,7 @@ def main():
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
-                    ev = []
-                    try:
-                        from ai import maybe_use_hero_power
-                        ev = maybe_use_hero_power(g, 1)
-                    except Exception:
-                        ev = []
-                    if ev:
-                        log_events(ev, g)
-                        flash_from_events(g, ev)
-
-                    # If hero can attack, do it first: hit Taunt if present, else face
+                    # 1) If hero can attack, do it first: hit Taunt if present, else face
                     if g.hero_can_attack(1):
                         mins, face_ok = g.hero_legal_targets(1)
                         target_min = next(iter(mins), None)
@@ -1509,32 +1511,24 @@ def main():
                                 if target_min is not None:
                                     ev2 = g.hero_attack(1, target_minion=target_min)
                                     log_events(ev2, g)
-                                    # flash the minion
                                     post = layout_board(g)
                                     for mid, r in post["my_minions"]:
-                                        if mid == target_min: enqueue_flash(r); break
+                                        if mid == target_min:
+                                            enqueue_flash(r); break
                                 elif face_ok:
                                     ev2 = g.hero_attack(1, target_player=0)
                                     log_events(ev2, g)
                                     enqueue_flash(my_face_rect(layout_board(g)))
                             except IllegalAction:
                                 pass
-
-                        # tiny "think" beat then perform
                         ANIMS.push(AnimStep("think_pause", 300, {}, on_finish=do_attack))
                         return  # don’t pick another action this frame
 
-                    act, _ = pick_best_action(g, 1)
+                    # 2) Pick best action (play/attack) via AI policy
+                    act, score = pick_best_action(g, 1)
                     kind = act[0]
-                    if kind == 'end':
-                        def do_end():
-                            try: 
-                                ev = g.end_turn(1)
-                                log_events(ev, g)
-                            except IllegalAction: pass
-                        ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=do_end))
 
-                    elif kind == 'play':
+                    if kind == 'play':
                         _, idx, tp, tm = act
                         cid = g.players[1].hand[idx]
                         src = pygame.Rect(W//2 - CARD_W//2, 20, CARD_W, CARD_H)
@@ -1542,9 +1536,7 @@ def main():
                             try:
                                 ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
                                 log_events(ev, g)
-
                                 apply_post_summon_hooks(g, ev)
-                                log_events(ev, g)
                                 flash_from_events(g, ev)
                             except IllegalAction:
                                 pass
@@ -1552,7 +1544,8 @@ def main():
                         ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}))
                         ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                             {"src": src, "dst": dst, "label": db[cid].name,
-                                             "color": CARD_BG_EN}, on_finish=do_on_finish))
+                                            "color": CARD_BG_EN}, on_finish=do_on_finish))
+                        return
 
                     elif kind == 'attack':
                         _, aid, tp, tm = act
@@ -1563,10 +1556,11 @@ def main():
                                 if mid == tm: tr = r; break
                         if tr is None: tr = my_face_rect(before)
                         def on_hit(aid=aid, tpp=tp, tmm=tm):
-                            try: 
+                            try:
                                 ev = g.attack(1, attacker_id=aid, target_player=tpp, target_minion=tmm)
                                 log_events(ev, g)
-                            except IllegalAction: return
+                            except IllegalAction:
+                                return
                             post = layout_board(g)
                             if tmm is None:
                                 enqueue_flash(my_face_rect(post))
@@ -1574,6 +1568,28 @@ def main():
                                 for mid, r in post["my_minions"]:
                                     if mid == tmm: enqueue_flash(r); break
                         enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
+                        return
+
+                    # 3) No good play/attack picked this frame → *then* consider hero power conservatively
+                    def try_power_then_end():
+                        try:
+                            from ai import maybe_use_hero_power
+                            ev = maybe_use_hero_power(g, 1)  # this now refuses “Coin → Power” shenanigans
+                        except Exception:
+                            ev = []
+                        if ev:
+                            log_events(ev, g)
+                            flash_from_events(g, ev)
+                            return  # spent our frame
+
+                        # 4) Finally end the turn
+                        try:
+                            ev2 = g.end_turn(1)
+                            log_events(ev2, g)
+                        except IllegalAction:
+                            pass
+
+                    ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=try_power_then_end))
 
                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
