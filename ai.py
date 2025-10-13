@@ -311,14 +311,14 @@ def _enemy_minions(g: Game, pid: int):
 # ----------------- Target/value heuristics -----------------
 
 def threat_score_enemy_minion(m) -> int:
-    # Higher is more threatening
     kw_bonus = (6 if getattr(m, "taunt", False) else 0) \
              + (4 if getattr(m, "charge", False) else 0) \
-             + (3 if getattr(m, "rush", False) else 0)
-    # Use original card cost if present; else approximate by stats
+             + (3 if getattr(m, "rush", False) else 0) \
+             + (5 if getattr(m, "divine_shield", False) else 0)  # NEW
     cost_hint = getattr(m, "cost", 0)
     stat_val  = m.attack * 3 + m.max_health * 2
     return stat_val + kw_bonus + cost_hint * 2
+
 
 def value_score_friendly_minion_for_buff(m, spell_id: str) -> int:
     # We like buffing minions that already have decent attack or protective keywords

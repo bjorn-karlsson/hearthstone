@@ -699,24 +699,41 @@
             ]
         },
         {
-        "id": "EAGLEHORN_BOW",
-        "name": "Eaglehorn Bow",
-        "type": "WEAPON",
-        "rarity": "RARE",
-        "cost": 3,
-        "attack": 3,
-        "health": 2,
-        "text": "Whenever a friendly Secret is revealed, gain +1 Durability.",
-        "triggers": [
-            {
-            "on": "friendly_secret_revealed",
-            "effects": [
-                { "effect": "weapon_durability_delta", "amount": 1 }
-            ]
-            }
-        ]
-        },
+            "id": "EAGLEHORN_BOW",
+            "name": "Eaglehorn Bow",
+            "type": "WEAPON",
+            "rarity": "RARE",
+            "cost": 3,
+            "attack": 3,
+            "health": 2,
+            "text": "Whenever a friendly Secret is revealed, gain +1 Durability.",
+            "triggers": [
                 {
+                    "on": "friendly_secret_revealed",
+                    "effects": [
+                        {
+                            "effect": "weapon_durability_delta",
+                            "amount": 1
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "ARGENT_SQUIRE",
+            "name": "Argent Squire",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "None",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "keywords": [
+                "Divine Shield"
+            ],
+            "text": "Divine Shield."
+        },
+        {
             "id": "LEPER_GNOME",
             "name": "Leper Gnome",
             "type": "MINION",

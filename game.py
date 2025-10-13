@@ -116,8 +116,8 @@ KEYWORD_HELP = {
     "Charge": "Can attack heroes and minions immediately.",
     "Silence": "Remove text and keywords from a minion.",
     "Spell Damage": "Your spells deal +N damage.",
-    "Enrage": "While damaged: gain the listed bonus."
-    # add more as you add mechanics: Divine Shield, Stealth, Windfury, etc.
+    "Enrage": "While damaged: gain the listed bonus.",
+    "Divine Shield": "Prevents the first damage this minion would take. The hit is fully absorbed, then the shield is removed.",
 }
 
 # -------- LOGGING -------------
@@ -147,6 +147,8 @@ def format_event(e, g, skip=False) -> str:
     if DEBUG and not skip:
         return f"{k}: {format_event(e, g, True)}"
 
+    if k == "DivineShieldPopped":
+        return f"{p.get('name','A minion')}'s Divine Shield broke."
     if k == "SecretPlayed":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} set a Secret."
@@ -288,7 +290,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["EXPLOSIVE_TRAP", "TIMBER_WOLF", "EAGLEHORN_BOW"] * 30
+    desired = ["EXPLOSIVE_TRAP", "ARGENT_SQUIRE", "EAGLEHORN_BOW"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -897,6 +899,21 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
             draw_name_footer(r, minion_obj.minion_type)
         else:
             draw_name_footer(r, "Neutral") 
+
+    # Tiny Divine Shield indicator on board
+    if getattr(minion_obj, "divine_shield", False) and not getattr(minion_obj, "silenced", False):
+        
+        sx, sy = r.x + (CARD_W / 2) - 11, r.y
+        badge = pygame.Rect(sx, sy, 22, 22)
+        pygame.draw.ellipse(screen, (235, 200, 80), badge)            # golden fill
+        pygame.draw.ellipse(screen, (30, 24, 10), badge, 2)           # rim
+        # simple shield glyph
+        p1 = (badge.centerx, badge.y + 5)
+        p2 = (badge.x + 5, badge.y + 11)
+        p3 = (badge.centerx, badge.bottom - 5)
+        p4 = (badge.right - 5, badge.y + 11)
+        pygame.draw.polygon(screen, (255, 245, 180), [p1, p2, p3, p4])
+
     if getattr(minion_obj, "silenced", False):
         draw_silence_overlay(r)
 

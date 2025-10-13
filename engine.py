@@ -65,6 +65,7 @@ class Minion:
     minion_type: str = "None"
     spell_damage: int = 0
     taunt: bool = False
+    divine_shield: bool = False
     charge: bool = False
     rush: bool = False
     can_attack: bool = False
@@ -213,13 +214,45 @@ class Game:
             ev.append(Event("PlayerDefeated", {"player": pid}))
         return ev
 
-    def deal_damage_to_minion(self, target:Minion, amount:int, source:str="") -> List[Event]:
+    def _damage_minion(self, target: Minion, amount: int, source: str = "") -> List[Event]:
+        """
+        Applies damage to a minion, respecting Divine Shield.
+        Emits:
+        - DivineShieldPopped (when shield absorbs the hit)
+        - MinionDamaged (when HP is reduced)
+        - MinionDied (via destroy_minion) if lethal
+        - Enrage updates as needed
+        """
+        if amount <= 0 or not target.is_alive():
+            return []
+
+        ev: List[Event] = []
+
+        # Divine Shield absorbs the *first* source of damage entirely.
+        if getattr(target, "divine_shield", False):
+            target.divine_shield = False
+            ev.append(Event("DivineShieldPopped", {
+                "player": target.owner,
+                "minion": target.id,
+                "name": target.name
+            }))
+            return ev  # no HP loss
+
+        # Normal damage flow
         target.health -= amount
-        ev = [Event("MinionDamaged", {"minion": target.id, "amount": amount, "source": source})]
+        ev.append(Event("MinionDamaged", {
+            "minion": target.id, "amount": amount, "source": source
+        }))
+
+        # Update Enrage / resolve death
         ev += self._update_enrage(target)
         if target.health <= 0:
             ev += self.destroy_minion(target, reason="LethalDamage")
         return ev
+
+
+    def deal_damage_to_minion(self, target:Minion, amount:int, source:str="") -> List[Event]:
+        return self._damage_minion(target, amount, source)
 
     def destroy_minion(self, target:Minion, reason:str="") -> List[Event]:
         ev: List[Event] = []
@@ -525,16 +558,8 @@ class Game:
             # capture minion's attack BEFORE dealing damage (simultaneous combat)
             retaliate = max(0, tgt.attack)
 
-            # hero deals weapon damage to minion
-            tgt.health -= w.attack
-            ev.append(Event("MinionDamaged", {"minion": tgt.id, "amount": w.attack, "source": w.name}))
-            ev += self._update_enrage(tgt)
-
-            # resolve minion death after damage is applied
-            if tgt.health <= 0:
-                ev += self.destroy_minion(tgt, reason="LethalDamage")
-
-            # hero still takes the minion's pre-damage attack EVEN IF it died
+            ev += self._damage_minion(tgt, w.attack, source=w.name)
+            
             if retaliate > 0:
                 ev += self.deal_damage_to_player(pid, retaliate, source=tgt.name)
 
@@ -628,6 +653,7 @@ class Game:
                 taunt=("Taunt" in card.keywords),
                 charge=("Charge" in card.keywords),
                 rush=("Rush" in card.keywords),
+                divine_shield = ("Divine Shield" in card.keywords),
                 summoned_this_turn=True,
                 cost=card.cost,
                 rarity=card.rarity,
@@ -952,21 +978,10 @@ class Game:
             a_dmg = att.attack
             t_dmg = tgt.attack
 
-            # Apply raw damage (no immediate deaths)
-            tgt.health -= a_dmg
-            ev.append(Event("MinionDamaged", {"minion": tgt.id, "amount": a_dmg, "source": att.name}))
-            att.health -= t_dmg
-            ev.append(Event("MinionDamaged", {"minion": att.id, "amount": t_dmg, "source": tgt.name}))
-
-            # Check enrage state
-            ev += self._update_enrage(tgt)
-            ev += self._update_enrage(att)
-
-            # Resolve deaths after both hits are applied
-            if tgt.health <= 0:
-                ev += self.destroy_minion(tgt, reason="LethalDamage")
-            if att.health <= 0:
-                ev += self.destroy_minion(att, reason="LethalDamage")
+            # Apply both hits (simultaneous) via the central damage path.
+            # Using precomputed a_dmg/t_dmg preserves simultaneous damage even if one dies.
+            ev += self._damage_minion(tgt, a_dmg, source=att.name)
+            ev += self._damage_minion(att, t_dmg, source=tgt.name)
 
             self.history += ev
             return ev
@@ -1558,7 +1573,7 @@ def _fx_silence(params):
         m = obj
         ev = []
         ev += g._disable_aura(m)     # remove active aura first
-        m.taunt = m.charge = m.rush = False
+        m.taunt = m.charge = m.rush = m.divine_shield = False
         m.deathrattle = None
         m.silenced = True
         ev.append(Event("Silenced", {"minion": m.id}))
@@ -1583,6 +1598,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             health=int(card_spec.get("health", 1)),
             max_health=int(card_spec.get("health", 1)),
             taunt=("Taunt" in kws),
+            divine_shield = ("Divine Shield" in kws),
             charge=("Charge" in kws),
             rush=("Rush" in kws),
             exhausted=not ("Charge" in kws or "Rush" in kws),
