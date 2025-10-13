@@ -449,10 +449,14 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
     if kind == "buff":
         tm = best_friendly_to_buff(g, pid, cid)
         if tm is None:
-            return None
+            # No target: treat as generic body with a small penalty
+            stat_val = card.attack * 3 + card.health * 2
+            curve_val = min(card.cost, p.mana) * 8
+            return idx, None, None, 40 + stat_val + curve_val  # smaller than real minions
         m = g.find_minion(tm)[2]
         base = 80 + m.attack * 2 + getattr(m, "cost", 0)
         return idx, None, tm, base
+
 
     # ---- Disables (silence/transform)
     if kind == "disable":

@@ -595,8 +595,6 @@ class Game:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
         
-        
-
         p = self.players[pid]
 
         if hand_index < 0 or hand_index >= len(p.hand):

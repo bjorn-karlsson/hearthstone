@@ -288,7 +288,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["EXPLOSIVE_TRAP", "EAGLEHORN_BOW"] * 30
+    desired = ["EXPLOSIVE_TRAP", "TIMBER_WOLF", "EAGLEHORN_BOW"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -335,7 +335,7 @@ except Exception as e:
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
 
-#player_deck = None
+player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -430,7 +430,7 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
 
     # draw inner FIRST so it doesn't cover badges later
     inner = face_rect.inflate(-18, -28)
-    pygame.draw.rect(screen, (22, 26, 34), inner, border_radius=10)
+    #pygame.draw.rect(screen, (22, 26, 34), inner, border_radius=10)
 
     # tiny label strip at top (class color)
     strip = pygame.Rect(face_rect.x, face_rect.y, face_rect.w, 18)
@@ -443,8 +443,14 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
     screen.blit(cap, cap.get_rect(center=strip.center))
 
     # health (bottom-right)
+    max_hp = getattr(pstate, "max_health", 30)  # fallback if engine doesn't expose it
     health_center = (face_rect.right - 20, face_rect.bottom - 18)
-    draw_badge_circle(health_center, 14, HEALTH_BADGE, str(max(0, pstate.health)), font=FONT)
+    if pstate.health < max_hp:
+        draw_badge_circle(health_center, 14, (40, 35, 25), str(max(0, pstate.health)),
+                      text_color=HP_HURT, font=FONT)
+    else:
+        draw_badge_circle(health_center, 14, (40, 35, 25), str(max(0, pstate.health)),
+                        text_color=HP_OK, font=FONT)
 
     # armor (small, above health)
     if pstate.armor > 0:
@@ -453,13 +459,37 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
 
     # weapon badge (bottom-left)
     if getattr(pstate, "weapon", None):
-        wtxt = f"{pstate.weapon.attack}/{pstate.weapon.durability}"
-        draw_badge_circle((face_rect.x + 26, face_rect.bottom - 18), 12, (120,120,120), wtxt, font=FONT)
+        cx, cy = face_rect.x + 26, face_rect.bottom - 18
+        radius = 14
+
+        # badge circle
+        pygame.draw.circle(screen, (40, 35, 25), (cx, cy), radius)
+        pygame.draw.circle(screen, (20, 20, 20), (cx, cy), radius, 2)
+
+        atk = int(getattr(pstate.weapon, "attack", 0))
+        cur = int(getattr(pstate.weapon, "durability", 0))
+        base = _weapon_base_durability_safe(GLOBAL_GAME, pstate.weapon)
+
+        # Only durability turns red if it’s below max
+        dur_col = HP_HURT if (base is not None and cur < base) else WHITE
+
+        atk_surf   = FONT.render(str(atk), True, WHITE)
+        slash_surf = FONT.render("/", True, WHITE)   # keep slash neutral
+        dur_surf   = FONT.render(str(cur), True, dur_col)
+
+        total_w = atk_surf.get_width() + slash_surf.get_width() + dur_surf.get_width()
+        max_h   = max(atk_surf.get_height(), slash_surf.get_height(), dur_surf.get_height())
+        x = cx - total_w // 2
+        y = cy - max_h // 2
+
+        screen.blit(atk_surf,   (x, y)); x += atk_surf.get_width()
+        screen.blit(slash_surf, (x, y)); x += slash_surf.get_width()
+        screen.blit(dur_surf,   (x, y))
+
 
     # mana crystal on the right side
     crystal = pygame.Rect(face_rect.right + CRYSTAL_PAD, face_rect.y + 6, CRYSTAL_W, face_rect.h - 12)
     draw_mana_crystal_rect(crystal, pstate.mana, pstate.max_mana)
-
 
 def keyword_explanations_for_card(card_obj) -> List[str]:
     tips = []
@@ -517,6 +547,84 @@ def draw_keyword_help_panel(anchor_rect: pygame.Rect, lines: List[str], side: st
         screen.blit(surf, (panel.x + pad, y))
         y += surf.get_height() + 4
 
+# --- Weapon/Secret helpers ---
+
+def _weapon_base_durability_safe(g, w_obj):
+    bd = getattr(w_obj, "base_durability", None)
+    if bd is not None:
+        return bd
+    try:
+        base_card = _weapon_card_from_state(g, w_obj)
+    except Exception:
+        base_card = None
+    if base_card is not None:
+        # in your JSON the printed durability is stored as `health` (or `durability`)
+        return getattr(base_card, "health", getattr(base_card, "durability", None))
+    return None
+
+
+def _weapon_card_from_state(g: Game, w_obj):
+    """
+    Try to resolve the original weapon Card object from the weapon state on the hero.
+    Falls back by name if no id is available.
+    """
+    if w_obj is None:
+        return None
+    # common patterns
+    for key in ("card_id", "id"):
+        cid = getattr(w_obj, key, None)
+        if cid and cid in g.cards_db:
+            return g.cards_db[cid]
+    # name fallback
+    nm = getattr(w_obj, "name", None)
+    if nm:
+        for cid, obj in g.cards_db.items():
+            if getattr(obj, "name", None) == nm and getattr(obj, "type", "") == "WEAPON":
+                return obj
+    return None
+
+def _active_secret_ids(pstate) -> list[str]:
+    """
+    Return a list of *card_id* strings for the player's active secrets, no matter
+    how pstate.active_secrets is structured (list of dicts, dict keyed by id, etc).
+    """
+    s = getattr(pstate, "active_secrets", None)
+    if not s:
+        return []
+
+    ids: list[str] = []
+
+    # Case 1: dict keyed by card id
+    if isinstance(s, dict):
+        for k in s.keys():
+            if isinstance(k, str):
+                ids.append(k)
+            elif isinstance(k, (int,)):
+                ids.append(str(k))
+        return ids
+
+    # Case 2: iterable (list/tuple/set) of items
+    try:
+        for item in s:
+            if isinstance(item, str):
+                ids.append(item)
+            elif isinstance(item, dict):
+                cid = item.get("card_id") or item.get("id") or item.get("cid") or item.get("card")
+                if cid:
+                    ids.append(str(cid))
+            elif isinstance(item, (int,)):
+                ids.append(str(item))
+    except TypeError:
+        # not iterable; ignore
+        pass
+
+    return ids
+
+
+def _badge_rect_from_center(cx: int, cy: int, r: int = 14) -> pygame.Rect:
+    d = r * 2
+    return pygame.Rect(cx - r, cy - r, d, d)
+
 # ui file
 def card_name_from_db(db, cid: str) -> str:
     obj = db.get(cid)
@@ -540,7 +648,6 @@ def draw_silence_overlay(r: pygame.Rect):
     s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.23))))
     screen.blit(s, (r.x, r.y))
 
-
 def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
     """Green-glow condition for cards in hand."""
     c = g.cards_db[cid]
@@ -563,14 +670,17 @@ def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
     targ_map = g.cards_db.get("_TARGETING", {})
     need = (targ_map.get(cid, "none") or "none").lower()
 
-    if need in ("friendly_minion", "friendly_minions"):
-        return any(m.is_alive() for m in p.board)
-    if need in ("enemy_minion", "enemy_minions"):
-        opp = 1 - pid
-        return any(m.is_alive() for m in g.players[opp].board)
-    if need in ("any_minion", "any_minions"):
-        opp = 1 - pid
-        return any(m.is_alive() for m in p.board) or any(m.is_alive() for m in g.players[opp].board)
+    # Spells still require a valid target; minions may be played without one (BC fizzles)
+    if c.type == "SPELL":
+        if need in ("friendly_minion", "friendly_minions"):
+            return any(m.is_alive() for m in p.board)
+        if need in ("enemy_minion", "enemy_minions"):
+            opp = 1 - pid
+            return any(m.is_alive() for m in g.players[opp].board)
+        if need in ("any_minion", "any_minions"):
+            opp = 1 - pid
+            return any(m.is_alive() for m in p.board) or any(m.is_alive() for m in g.players[opp].board)
+    # for MINION: don't gate on targets at all (we'll fizzle BC if none)
 
     # "enemy_character" / "any_character" are always targetable (face exists)
     return True
@@ -834,10 +944,6 @@ def _stacked_hand_rects(n: int, y: int) -> List[pygame.Rect]:
     return [pygame.Rect(start_x + i * step, y, CARD_W, CARD_H) for i in range(n)]
 
 
-
-
-
-
 def insertion_slots_for_my_row(g: Game, arena: pygame.Rect) -> List[pygame.Rect]:
     """
     Returns n+1 drop slots, index = insertion index.
@@ -872,17 +978,17 @@ def insertion_slots_for_my_row(g: Game, arena: pygame.Rect) -> List[pygame.Rect]
 
     return slots
 
-
 def slot_index_at_point(slots: List[pygame.Rect], mx: int, my: int) -> Optional[int]:
     for i, s in enumerate(slots):
         if s.collidepoint(mx, my):
             return i
     return None
 
-
 def layout_board(g: Game) -> Dict[str, Any]:
     hot = {"hand": [], "my_minions": [], "enemy_minions": [], "end_turn": None,
-           "face_enemy": None, "face_me": None, "hp_enemy": None, "hp_me": None}
+           "face_enemy": None, "face_me": None, "hp_enemy": None, "hp_me": None,
+           "weapon_enemy": None, "weapon_me": None,
+           "secrets_enemy": [], "secrets_me": []}
 
     arena = battle_area_rect()
 
@@ -912,9 +1018,37 @@ def layout_board(g: Game) -> Dict[str, Any]:
     hot["hp_enemy"] = pygame.Rect(hp_x_enemy, hot["face_enemy"].y, 150, 52)
     hot["hp_me"]    = pygame.Rect(hp_x_me,    hot["face_me"].y,    150, 52)
 
+    # --- NEW: hotspots for weapon badges (same centers as draw_hero_plate)
+    # bottom-left of each hero plate: (x+26, bottom-18)
+    if getattr(g.players[1], "weapon", None):
+        cx, cy = hot["face_enemy"].x + 26, hot["face_enemy"].bottom - 18
+        hot["weapon_enemy"] = _badge_rect_from_center(cx, cy, 14)
+    if getattr(g.players[0], "weapon", None):
+        cx, cy = hot["face_me"].x + 26, hot["face_me"].bottom - 18
+        hot["weapon_me"] = _badge_rect_from_center(cx, cy, 14)
+
+    # --- NEW: secret badge rects (place across the top strip, right-to-left)
+    def _secret_slots(face_rect: pygame.Rect, count: int):
+        slots = []
+        if count <= 0: return slots
+        pad = 6
+        size = 22
+        x = face_rect.right - size - 6  # start near right edge
+        y = face_rect.y + 2              # on the colored strip
+        for i in range(count):
+            slots.append(pygame.Rect(x - i*(size+pad), y, size, size))
+        return slots
+
+    en_secrets = _active_secret_ids(g.players[1])
+    my_secrets = _active_secret_ids(g.players[0])
+
+    for r in _secret_slots(hot["face_enemy"], len(en_secrets or [])):
+        hot["secrets_enemy"].append((None, r))       # don't reveal enemy ids
+    for cid, r in zip(my_secrets, _secret_slots(hot["face_me"], len(my_secrets))):
+        hot["secrets_me"].append((cid, r))
+
     hot["end_turn"] = pygame.Rect(W - 170, H - 70, 150, 50)
     return hot
-
 
 def scale_rect_about_center(r: pygame.Rect, s: float, lift: int = 0) -> pygame.Rect:
     w, h = int(r.w * s * 1.2), int(r.h * s)
@@ -928,8 +1062,6 @@ def hand_hover_index(hot, mx, my) -> Optional[int]:
         if hit.collidepoint(mx, my):
             return i
     return None
-
-
 
 def minion_ready_to_act(g: Game, m) -> bool:
     if m.has_attacked_this_turn or m.attack <= 0:
@@ -1000,7 +1132,6 @@ def targets_for_card(g: Game, cid: str, pid: int):
         m_face = (side in ("friendly","any"))
 
     return enemy_min, my_min, e_face, m_face
-
 
 def can_use_hero_power(g: Game, pid: int) -> bool:
     p = g.players[pid]
@@ -1099,6 +1230,25 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         # purely informative; AI uses this programmatically
         pygame.draw.rect(screen, GREEN, hot["face_enemy"].inflate(12, 12), 3, border_radius=16)
 
+    # --- NEW: secrets rendering (as ? badges, class color)
+    def _class_color(pid: int):
+        hid = getattr(g.players[pid].hero, "id", g.players[pid].hero)
+        return HERO_COLORS.get(str(hid).upper(), (100,100,100))
+
+    # Enemy secrets (no hover info)
+    for _cid, rr in hot["secrets_enemy"]:
+        pygame.draw.rect(screen, _class_color(1), rr, border_radius=6)
+        pygame.draw.rect(screen, (20,20,20), rr, 1, border_radius=6)
+        q = FONT.render("?", True, WHITE)
+        screen.blit(q, q.get_rect(center=rr.center))
+
+    # My secrets (hoverable)
+    for cid, rr in hot["secrets_me"]:
+        pygame.draw.rect(screen, _class_color(0), rr, border_radius=6)
+        pygame.draw.rect(screen, (20,20,20), rr, 1, border_radius=6)
+        q = FONT.render("?", True, WHITE)
+        screen.blit(q, q.get_rect(center=rr.center))
+
     # Hero Power buttons
     me = g.players[0]; ai = g.players[1]
     # Enemy button (display only; AI clicks programmatically)
@@ -1145,6 +1295,8 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     mx, my = pygame.mouse.get_pos()
     hover_idx = hand_hover_index(hot, mx, my)
 
+    
+
     # draw non-hovered first (so hovered can render on top)
     for i, cid, r in hot["hand"]:
         if i == hover_idx:
@@ -1180,6 +1332,41 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
 
             if g.active_player == 0 and card_is_playable_now(g, 0, cid0):
                 pygame.draw.rect(screen, GREEN, rz.inflate(12, 12), 4, border_radius=18)
+
+    # --- NEW: hover previews for weapon + my secrets
+    preview_card = None
+    preview_anchor = None
+
+    # weapon hover (both sides)
+    if hot["weapon_me"] and hot["weapon_me"].collidepoint(mx, my):
+        preview_card = _weapon_card_from_state(g, g.players[0].weapon)
+        preview_anchor = hot["weapon_me"]
+    elif hot["weapon_enemy"] and hot["weapon_enemy"].collidepoint(mx, my):
+        preview_card = _weapon_card_from_state(g, g.players[1].weapon)
+        preview_anchor = hot["weapon_enemy"]
+
+    # my secret hover (reveal my actual secret)
+    if preview_card is None:
+        for cid, rr in hot["secrets_me"]:
+            if rr.collidepoint(mx, my):
+                preview_card = g.cards_db.get(cid)
+                preview_anchor = rr
+                break
+
+    # draw the preview (reuse card frame; 1.7x card size near anchor)
+    if preview_card is not None:
+        pw, ph = int(CARD_W * 1.7), int(CARD_H * 1.9)
+        # try to place to the right of the anchor, clamp on screen
+        ax = min(preview_anchor.right + 16, W - pw - 12)
+        ay = max(12, min(preview_anchor.y - ph//3, H - ph - 12))
+        R = pygame.Rect(ax, ay, pw, ph)
+
+        # backdrop glow
+        glow = R.inflate(14, 14)
+        pygame.draw.rect(screen, (255,255,255), glow, 6, border_radius=18)
+
+        draw_card_frame(R, CARD_BG_HAND, card_obj=preview_card, in_hand=True)
+
 
     # End turn
     pygame.draw.rect(screen, BLUE if g.active_player == 0 else (90, 90, 90), hot["end_turn"], border_radius=8)
@@ -2108,16 +2295,38 @@ def main():
                             ))
                             hover_slot_index = None
                             continue
+                        else: 
+                            # Check if any legal targets exist
+                            enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
+                            any_targets = bool(enemy_mins or my_mins or enemy_face_ok or my_face_ok)
+                            if any_targets:
+                                # enter targeting mode (same as before)
+                                waiting_target_for_play = ("__PENDING_MINION__", idx, cid, src_rect, slot_idx)
+                                hilite_enemy_min = set(enemy_mins)
+                                hilite_my_min = set(my_mins)
+                                hilite_enemy_face = enemy_face_ok or (need in ("any_character", "enemy_character"))
+                                hilite_my_face = my_face_ok or (need in ("any_character", "friendly_character"))
+                                hover_slot_index = slot_idx
+                                continue
+                            else:
+                                # No valid targets → just play the minion; battlecry will fizzle
+                                slot_rect = slots[slot_idx]
+                                dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
 
-                        # needs a target: DO NOT play yet — enter targeting mode and remember slot
-                        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
-                        waiting_target_for_play = ("__PENDING_MINION__", idx, cid, src_rect, slot_idx)
-                        hilite_enemy_min = set(enemy_mins)
-                        hilite_my_min = set(my_mins)
-                        hilite_enemy_face = enemy_face_ok or (need in ("any_character", "enemy_character"))
-                        hilite_my_face = my_face_ok or (need in ("any_character", "friendly_character"))
-                        hover_slot_index = slot_idx
-                        continue
+                                def on_finish(i=idx, sl=slot_idx):
+                                    try:
+                                        ev = g.play_card(0, i, insert_at=sl)   # no target args
+                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
+                                        flash_from_events(g, ev)
+                                    except IllegalAction:
+                                        pass
+
+                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                    {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                                    on_finish=on_finish))
+                                hover_slot_index = None
+                                continue
                         
         pygame.display.flip()
 
