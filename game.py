@@ -333,7 +333,7 @@ except Exception as e:
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
-ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Legendary Sprinkle")
+ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
 
 
 if not player_deck:
@@ -365,7 +365,7 @@ for name, d in loaded_decks.items():
             print("  -", msg)
 
 #HERO_PLAYER = select_random_hero(hero_db)
-HERO_AI     = select_random_hero(hero_db)
+#HERO_AI     = select_random_hero(hero_db)
 
 #STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
 #STARTER_DECK_AI     = make_starter_deck(db, random.randint(1, 50000))

@@ -384,7 +384,7 @@
             }
         },
         {
-            "id": "SHIELDMASTA",
+            "id": "SENJIN_SHIELDMASTA",
             "name": "Sen’jin Shieldmasta",
             "type": "MINION",
             "rarity": "Common",
@@ -1041,7 +1041,7 @@
             "targeting": "none"
         },
         {
-            "id": "BLESSING_OF_MIGHT_LITE",
+            "id": "BLESSING_OF_MIGHT",
             "name": "Blessing of Might",
             "type": "SPELL",
             "rarity": "Rare",
@@ -1057,17 +1057,17 @@
             "targeting": "friendly_minion"
         },
         {
-            "id": "BLESSING_OF_KINGS_LITE",
+            "id": "BLESSING_OF_KINGS",
             "name": "Blessing of Kings",
             "rarity": "Rare",
             "type": "SPELL",
             "cost": 4,
-            "text": "Give a minion +2/+2.",
+            "text": "Give a minion +4/+4.",
             "on_cast": [
                 {
                     "effect": "add_stats",
-                    "attack": 2,
-                    "health": 2,
+                    "attack": 4,
+                    "health": 4,
                     "target": "friendly_minion"
                 }
             ],
@@ -1108,7 +1108,7 @@
             "targeting": "any_minion"
         },
         {
-            "id": "CONSECRATION_LITE",
+            "id": "CONSECRATION",
             "name": "Consecration",
             "type": "SPELL",
             "rarity": "Rare",
