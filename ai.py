@@ -10,6 +10,44 @@ THE_COIN          = {"THE_COIN"}
 
 
 
+def _targeting_of(g: Game, cid: str) -> str:
+    return (g.cards_db.get("_TARGETING", {}).get(cid, "none") or "none").lower()
+
+def _has_friendly_target_for_buff(g: Game, pid: int, cid: str) -> Optional[int]:
+    """
+    If the card targets a friendly minion (optionally tribe-gated), return
+    the best target id; else None.
+    """
+    t = _targeting_of(g, cid)
+    if t in ("friendly_minion", "any_minion"):  # we only pick friendlies for buffs
+        return best_friendly_to_buff(g, pid, cid)
+    if t.startswith("friendly_tribe:") or t.startswith("any_tribe:"):
+        tribe = t.split(":", 1)[1]
+        candidates = [m for m in g.players[pid].board
+                      if m.is_alive() and str(getattr(m, "minion_type", "none")).lower() == tribe]
+        if not candidates:
+            return None
+        # reuse your existing value model
+        return max(candidates, key=lambda m: value_score_friendly_minion_for_buff(m, cid)).id
+    # if it targets enemy/broad characters, this helper isn’t for that
+    return None
+
+
+def _needs_any_target(g: Game, cid: str) -> bool:
+    """True if the card requires a target when played (minion or character)."""
+    t = _targeting_of(g, cid)
+    if t in ("none", ""):
+        return False
+    # character targets always need something picked
+    if t in ("any_character", "friendly_character", "enemy_character"):
+        return True
+    # explicit minion targets
+    if t in ("friendly_minion", "enemy_minion", "any_minion"):
+        return True
+    # tribe-targeted forms: friendly_tribe:beast / enemy_tribe:mech / any_tribe:dragon
+    return t.startswith("friendly_tribe:") or t.startswith("enemy_tribe:") or t.startswith("any_tribe:")
+
+
 def _raw_root(g: Game) -> Dict[str, Any]:
     return g.cards_db.get("_RAW", {})
 
@@ -447,15 +485,23 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
     # ---- Buffs
     if kind == "buff":
-        tm = best_friendly_to_buff(g, pid, cid)
-        if tm is None:
-            # No target: treat as generic body with a small penalty
-            stat_val = card.attack * 3 + card.health * 2
-            curve_val = min(card.cost, p.mana) * 8
-            return idx, None, None, 40 + stat_val + curve_val  # smaller than real minions
-        m = g.find_minion(tm)[2]
-        base = 80 + m.attack * 2 + getattr(m, "cost", 0)
-        return idx, None, tm, base
+        targeting = _targeting_of(g, cid)
+
+        # If this buff needs a friendly minion (optionally a tribe), require a real target.
+        if _needs_any_target(g, cid):
+            # Only consider *friendly* targets for buffs we cast on our own minions.
+            tm = _has_friendly_target_for_buff(g, pid, cid)
+            if tm is None:
+                return None  # <-- key fix: do NOT play if there’s no legal/best target
+            m = g.find_minion(tm)[2]
+            base = 80 + m.attack * 2 + getattr(m, "cost", 0)
+            return idx, None, tm, base
+
+        # Non-targeted buffs (global effects, auras, etc.) can be treated as playable
+        # but keep them modest so they don’t outrank good development.
+        stat_val = getattr(card, "attack", 0) * 3 + getattr(card, "health", 0) * 2
+        curve_val = min(card.cost, p.mana) * 6
+        return idx, None, None, 40 + stat_val + curve_val
 
 
     # ---- Disables (silence/transform)
@@ -630,6 +676,12 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
             base += 40 + 20 * dmg_spells_affordable_after
 
         return idx, None, None, base
+
+    # Final safety: if the card *needs* a target and we don't have one, abort.
+    # (Covers any future card types you add.)
+    if _needs_any_target(g, cid):
+        if (tp is None) and (tm is None):
+            return None
 
     # Unknown: skip
     return None

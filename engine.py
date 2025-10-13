@@ -214,6 +214,18 @@ class Game:
             ev.append(Event("PlayerDefeated", {"player": pid}))
         return ev
 
+
+    def _run_minion_triggers(self, m: Minion, trigger_name: str, context: Optional[Dict[str, Any]] = None) -> List[Event]:
+        fns = m.triggers_map.get(trigger_name, [])
+        if not fns:
+            return []
+        class _Src: pass
+        src = _Src(); src.owner = m.owner; src.name = m.name
+        ev: List[Event] = []
+        for fn in fns:
+            ev += fn(self, src, context)
+        return ev
+    
     def _damage_minion(self, target: Minion, amount: int, source: str = "") -> List[Event]:
         """
         Applies damage to a minion, respecting Divine Shield.
@@ -243,6 +255,9 @@ class Game:
         ev.append(Event("MinionDamaged", {
             "minion": target.id, "amount": amount, "source": source
         }))
+
+        # Fire “whenever this minion takes damage” hooks
+        ev += self._run_minion_triggers(target, "self_damaged", {"amount": amount, "source": source})
 
         # Update Enrage / resolve death
         ev += self._update_enrage(target)
@@ -555,6 +570,15 @@ class Game:
             # announce
             ev.append(Event("HeroAttack", {"player": pid, "target": tgt.id}))
 
+            # Defender secrets first
+            ev += self._trigger_secrets(opp, "minion_attacked")
+
+            # Fire weapon triggers before damage
+            ev += self._run_weapon_triggers(pid, "hero_attacks", {
+                "target_minion": (tgt.id if target_minion is not None else None),
+                "target_player": (self.other(pid) if target_player is not None else None)
+            })
+
             # capture minion's attack BEFORE dealing damage (simultaneous combat)
             retaliate = max(0, tgt.attack)
 
@@ -565,6 +589,8 @@ class Game:
 
             # spend durability
             ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
+
+
             p.hero_has_attacked_this_turn = True
             self.history += ev
             return ev
@@ -586,8 +612,15 @@ class Game:
                 self.history += ev
                 return ev
 
+            # Fire weapon triggers before damage
+            ev += self._run_weapon_triggers(pid, "hero_attacks", {
+                "target_minion": (tgt.id if target_minion is not None else None),
+                "target_player": (self.other(pid) if target_player is not None else None)
+            })
+
             ev += self.deal_damage_to_player(opp, w.attack, source=w.name)
             ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
+
             p.hero_has_attacked_this_turn = True
             self.history += ev
             return ev
@@ -975,6 +1008,9 @@ class Game:
             att.has_attacked_this_turn = True
             ev: List[Event] = [Event("Attack", {"attacker": att.id, "target": tgt.id})]
 
+            # SECRETS: defender 'opp' minion is being attacked
+            ev += self._trigger_secrets(opp, "minion_attacked")
+
             a_dmg = att.attack
             t_dmg = tgt.attack
 
@@ -1182,7 +1218,6 @@ def _fx_if_control_tribe(params, json_db_tokens):
         return then_fn(g, source_obj, target) if has else else_fn(g, source_obj, target)
     return run
 
-
 def _fx_if_summoned_tribe(params, json_db_tokens):
     """Run nested 'then' effects only if the current target minion is of the given tribe."""
     tribe = str(params.get("tribe", "")).lower().strip()
@@ -1197,7 +1232,6 @@ def _fx_if_summoned_tribe(params, json_db_tokens):
             return then_fn(g, source_obj, target)
         return []
     return run
-
 
 def _fx_summon_from_pool(params, json_db_tokens):
     """
@@ -1243,7 +1277,6 @@ def _fx_summon_from_pool(params, json_db_tokens):
 
     return run
 
-
 def _fx_equip_weapon(params, json_db_tokens):
     token_id = params.get("card_id")
     inline_a = params.get("attack")
@@ -1272,7 +1305,6 @@ def _fx_equip_weapon(params, json_db_tokens):
 
         return g.equip_weapon(pid, name, atk, dur, card_id=card_id, triggers_map=trig_map)  # NEW
     return run
-
 
 def _fx_destroy_weapon(params):
     """
@@ -1329,20 +1361,34 @@ def _fx_gain_armor(params):
         return [Event("ArmorGained", {"player": pid, "amount": amt})]
     return run
 
-
 def _fx_add_keyword(params):
-    kw = params["keyword"].lower()
+    raw = str(params["keyword"]).strip().lower()
+
     def run(g, source_obj, target):
         kind, obj = _resolve_tagged_target(g, target)
-        if kind != "minion":
+        if kind != "minion" or obj is None:
             return []
+
         m = obj
-        if     kw == "taunt":  m.taunt  = True
-        elif   kw == "charge": m.charge = True
-        elif   kw == "rush":   m.rush   = True
-        else: return []
-        return [Event("BuffKeyword", {"minion": m.id, "keyword": kw})]
+        # normalize pretty label for the log
+        if raw in ("taunt",):
+            m.taunt = True
+            pretty = "Taunt"
+        elif raw in ("charge",):
+            m.charge = True
+            pretty = "Charge"
+        elif raw in ("rush",):
+            m.rush = True
+            pretty = "Rush"
+        elif raw in ("divine_shield", "divineshield", "divine shield"):
+            m.divine_shield = True
+            pretty = "Divine Shield"
+        else:
+            return []
+
+        return [Event("BuffKeyword", {"minion": m.id, "keyword": pretty})]
     return run
+
 
 def _fx_deal_damage(params):
     n = int(params["amount"])
@@ -1373,15 +1419,15 @@ def _fx_deal_damage(params):
         return g.deal_damage_to_player(g.other(owner), dmg, source=name)
     return run
 
-
-
 def _fx_heal(params):
     n = int(params["amount"])
+    t_spec = params.get("target")  # optional: "friendly_face" / "enemy_face"
     def run(g, source_obj, target):
         name = getattr(source_obj, "name", "Effect")
+        # 1) If a tagged target was provided (minion or player), use it.
         kind, obj = _resolve_tagged_target(g, target)
         if kind == "minion":
-            ev = []  # <-- define it
+            ev = []
             before = obj.health
             obj.health = min(obj.max_health, obj.health + n)
             ev.append(Event("MinionHealed", {
@@ -1389,20 +1435,30 @@ def _fx_heal(params):
                 "amount": obj.health - before,
                 "source": name
             }))
-            # Toggle Enrage on/off after the heal (healed-to-full should disable it)
             ev += g._update_enrage(obj)
             return ev
         if kind == "player":
             p = g.players[obj]
             before = p.health
             p.health = min(30, p.health + n)
-            return [Event("PlayerHealed", {
-                "player": obj, "amount": p.health - before, "source": name
-            })]
+            return [Event("PlayerHealed", {"player": obj, "amount": p.health - before, "source": name})]
+
+        # 2) Param-based hero targets (useful for triggers like Truesilver)
+        if t_spec:
+            owner = getattr(source_obj, "owner", g.active_player)
+            if str(t_spec).lower() in ("friendly_face", "ally_face", "self_face"):
+                pid = owner
+            elif str(t_spec).lower() in ("enemy_face", "opponent_face"):
+                pid = g.other(owner)
+            else:
+                return []
+            p = g.players[pid]
+            before = p.health
+            p.health = min(30, p.health + n)
+            return [Event("PlayerHealed", {"player": pid, "amount": p.health - before, "source": name})]
+
         return []
     return run
-
-
 
 def _fx_adjacent_buff(params):
     a = int(params.get("attack", 0))
@@ -1417,7 +1473,6 @@ def _fx_adjacent_buff(params):
             return []  # safety
         return _apply_adjacent_buff(g, owner, mid, attack=a, health=h, taunt=give_taunt)
     return run
-
 
 def _fx_discover_equal_remaining_mana(params):
     """
@@ -1503,7 +1558,6 @@ def _fx_random_pings(params):
         return ev
     return run
 
-
 def _fx_aoe_damage(params):
     n = int(params["amount"])
     def run(g, source_obj, target):
@@ -1549,6 +1603,28 @@ def _fx_add_attack(params):
         return [Event("Buff", {"minion": obj.id, "attack_delta": n})]
     return run
 
+def _fx_multiply_attack(params):
+    """
+    Multiply a minion's current Attack by a factor.
+    JSON:
+      { "effect": "multiply_attack", "factor": 2 }
+    """
+    factor = float(params.get("factor", 2))
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        before = obj.attack
+        # multiply and clamp to >= 0, keep as int
+        new_val = max(0, int(round(before * factor)))
+        obj.attack = new_val
+        return [Event("Buff", {
+            "minion": obj.id,
+            "attack_delta": new_val - before,
+            "health_delta": 0
+        })]
+    return run
 
 def _fx_add_stats(params):
     a = int(params.get("attack", 0))
@@ -1563,7 +1639,6 @@ def _fx_add_stats(params):
         m.health += h
         return [Event("Buff", {"minion": m.id, "attack_delta": a, "health_delta": h})]
     return run
-
 
 def _fx_silence(params):
     def run(g, source_obj, target):
@@ -1580,7 +1655,6 @@ def _fx_silence(params):
         ev += g._update_enrage(m)
         return ev
     return run
-
 
 def _summon_from_card_spec(g, owner, card_spec, count):
     ev = []
@@ -1698,6 +1772,18 @@ def _fx_transform(params, json_db_tokens):
         return ev
     return run
 
+def _fx_set_attack(params):
+    n = int(params.get("amount", 1))
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        m = obj
+        before = m.attack
+        m.attack = n
+        return [Event("Buff", {"minion": m.id, "attack_delta": m.attack - before, "health_delta": 0})]
+    return run
+
 def _fx_set_health(params):
     """
     Set a minion's *current* health to a fixed value (doesn't change max_health).
@@ -1755,6 +1841,8 @@ def _effect_factory(name, params, json_tokens):
         "gain_armor":               _fx_gain_armor,
         "adjacent_buff":            _fx_adjacent_buff,
         "set_health":               _fx_set_health,
+        "set_attack":               _fx_set_attack,
+        "multiply_attack":          _fx_multiply_attack,
         "weapon_durability_delta":  _fx_weapon_durability_delta,
 
         

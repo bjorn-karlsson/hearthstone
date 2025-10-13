@@ -824,6 +824,49 @@
             "targeting": "any_minion"
         },
         {
+            "id": "ALDOR_PEACEKEEPER",
+            "name": "Aldor Peacekeeper",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 3,
+            "health": 3,
+            "rarity": "Rare",
+            "minion_type": "None",
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Change an enemy minion's Attack to 1.",
+            "targeting": "enemy_minion",
+            "battlecry": [
+                {
+                    "effect": "set_attack",
+                    "amount": 1
+                }
+            ]
+        },
+        {
+            "id": "TRUESILVER_CHAMPION",
+            "name": "Truesilver Champion",
+            "type": "WEAPON",
+            "cost": 4,
+            "attack": 4,
+            "health": 2,
+            "rarity": "Rare",
+            "text": "Whenever your hero attacks, restore 2 Health to your hero.",
+            "triggers": [
+                {
+                    "on": "hero_attacks",
+                    "effects": [
+                        {
+                            "effect": "heal",
+                            "amount": 2,
+                            "target": "friendly_face"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
             "id": "KILL_COMMAND",
             "name": "Kill Command",
             "type": "SPELL",
@@ -980,7 +1023,92 @@
             "targeting": "enemy_character"
         },
         {
-            "id": "FIREBALL_LITE",
+            "id": "HAMMER_OF_WRATH",
+            "name": "Hammer of Wrath",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 4,
+            "text": "Deal 3 damage. Draw a card.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 3,
+                    "target": "enemy_character"
+                },
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "targeting": "enemy_character"
+        },
+        {
+            "id": "ARGENT_PROTECTOR",
+            "name": "Argent Protector",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Battlecry: Give a friendly minion Divine Shield.",
+            "targeting": "friendly_minion",
+            "battlecry": [
+                {
+                    "effect": "add_keyword",
+                    "keyword": "divine_shield"
+                }
+            ]
+        },
+        {
+  "id": "ACOLYTE_OF_PAIN",
+  "name": "Acolyte of Pain",
+  "type": "MINION",
+  "cost": 3,
+  "attack": 1,
+  "health": 3,
+  "rarity": "Common",
+  "keywords": [],
+  "text": "Whenever this minion takes damage, draw a card.",
+  "triggers": [
+    { "on": "self_damaged", "effects": [ { "effect": "draw", "count": 1 } ] }
+  ]
+},
+        {
+            "id": "GUARDIAN_OF_KINGS",
+            "name": "Guardian of Kings",
+            "type": "MINION",
+            "cost": 7,
+            "attack": 5,
+            "health": 6,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Battlecry: Restore 6 Health to your hero.",
+            "battlecry": [
+                {
+                    "effect": "heal",
+                    "amount": 6,
+                    "target": "friendly_face"
+                }
+            ]
+        },
+        {
+            "id": "BLESSED_CHAMPION",
+            "name": "Blessed Champion",
+            "type": "SPELL",
+            "cost": 5,
+            "rarity": "Rare",
+            "text": "Double a minion's Attack.",
+            "targeting": "any_minion",
+            "on_cast": [
+                {
+                    "effect": "multiply_attack",
+                    "factor": 2
+                }
+            ]
+        },
+        {
+            "id": "FIREBALL",
             "name": "Fireball",
             "type": "SPELL",
             "rarity": "Rare",
@@ -1042,7 +1170,7 @@
             "targeting": "none"
         },
         {
-            "id": "ARCANE_MISSILES_LITE",
+            "id": "ARCANE_MISSILES",
             "name": "Arcane Missiles",
             "type": "SPELL",
             "rarity": "Rare",

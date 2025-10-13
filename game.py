@@ -290,7 +290,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["EXPLOSIVE_TRAP", "ARGENT_SQUIRE", "EAGLEHORN_BOW"] * 30
+    desired = ["ACOLYTE_OF_PAIN"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -335,9 +335,9 @@ except Exception as e:
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
-ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
+ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Classic Paladin Deck (Midrange / Control)")
 
-player_deck = None
+#player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
