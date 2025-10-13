@@ -522,16 +522,21 @@ class Game:
             # announce
             ev.append(Event("HeroAttack", {"player": pid, "target": tgt.id}))
 
+            # capture minion's attack BEFORE dealing damage (simultaneous combat)
+            retaliate = max(0, tgt.attack)
+
             # hero deals weapon damage to minion
             tgt.health -= w.attack
             ev.append(Event("MinionDamaged", {"minion": tgt.id, "amount": w.attack, "source": w.name}))
             ev += self._update_enrage(tgt)
+
+            # resolve minion death after damage is applied
             if tgt.health <= 0:
                 ev += self.destroy_minion(tgt, reason="LethalDamage")
 
-            # minion trades back (hero takes damage equal to minion attack if still alive)
-            if tgt.is_alive() and tgt.attack > 0:
-                ev += self.deal_damage_to_player(pid, tgt.attack, source=tgt.name)
+            # hero still takes the minion's pre-damage attack EVEN IF it died
+            if retaliate > 0:
+                ev += self.deal_damage_to_player(pid, retaliate, source=tgt.name)
 
             # spend durability
             ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")

@@ -41,6 +41,70 @@
                 "ACOLYTE_OF_PAIN": 2,
                 "STORMWIND_CHAMPION": 2
             }
+        },
+        {
+            "name": "Classic Mage Deck (Spell Control / Burst)",
+            "hero": "MAGE",
+            "cards": {
+                "MANA_WYRM": 2,
+                "FROSTBOLT": 2,
+                "ARCANE_INTELLECT": 2,
+                "ARCANE_MISSILES": 2,
+                "SORCERERS_APPRENTICE": 2,
+                "HARVEST_GOLEM": 2,
+                "CHILLWIND_YETI": 2,
+                "FIREBALL": 2,
+                "POLYMORPH": 2,
+                "WATER_ELEMENTAL": 2,
+                "KOBOLD_GEOMANCER": 2,
+                "ACOLYTE_OF_PAIN": 2,
+                "FLAMEStrIKE": 2,
+                "AZURE_DRAKE": 2,
+                "LOOT_HOARDER": 2
+            }
+        },
+        {
+            "name": "Classic Warlock Deck (Zoo Aggro)",
+            "hero": "WARLOCK",
+            "cards": {
+                "FLAMEIMP": 2,
+                "VOIDWALKER": 2,
+                "KNIFE_JUGGLER": 2,
+                "LEPER_GNOME": 2,
+                "DIRE_WOLF_ALPHA": 2,
+                "NERCY_ENGINEER": 2,
+                "HARVEST_GOLEM": 2,
+                "SHATTERED_SUN_CLERIC": 2,
+                "DARK_IRON_DWARF": 2,
+                "DOOMGUARD": 2,
+                "SOULFIRE": 2,
+                "MORTAL_COIL": 2,
+                "HELLFIRE": 2,
+                "ARGENT_COMMANDER": 2,
+                "CHILLWIND_YETI": 2
+            }
+        },
+        {
+            "name": "Classic Warrior Deck (Control)",
+            "hero": "WARRIOR",
+            "cards": {
+                "EXECUTE": 2,
+                "SHIELD_SLAM": 2,
+                "WHIRLWIND": 2,
+                "ARMORSUP": 2,
+                "ARMORSMITH": 2,
+                "ACOLYTE_OF_PAIN": 2,
+                "CRUEL_TASKMASTER": 2,
+                "FIERY_WAR_AXE": 2,
+                "SENJIN_SHIELDMASTA": 2,
+                "CHILLWIND_YETI": 2,
+                "BRAWL": 2,
+                "SLAM": 2,
+                "ARATHI_WEAPONSMITH": 2,
+                "GROMMASH_HELLSCREAM": 1,
+                "RAGNAROS_THE_FIRELORD": 1,
+                "CROWD_FAVORITE": 2
+            }
         }
     ]
 }
