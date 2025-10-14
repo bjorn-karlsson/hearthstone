@@ -32,3 +32,8 @@
 # [x] Loading stored deck
 # [] Creating, managing and saving decks
 # [x] Recreate a deck in hearthstone
+
+
+
+BUGS:
+Whenever i kill loot hoarder

@@ -1,4 +1,81 @@
 {
+    "_TARGETING": {
+        "KNIFE_JUGGLER": "none",
+        "STARVING_BUZZARD": "none",
+        "HOUNDMASTER": "friendly_tribe:beast",
+        "ANIMAL_COMPANION": "none",
+        "CHARGING_BOAR": "none",
+        "GIVE_TAUNT": "friendly_minion",
+        "SHATTERED_SUN_CLERIC": "friendly_minion",
+        "SCRAPPY_SCAVENGER": "none",
+        "RUSHER": "none",
+        "IRONFUR_GRIZZLY": "none",
+        "KOBOLD_GEOMANCER": "none",
+        "TIMBER_WOLF": "none",
+        "RAID_LEADER": "none",
+        "SORCERERS_APPRENTICE": "none",
+        "STORMWIND_CHAMPION": "none",
+        "SENJIN_SHIELDMASTA": "none",
+        "CHARGE_RUSH_2_2": "none",
+        "MUSTER_FOR_BATTLE": "none",
+        "FROSTBOLT": "any_character",
+        "GIVE_CHARGE": "friendly_minion",
+        "GIVE_RUSH": "friendly_minion",
+        "THE_COIN": "none",
+        "SPELLBREAKER": "any_minion",
+        "ACIDIC_SWAMP_OOZE": "none",
+        "ARATHI_WEAPONSMITH": "none",
+        "WOLFRIDER": "none",
+        "SHIELD_BEARER": "none",
+        "EARTHEN_RING": "any_character",
+        "VOODOO_DOCTOR": "any_character",
+        "STORMPIKE_COMMANDO": "enemy_face",
+        "KOBOLD_PING": "enemy_character",
+        "KOBOLD_BLASTER": "enemy_character",
+        "DEFENDER_OF_ARGUS": "none",
+        "NOVICE_ENGINEER": "none",
+        "EAGLEHORN_BOW": "none",
+        "ARGENT_SQUIRE": "none",
+        "LEPER_GNOME": "none",
+        "SILVER_HAND_KNIGHT": "none",
+        "HARVEST_GOLEM": "none",
+        "EXPLOSIVE_TRAP": "none",
+        "HUNTERS_MARK": "any_minion",
+        "ALDOR_PEACEKEEPER": "enemy_minion",
+        "TRUESILVER_CHAMPION": "none",
+        "KILL_COMMAND": "enemy_character",
+        "SAVANNAH_HIGHMANE": "none",
+        "NERUBIAN_EGG": "none",
+        "RIVER_CROCOLISK": "none",
+        "CHILLWIND_YETI": "none",
+        "OASIS_SNAPJAW": "none",
+        "BOULDERFIST_OGRE": "none",
+        "CORE_HOUND": "none",
+        "WAR_GOLEM": "none",
+        "AMANI_BERSERKER": "none",
+        "ARCANE_SHOT": "enemy_character",
+        "HAMMER_OF_WRATH": "enemy_character",
+        "ARGENT_PROTECTOR": "friendly_minion",
+        "ACOLYTE_OF_PAIN": "none",
+        "MANA_WYRM": "none",
+        "GUARDIAN_OF_KINGS": "none",
+        "BLESSED_CHAMPION": "any_minion",
+        "FIREBALL": "enemy_character",
+        "HOLY_LIGHT": "any_character",
+        "ARCANE_INTELLECT": "none",
+        "ARCANE_INTELLECT_MAJOR": "none",
+        "ARCANE_MISSILES": "none",
+        "BLESSING_OF_MIGHT": "friendly_minion",
+        "BLESSING_OF_KINGS": "friendly_minion",
+        "SILENCE": "any_minion",
+        "POLYMORPH": "any_minion",
+        "CONSECRATION": "none",
+        "FLAMESTRIKE": "none",
+        "RAISE_WISPS": "none",
+        "FERAL_SPIRIT": "none",
+        "LEGENDARY_LEEROY_JENKINS": "none",
+        "WATER_ELEMENTAL": "none"
+    },
     "tokens": {
         "WISP": {
             "name": "Wisp",
@@ -119,10 +196,13 @@
             "keywords": [],
             "minion_type": "Beast",
             "text": "Your other minions have +1 Attack.",
-            "aura": {
-                "scope": "other_friendly_minions",
-                "attack": 1
-            }
+            "auras": [
+                {
+                    "kind": "stats",
+                    "scope": "other_friendly_minions",
+                    "attack": 1
+                }
+            ]
         }
     },
     "cards": [
@@ -143,6 +223,29 @@
                         {
                             "effect": "random_pings",
                             "count": 1
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "WATER_ELEMENTAL",
+            "name": "Water Elemental",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Elemental",
+            "cost": 4,
+            "attack": 3,
+            "health": 6,
+            "text": "Freeze any character damaged by this minion.",
+            "triggers": [
+                {
+                    "on": "self_deals_damage",
+                    "effects": [
+                        {
+                            "effect": "freeze",
+                            "target": "damaged_character"
                         }
                     ]
                 }
@@ -174,7 +277,8 @@
                         }
                     ]
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "HOUNDMASTER",
@@ -235,7 +339,8 @@
             "keywords": [
                 "Charge"
             ],
-            "text": "Charge."
+            "text": "Charge.",
+            "targeting": "none"
         },
         {
             "id": "GIVE_TAUNT",
@@ -247,8 +352,7 @@
             "on_cast": [
                 {
                     "effect": "add_keyword",
-                    "keyword": "Taunt",
-                    "target": "friendly_minion"
+                    "keyword": "Taunt"
                 }
             ],
             "targeting": "friendly_minion"
@@ -289,7 +393,8 @@
                 {
                     "effect": "discover_equal_remaining_mana"
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "RUSHER",
@@ -303,7 +408,8 @@
             "keywords": [
                 "Rush"
             ],
-            "text": "Rush."
+            "text": "Rush.",
+            "targeting": "none"
         },
         {
             "id": "IRONFUR_GRIZZLY",
@@ -317,7 +423,8 @@
             "keywords": [
                 "Taunt"
             ],
-            "text": "Taunt."
+            "text": "Taunt.",
+            "targeting": "none"
         },
         {
             "id": "KOBOLD_GEOMANCER",
@@ -332,7 +439,30 @@
                 "Spell Damage"
             ],
             "spell_damage": 1,
-            "text": "Spell Damage +1"
+            "text": "Spell Damage +1",
+            "targeting": "none"
+        },
+        {
+            "id": "AZURE_DRAKE",
+            "name": "Azure Drake",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "Dragon",
+            "cost": 5,
+            "attack": 4,
+            "health": 4,
+            "keywords": [
+                "Spell Damage", "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "spell_damage": 1,
+            "text": "Spell Damage +1. Battlecry: Draw a card.",
+            "targeting": "none"
         },
         {
             "id": "TIMBER_WOLF",
@@ -344,11 +474,15 @@
             "health": 2,
             "minion_type": "Beast",
             "text": "Your other Beasts have +1 Attack.",
-            "aura": {
-                "scope": "other_friendly_minions",
-                "attack": 1,
-                "tribe": "Beast"
-            }
+            "auras": [
+                {
+                    "kind": "stats",
+                    "scope": "other_friendly_minions",
+                    "attack": 1,
+                    "tribe": "Beast"
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "RAID_LEADER",
@@ -365,7 +499,8 @@
                     "scope": "other_friendly_minions",
                     "attack": 1
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "SORCERERS_APPRENTICE",
@@ -383,7 +518,8 @@
                     "delta": -1,
                     "floor": 0
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "STORMWIND_CHAMPION",
@@ -396,11 +532,15 @@
             "rarity": "Common",
             "keywords": [],
             "text": "Your other minions have +1/+1.",
-            "aura": {
-                "scope": "other_friendly_minions",
-                "attack": 1,
-                "health": 1
-            }
+            "auras": [
+                {
+                    "kind": "stats",
+                    "scope": "other_friendly_minions",
+                    "attack": 1,
+                    "health": 1
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "SENJIN_SHIELDMASTA",
@@ -414,7 +554,8 @@
             "keywords": [
                 "Taunt"
             ],
-            "text": "Taunt."
+            "text": "Taunt.",
+            "targeting": "none"
         },
         {
             "id": "CHARGE_RUSH_2_2",
@@ -429,7 +570,8 @@
                 "Charge",
                 "Rush"
             ],
-            "text": "Charge, Rush."
+            "text": "Charge, Rush.",
+            "targeting": "none"
         },
         {
             "id": "MUSTER_FOR_BATTLE",
@@ -449,6 +591,24 @@
             "targeting": "none"
         },
         {
+            "id": "FROSTBOLT",
+            "name": "Frostbolt",
+            "type": "SPELL",
+            "cost": 2,
+            "text": "Deal 3 damage to a character and Freeze it.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 3
+                },
+                {
+                    "effect": "freeze"
+                }
+            ],
+            "rarity": "Common",
+            "targeting": "any_character"
+        },
+        {
             "id": "GIVE_CHARGE",
             "name": "Battle Drums",
             "type": "SPELL",
@@ -458,8 +618,7 @@
             "on_cast": [
                 {
                     "effect": "add_keyword",
-                    "keyword": "Charge",
-                    "target": "friendly_minion"
+                    "keyword": "Charge"
                 }
             ],
             "targeting": "friendly_minion"
@@ -474,8 +633,7 @@
             "on_cast": [
                 {
                     "effect": "add_keyword",
-                    "keyword": "Rush",
-                    "target": "friendly_minion"
+                    "keyword": "Rush"
                 }
             ],
             "targeting": "friendly_minion"
@@ -505,7 +663,7 @@
             "health": 3,
             "rarity": "Common",
             "keywords": [],
-            "text": "Battlecry: Silence a character.",
+            "text": "Battlecry: Silence a minion.",
             "targeting": "any_minion",
             "battlecry": [
                 {
@@ -518,7 +676,7 @@
             "name": "Acidic Swamp Ooze",
             "type": "MINION",
             "minion_type": "None",
-            "rarity": "COMMON",
+            "rarity": "Common",
             "cost": 2,
             "attack": 3,
             "health": 2,
@@ -538,7 +696,7 @@
             "id": "ARATHI_WEAPONSMITH",
             "name": "Arathi Weaponsmith",
             "type": "MINION",
-            "rarity": "COMMON",
+            "rarity": "Common",
             "minion_type": "None",
             "cost": 4,
             "attack": 3,
@@ -567,7 +725,8 @@
             "keywords": [
                 "Charge"
             ],
-            "text": "Charge"
+            "text": "Charge.",
+            "targeting": "none"
         },
         {
             "id": "SHIELD_BEARER",
@@ -581,7 +740,8 @@
             "keywords": [
                 "Taunt"
             ],
-            "text": "Taunt"
+            "text": "Taunt.",
+            "targeting": "none"
         },
         {
             "id": "EARTHEN_RING",
@@ -596,8 +756,7 @@
             "battlecry": [
                 {
                     "effect": "heal",
-                    "amount": 3,
-                    "target": "any_character"
+                    "amount": 3
                 }
             ],
             "targeting": "any_character"
@@ -615,8 +774,7 @@
             "battlecry": [
                 {
                     "effect": "heal",
-                    "amount": 2,
-                    "target": "any_character"
+                    "amount": 2
                 }
             ],
             "targeting": "any_character"
@@ -630,14 +788,14 @@
             "cost": 5,
             "attack": 4,
             "health": 2,
-            "text": "Battlecry: Deal 2 damage to the enemy hero",
+            "text": "Battlecry: Deal 2 damage to the enemy hero.",
             "battlecry": [
                 {
                     "effect": "deal_damage",
-                    "amount": 2,
-                    "target": "enemy_face"
+                    "amount": 2
                 }
-            ]
+            ],
+            "targeting": "enemy_face"
         },
         {
             "id": "KOBOLD_PING",
@@ -652,8 +810,7 @@
             "battlecry": [
                 {
                     "effect": "deal_damage",
-                    "amount": 1,
-                    "target": "enemy_character"
+                    "amount": 1
                 }
             ],
             "targeting": "enemy_character"
@@ -671,8 +828,7 @@
             "battlecry": [
                 {
                     "effect": "deal_damage",
-                    "amount": 2,
-                    "target": "enemy_character"
+                    "amount": 2
                 }
             ],
             "targeting": "enemy_character"
@@ -715,13 +871,14 @@
                     "effect": "draw",
                     "count": 1
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "EAGLEHORN_BOW",
             "name": "Eaglehorn Bow",
             "type": "WEAPON",
-            "rarity": "RARE",
+            "rarity": "Rare",
             "cost": 3,
             "attack": 3,
             "health": 2,
@@ -736,7 +893,8 @@
                         }
                     ]
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "ARGENT_SQUIRE",
@@ -750,7 +908,8 @@
             "keywords": [
                 "Divine Shield"
             ],
-            "text": "Divine Shield."
+            "text": "Divine Shield.",
+            "targeting": "none"
         },
         {
             "id": "LEPER_GNOME",
@@ -768,7 +927,8 @@
                     "amount": 2,
                     "target": "enemy_face"
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "SILVER_HAND_KNIGHT",
@@ -806,7 +966,8 @@
                     "card_id": "DAMAGED_GOLEM",
                     "count": 1
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "EXPLOSIVE_TRAP",
@@ -836,8 +997,7 @@
             "on_cast": [
                 {
                     "effect": "set_health",
-                    "amount": 1,
-                    "target": "any_minion"
+                    "amount": 1
                 }
             ],
             "targeting": "any_minion"
@@ -867,7 +1027,7 @@
             "id": "TRUESILVER_CHAMPION",
             "name": "Truesilver Champion",
             "type": "WEAPON",
-            "cost": 4,
+            "cost": 1,
             "attack": 4,
             "health": 2,
             "rarity": "Rare",
@@ -883,7 +1043,8 @@
                         }
                     ]
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "KILL_COMMAND",
@@ -899,20 +1060,36 @@
                     "then": [
                         {
                             "effect": "deal_damage",
-                            "amount": 5,
-                            "target": "enemy_character"
+                            "amount": 5
                         }
                     ],
                     "else": [
                         {
                             "effect": "deal_damage",
-                            "amount": 3,
-                            "target": "enemy_character"
+                            "amount": 3
                         }
                     ]
                 }
             ],
             "targeting": "enemy_character"
+        },
+        {
+            "id": "LOOT_HOARDER",
+            "name": "Loot Hoarder",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "None",
+            "cost": 2,
+            "attack": 2,
+            "health": 1,
+            "text": "Deathrattle: Draw a card.",
+            "deathrattle": [
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "SAVANNAH_HIGHMANE",
@@ -930,7 +1107,8 @@
                     "card_id": "HYENA",
                     "count": 2
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "NERUBIAN_EGG",
@@ -948,7 +1126,8 @@
                     "card_id": "NERUBIAN_4_4",
                     "count": 1
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "RIVER_CROCOLISK",
@@ -958,7 +1137,8 @@
             "minion_type": "Beast",
             "cost": 2,
             "attack": 2,
-            "health": 3
+            "health": 3,
+            "targeting": "none"
         },
         {
             "id": "CHILLWIND_YETI",
@@ -968,7 +1148,8 @@
             "minion_type": "None",
             "cost": 4,
             "attack": 4,
-            "health": 5
+            "health": 5,
+            "targeting": "none"
         },
         {
             "id": "OASIS_SNAPJAW",
@@ -978,7 +1159,8 @@
             "minion_type": "Beast",
             "cost": 4,
             "attack": 2,
-            "health": 7
+            "health": 7,
+            "targeting": "none"
         },
         {
             "id": "BOULDERFIST_OGRE",
@@ -988,7 +1170,8 @@
             "minion_type": "None",
             "cost": 6,
             "attack": 6,
-            "health": 7
+            "health": 7,
+            "targeting": "none"
         },
         {
             "id": "CORE_HOUND",
@@ -998,7 +1181,8 @@
             "minion_type": "Beast",
             "cost": 7,
             "attack": 9,
-            "health": 5
+            "health": 5,
+            "targeting": "none"
         },
         {
             "id": "WAR_GOLEM",
@@ -1008,7 +1192,8 @@
             "minion_type": "None",
             "cost": 7,
             "attack": 7,
-            "health": 7
+            "health": 7,
+            "targeting": "none"
         },
         {
             "id": "AMANI_BERSERKER",
@@ -1023,7 +1208,8 @@
             "enrage": {
                 "attack": 3
             },
-            "keywords": []
+            "keywords": [],
+            "targeting": "none"
         },
         {
             "id": "ARCANE_SHOT",
@@ -1035,8 +1221,7 @@
             "on_cast": [
                 {
                     "effect": "deal_damage",
-                    "amount": 2,
-                    "target": "enemy_character"
+                    "amount": 2
                 }
             ],
             "targeting": "enemy_character"
@@ -1051,8 +1236,7 @@
             "on_cast": [
                 {
                     "effect": "deal_damage",
-                    "amount": 3,
-                    "target": "enemy_character"
+                    "amount": 3
                 },
                 {
                     "effect": "draw",
@@ -1075,7 +1259,7 @@
             "battlecry": [
                 {
                     "effect": "add_keyword",
-                    "keyword": "divine_shield"
+                    "keyword": "Divine Shield"
                 }
             ]
         },
@@ -1099,7 +1283,8 @@
                         }
                     ]
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "MANA_WYRM",
@@ -1123,7 +1308,8 @@
                         }
                     ]
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "GUARDIAN_OF_KINGS",
@@ -1141,7 +1327,8 @@
                     "amount": 6,
                     "target": "friendly_face"
                 }
-            ]
+            ],
+            "targeting": "none"
         },
         {
             "id": "BLESSED_CHAMPION",
@@ -1168,8 +1355,7 @@
             "on_cast": [
                 {
                     "effect": "deal_damage",
-                    "amount": 4,
-                    "target": "enemy_character"
+                    "amount": 4
                 }
             ],
             "targeting": "enemy_character"
@@ -1184,8 +1370,7 @@
             "on_cast": [
                 {
                     "effect": "heal",
-                    "amount": 6,
-                    "target": "any_character"
+                    "amount": 6
                 }
             ],
             "targeting": "any_character"
@@ -1206,7 +1391,7 @@
             "targeting": "none"
         },
         {
-            "id": "ARCANE_INTELLECT",
+            "id": "ARCANE_INTELLECT_MAJOR",
             "name": "Major Arcane Intellect",
             "type": "SPELL",
             "rarity": "Epic",
@@ -1246,8 +1431,7 @@
             "on_cast": [
                 {
                     "effect": "add_attack",
-                    "amount": 3,
-                    "target": "friendly_minion"
+                    "amount": 3
                 }
             ],
             "targeting": "friendly_minion"
@@ -1263,8 +1447,7 @@
                 {
                     "effect": "add_stats",
                     "attack": 4,
-                    "health": 4,
-                    "target": "friendly_minion"
+                    "health": 4
                 }
             ],
             "targeting": "friendly_minion"
@@ -1278,12 +1461,8 @@
             "text": "Silence a minion.",
             "on_cast": [
                 {
-                    "effect": "silence",
-                    "target": "any_minion"
+                    "effect": "silence"
                 }
-            ],
-            "keywords": [
-                "Silence"
             ],
             "targeting": "any_minion"
         },
@@ -1297,7 +1476,6 @@
             "on_cast": [
                 {
                     "effect": "transform",
-                    "target": "any_minion",
                     "card_id": "SHEEP_1_1"
                 }
             ],

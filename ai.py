@@ -330,6 +330,8 @@ def can_face(g: Game, pid: int) -> bool:
     return not any(m.taunt and m.is_alive() for m in g.players[opp].board)
 
 def minion_ready(m) -> bool:
+    if getattr(m, "frozen", False):
+        return False
     if m.attack <= 0 or m.has_attacked_this_turn or not m.is_alive():
         return False
     if not getattr(m, "summoned_this_turn", True):
@@ -692,17 +694,17 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
 # ----------------- LETHAL PLANNER -----------------
 
+# --- Threat detection (don’t count frozen minions as ready)
 def opponent_has_ready_threats(g: Game, pid: int) -> bool:
     opp = 1 - pid
-    # Any enemy minion that can act or enemy hero can attack counts as a "threat"
+    # Hero threat already respects Freeze via engine
     if g.hero_can_attack(opp):
         return True
     for m in g.players[opp].board:
-        if m.attack > 0 and not m.has_attacked_this_turn:
-            # check same rules as UI
-            if not m.summoned_this_turn or m.charge or m.rush:
-                return True
+        if minion_ready(m):  # NEW: respects frozen/summon rules/etc.
+            return True
     return False
+
 
 
 def direct_damage_in_hand(g: Game, pid: int) -> int:
@@ -751,6 +753,8 @@ def find_lethal_action(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
 # ----------------- ATTACK PICKER (trades first) -----------------
 
 def _face_allowed_for_attacker(g: Game, pid: int, m) -> bool:
+    if getattr(m, "frozen", False):
+        return False
     if not can_face(g, pid):
         return False
     # Rush can never go face on the summoning turn

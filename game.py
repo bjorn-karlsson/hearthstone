@@ -5,6 +5,7 @@ import random
 from collections import deque
 import json
 from pathlib import Path
+import math
 
 
 from engine import Game, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, IllegalAction
@@ -110,6 +111,8 @@ ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
 AI_THINK_MS     = 750
+ANIM_SPELL_MS   = 420   # spell projectile travel
+ANIM_HERO_MS    = 460   # hero lift + dash
 START_GAME      = 1500
 
 
@@ -123,6 +126,7 @@ KEYWORD_HELP = {
     "Spell Damage": "Your spells deal +N damage.",
     "Enrage": "While damaged: gain the listed bonus.",
     "Divine Shield": "Prevents the first damage this minion would take. The hit is fully absorbed, then the shield is removed.",
+    "Freeze": "Frozen characters can't attack during their next turn. It wears off after that turn ends.",
 }
 
 # -------- LOGGING -------------
@@ -151,6 +155,21 @@ def format_event(e, g, skip=False) -> str:
 
     if DEBUG and not skip:
         return f"{k}: {format_event(e, g, True)}"
+
+    if k == "Frozen":
+        t = p.get("target_type")
+        if t == "player":
+            who = "You" if p.get("player") == 0 else "AI"
+            return f"{who} is Frozen."
+        if t == "minion":
+            return f"{_minion_name(g, p.get('minion'))} is Frozen."
+    if k == "Thaw":
+        t = p.get("target_type")
+        if t == "player":
+            who = "You" if p.get("player") == 0 else "AI"
+            return f"{who} is no longer Frozen."
+        if t == "minion":
+            return f"{_minion_name(g, p.get('minion'))} thawed."
 
     if k == "DivineShieldPopped":
         return f"{p.get('name','A minion')}'s Divine Shield broke."
@@ -285,7 +304,7 @@ def make_starter_deck(db, seed=None):
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER", 
         "KOBOLD_GEOMANCER", "AMANI_BERSERKER", "ACIDIC_SWAMP_OOZE",
         # 3-cost
-        "IRONFUR_GRIZZLY", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILE",
+        "IRONFUR_GRIZZLY", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES",
         "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER", "KOBOLD_BLASTER",
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL", "BLESSING_OF_KINGS",
@@ -296,7 +315,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["MANA_WYRM", "ARCANE_MISSILES", "SORCERERS_APPRENTICE"] * 30
+    desired = ["LOOT_HOARDER"] * 15
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -339,7 +358,11 @@ except Exception as e:
     print("[DeckLoader] Failed to read decks.json:", e)
     loaded_decks = {}
 
-playable_decks = ["Classic Hunter Deck (Midrange / Face Hybrid)", "Classic Paladin Deck (Midrange / Control)"]
+playable_decks = [
+    "Classic Hunter Deck (Midrange / Face Hybrid)", 
+    "Classic Paladin Deck (Midrange / Control)",
+    "Classic Mage Deck (Spell Control / Burst)"
+]
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
@@ -439,12 +462,8 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
     pygame.draw.rect(screen, PLATE_BG, face_rect, border_radius=12)
     pygame.draw.rect(screen, PLATE_RIM, face_rect, 2, border_radius=12)
 
-    # draw inner FIRST so it doesn't cover badges later
-    inner = face_rect.inflate(-18, -28)
-    #pygame.draw.rect(screen, (22, 26, 34), inner, border_radius=10)
-
     # tiny label strip at top (class color)
-    strip = pygame.Rect(face_rect.x, face_rect.y, face_rect.w, 18)
+    strip = pygame.Rect(face_rect.x, face_rect.y, face_rect.w, face_rect.h)
     hid = getattr(pstate.hero, "id", pstate.hero)
     col = HERO_COLORS.get(str(hid).upper(), (90, 90, 90))
     pygame.draw.rect(screen, col, strip, border_radius=10)
@@ -501,6 +520,9 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
     # mana crystal on the right side
     crystal = pygame.Rect(face_rect.right + CRYSTAL_PAD, face_rect.y + 6, CRYSTAL_W, face_rect.h - 12)
     draw_mana_crystal_rect(crystal, pstate.mana, pstate.max_mana)
+
+    if getattr(pstate, "hero_frozen", False):
+        draw_frozen_overlay(face_rect)
 
 def keyword_explanations_for_card(card_obj) -> List[str]:
     tips = []
@@ -928,10 +950,23 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
     if getattr(minion_obj, "silenced", False):
         draw_silence_overlay(r)
 
+    if getattr(minion_obj, "frozen", False):
+        draw_frozen_overlay(r)
+
 def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
     if taunt: pygame.draw.rect(screen, GREY, r, 3, border_radius=10)
     if rush:  pygame.draw.rect(screen, RED,  r.inflate(4, 4), 3, border_radius=12)
     if ready: pygame.draw.rect(screen, GREEN,r.inflate(10,10), 3, border_radius=16)
+
+def draw_frozen_overlay(r: pygame.Rect):
+    s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+    pygame.draw.polygon(
+        s, (120, 180, 255, 170),
+        [(-12, int(r.h*0.18)), (r.w+12, int(r.h*0.03)), (r.w+12, int(r.h*0.17)), (-12, int(r.h*0.32))]
+    )
+    lbl = BIG.render("FROZEN", True, (235, 245, 255))
+    s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.12))))
+    screen.blit(s, (r.x, r.y))
 
 def flash_from_events(g: Game, ev_list: List[Any]):
     """Reads damage events and enqueues appropriate flash overlays."""
@@ -1092,6 +1127,8 @@ def hand_hover_index(hot, mx, my) -> Optional[int]:
     return None
 
 def minion_ready_to_act(g: Game, m) -> bool:
+    if getattr(m, "frozen", False):     # NEW
+        return False
     if m.has_attacked_this_turn or m.attack <= 0:
         return False
     if not getattr(m, "summoned_this_turn", True):
@@ -1456,7 +1493,7 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     if dragging_card is not None:
         cid, rdrag = dragging_card
         cobj = g.cards_db[cid]
-        eff = g.get_effective_cost(1, cid)
+        eff = g.get_effective_cost(0, cid)
         draw_card_frame(rdrag, CARD_BG_HAND, card_obj=cobj, in_hand=True, override_cost=eff)
         pygame.draw.rect(screen, (255,255,255), rdrag.inflate(12,12), 4, border_radius=18)
 
@@ -1617,6 +1654,49 @@ class AnimQueue:
                 hidden.add(step.data["spawn_mid"])
         return hidden
 
+    def _draw_hero_attack(self, step: AnimStep):
+        src: pygame.Rect = step.data["src"]
+        dst: pygame.Rect = step.data["dst"]
+
+        # Use precomputed hero sprite if provided; otherwise snapshot from 'src' once.
+        if "sprite" not in step.data:
+            snap_rect = step.data.get("snapshot_rect", src)
+            try:
+                step.data["sprite"] = screen.subsurface(snap_rect).copy()
+            except Exception:
+                step.data["sprite"] = None
+
+        t = step.eased()
+        x = lerp(src.centerx, dst.centerx, t)
+        y = lerp(src.centery, dst.centery, t) - 24 * 4 * (t - t*t)
+
+        scale = 1.0 + 0.12 * smoothstep01(1.0 - abs(t*2 - 1))
+        if t > 0.9:
+            scale *= 1.0 - 0.07 * smoothstep01((t - 0.9)/0.1)
+
+        # Optional dim: by default we dim 'src'; allow override/disable via step.data
+        dim_allowed = step.data.get("dim", True)
+        dim_rect = step.data.get("dim_rect", src) if dim_allowed else None
+        if dim_rect is not None:
+            alpha = max(0, min(255, int(150 * (1.0 - abs(t*2 - 1)))))
+            shade = pygame.Surface((dim_rect.w, dim_rect.h), pygame.SRCALPHA, 32)
+            shade.fill((0, 0, 0))
+            shade.set_alpha(alpha)
+            screen.blit(shade, (dim_rect.x, dim_rect.y))
+
+        # Draw sprite
+        if step.data["sprite"] is None:
+            w, h = int(src.w * scale), int(src.h * scale)
+            rr = pygame.Rect(0, 0, w, h); rr.center = (int(x), int(y))
+            pygame.draw.rect(screen, PLATE_BG, rr, border_radius=12)
+            pygame.draw.rect(screen, PLATE_RIM, rr, 2, border_radius=12)
+            return
+
+        surf = pygame.transform.smoothscale(step.data["sprite"], (int(src.w * scale), int(src.h * scale)))
+        r = surf.get_rect(center=(int(x), int(y)))
+        screen.blit(surf, r.topleft)
+
+
     def _draw_play_move(self, step: AnimStep):
         src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
         color = step.data.get("color", CARD_BG_HAND)
@@ -1744,6 +1824,7 @@ class AnimQueue:
             elif k == "think_pause":   pass                       # invisible timing gate
             elif k == "start_game":    self._draw_start_game(step)
             elif k == "banner":        self._draw_banner(step)
+            elif k == "hero_attack":   self._draw_hero_attack(step)
             # finish?
             if step.done():
                 self.blocking.pop(0)
@@ -1817,6 +1898,89 @@ def enqueue_play_anim(pre_hot, post_hot, from_rect: pygame.Rect, spawned_mid: Op
 
 def enqueue_flash(rect: pygame.Rect):
     ANIMS.push(AnimStep("flash", ANIM_FLASH_MS, {"rect": rect}))
+
+def enqueue_hero_attack_anim(hot, pid: int, target_rect: pygame.Rect, on_hit):
+    face_rect = hot["face_me"] if pid == 0 else hot["face_enemy"]
+
+    # Snapshot hero plate once and reuse
+    try:
+        hero_sprite = screen.subsurface(face_rect).copy()
+    except Exception:
+        hero_sprite = None
+
+    def after_forward(pid=pid, tgt=target_rect):
+        try:
+            on_hit()
+        except Exception as e:
+            print("on_hit error:", repr(e))
+        post = layout_board(GLOBAL_GAME)
+        back_dst = post["face_me"] if pid == 0 else post["face_enemy"]
+
+        # Return leg: reuse SAME sprite; don't dim the target, optionally dim the landing plate
+        ANIMS.push(AnimStep(
+            "hero_attack",
+            ANIM_RETURN_MS,
+            {
+                "src": tgt,
+                "dst": back_dst,
+                "sprite": hero_sprite,
+                "dim": False,          # no dim during takeoff from target
+                # or: "dim": True, "dim_rect": back_dst  # to dim landing plate instead
+                "non_blocking": False,
+                "ease": "back",
+            }
+        ))
+
+    # Outbound leg: use hero sprite, dim the original plate while lifting
+    ANIMS.push(AnimStep(
+        "hero_attack",
+        ANIM_HERO_MS,
+        {
+            "src": face_rect,
+            "dst": target_rect,
+            "sprite": hero_sprite,     # <- critical: same sprite
+            "dim": True,
+            "dim_rect": face_rect,
+            "non_blocking": False,
+            "ease": "back",
+        },
+        on_finish=after_forward
+    ))
+def has_spell_hit(ev_list) -> bool:
+    return any(getattr(e, "kind", "") == "SpellHit" for e in (ev_list or []))
+
+def queue_spell_projectiles_from_events(caster_pid: int, ev_list):
+    if not ev_list:
+        return
+    post = layout_board(GLOBAL_GAME)
+    src = post["face_me"].center if caster_pid == 0 else post["face_enemy"].center
+
+    for e in ev_list:
+        if getattr(e, "kind", "") != "SpellHit": 
+            continue
+        p = e.payload or {}
+        ttype = p.get("target_type")
+        if ttype == "player":
+            dst = (post["face_me"].center if p.get("player") == 0 else post["face_enemy"].center)
+            dest_rect = post["face_me"] if p.get("player") == 0 else post["face_enemy"]
+        elif ttype == "minion":
+            mid = p.get("minion")
+            dest_rect = None
+            for coll in ("my_minions", "enemy_minions"):
+                for mmid, rr in post[coll]:
+                    if mmid == mid:
+                        dest_rect = rr; break
+                if dest_rect: break
+            if not dest_rect:
+                continue
+            dst = dest_rect.center
+        else:
+            continue
+
+        def on_arrive(r=dest_rect):
+            enqueue_flash(r)
+
+        ANIMS.push(AnimStep("spell_orbs", ANIM_SPELL_MS, {"src": src, "dst": dst, "count": 5, "radius": 7, "non_blocking": True}, on_finish=on_arrive))
 
 def enemy_face_rect(hot): return hot["face_enemy"]
 def my_face_rect(hot):    return hot["face_me"]
@@ -1945,7 +2109,7 @@ def main():
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
-                    def schedule_if_ai_turn():
+                    def schedule_if_ai_turn():  
                         # Only queue the next think if the AI still has the turn
                         if g.active_player == 1:
                             ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
@@ -1957,26 +2121,30 @@ def main():
                         mins, face_ok = g.hero_legal_targets(1)
                         target_min = next(iter(mins), None)
 
-                        def do_attack():
+                        before = layout_board(g)
+                        tr = None
+                        if target_min is not None:
+                            for mid, rr in before["my_minions"]:
+                                if mid == target_min:
+                                    tr = rr; break
+                        if tr is None and face_ok:
+                            tr = my_face_rect(before)
+                        if tr is None:
+                            schedule_if_ai_turn()
+                            return
+
+                        def on_hit(target_min=target_min):
                             try:
                                 if target_min is not None:
                                     ev2 = g.hero_attack(1, target_minion=target_min)
-                                    log_events(ev2, g)
-                                    post = layout_board(g)
-                                    for mid, r in post["my_minions"]:
-                                        if mid == target_min:
-                                            enqueue_flash(r)
-                                            break
-                                elif face_ok:
+                                else:
                                     ev2 = g.hero_attack(1, target_player=0)
-                                    log_events(ev2, g)
-                                    enqueue_flash(my_face_rect(layout_board(g)))
+                                log_events(ev2, g)
                             except IllegalAction:
                                 pass
-                            # continue deciding after this resolves
                             schedule_if_ai_turn()
 
-                        ANIMS.push(AnimStep("think_pause", 300, {}, on_finish=do_attack))
+                        enqueue_hero_attack_anim(before, pid=1, target_rect=tr, on_hit=on_hit)
                         queued_any = True
 
                     else:
@@ -2024,6 +2192,7 @@ def main():
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
                                         flash_from_events(g, ev)
+                                        
                                     except IllegalAction:
                                         pass
                                     schedule_if_ai_turn()
@@ -2507,9 +2676,13 @@ def main():
                                     except IllegalAction:
                                         return
                                 # small dash from hero to target (optional)
-                                ANIMS.push(AnimStep("attack_dash", ANIM_ATTACK_MS,
-                                                    {"src": hot["face_me"], "dst": r, "color": CARD_BG_MY},
-                                                    on_finish=do_hit))
+                                enqueue_hero_attack_anim(
+                                    hot, pid=0, target_rect=r,
+                                    on_hit=lambda rect=r, mid=emid: (
+                                        log_events(g.hero_attack(0, target_minion=mid), g),
+                                        enqueue_flash(rect)
+                                    )
+                                )
                                 did = True
                                 break
                         if did:
@@ -2525,9 +2698,13 @@ def main():
                                     enqueue_flash(rect)
                                 except IllegalAction:
                                     return
-                            ANIMS.push(AnimStep("attack_dash", ANIM_ATTACK_MS,
-                                                {"src": hot["face_me"], "dst": enemy_face_rect(hot), "color": CARD_BG_MY},
-                                                on_finish=do_hit))
+                            enqueue_hero_attack_anim(
+                                hot, pid=0, target_rect=enemy_face_rect(hot),
+                                on_hit=lambda rect=enemy_face_rect(hot): (
+                                    log_events(g.hero_attack(0, target_player=1), g),
+                                    enqueue_flash(rect)
+                                )
+                            )
                             selected_hero = False
                             hilite_enemy_min.clear(); hilite_enemy_face = False
                             continue
