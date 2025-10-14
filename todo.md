@@ -4,7 +4,7 @@
 # [x] Instead of spawning minions, drop them on the field, even between minions etc
 # [x] Add Adjecent to minions, Defender of Argus
 # [x] Add weapon mechanic, Arathi Weaponsmith — 3/3, Battlecry: equip a 2/2 weapon
-# [] Add freeze mechanic, Frost Elemental
+# [x] Add freeze mechanic, Frost Elemental
 # [] Add AoE Heal, Darkscale Healer
 # [] Add Costs (x) less per minion on the battlefield, Sea Giant — 8/8
 # [] Add Costs less per card in your hand, Mountain Giant — 8/8
@@ -12,7 +12,7 @@
 # [] Add Choose, Druid of the Claw, Choose One: Charge or +2 Health and Taunt
 # [x] Add Houndmaster — Battlecry: give a friendly Beast +2/+2 and Taunt
 # [x] Starving Buzzard — draw a card whenever you summon a Beast
-# [] Water Elemental — 3/6, Freeze any character damaged by this minion
+# [x] Water Elemental — 3/6, Freeze any character damaged by this minion
 # [] Lightspawn — 0/5, Attack equal to Health
 # [] Add stealth mechanic, Worgen Infiltrator 2/1 stealth
 # [x] Add Divine shield
@@ -33,7 +33,3 @@
 # [] Creating, managing and saving decks
 # [x] Recreate a deck in hearthstone
 
-
-
-BUGS:
-Whenever i kill loot hoarder
