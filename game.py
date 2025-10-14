@@ -40,7 +40,8 @@ YELLOW = (230, 200, 90)
 CARD_BG_HAND = (45, 75, 110)
 CARD_BG_MY   = (60, 100, 70)
 CARD_BG_EN   = (70, 70, 100)
-COST_BADGE   = (60, 120, 230)
+COST_BADGE   = (0, 50, 102)
+
 ATTK_COLOR   = (230, 170, 60)  # orange-yellow for attack
 HP_OK        = WHITE
 HP_HURT      = (230, 80, 80)   # red when damaged
@@ -664,7 +665,8 @@ def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
     p = g.players[pid]
 
     # Mana + basic board space for minions
-    if p.mana < c.cost:
+    eff_cost = g.get_effective_cost(pid, cid)
+    if p.mana < eff_cost:
         return False
     if c.type == "MINION" and len(p.board) >= 7:
         return False
@@ -731,6 +733,7 @@ def draw_cost_gem(r: pygame.Rect, cost: int):
     pygame.draw.ellipse(screen, COST_BADGE, gem)
     t = BIG.render(str(cost), True, WHITE)
     screen.blit(t, t.get_rect(center=gem.center))
+
 
 def draw_name_footer(r: pygame.Rect, name: str):
     """
@@ -826,14 +829,14 @@ def draw_minion_stats(r: pygame.Rect, attack: int, health: int,
     screen.blit(th, th.get_rect(center=hp_rect.center))
 
 
-def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool):
+def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool, override_cost: int | None = None):
     pygame.draw.rect(screen, color_bg, r, border_radius=12)
 
     
 
     if card_obj:
-        draw_cost_gem(r, card_obj.cost)
-        #draw_name_bar(r, card_obj.name)
+        cost_to_show = card_obj.cost if override_cost is None else int(override_cost)
+        draw_cost_gem(r, cost_to_show)
 
         kw = []
         if "Taunt" in card_obj.keywords: kw.append("Taunt")
@@ -1357,10 +1360,11 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         if i == hover_idx:
             continue
         c = g.cards_db[cid]
+        eff = g.get_effective_cost(0, cid)
         # subtle overlap shadow
         shadow = r.copy(); shadow.x += 3; shadow.y += 3
         pygame.draw.rect(screen, (0, 0, 0, 40), shadow, border_radius=12)
-        draw_card_frame(r, CARD_BG_HAND, card_obj=c, in_hand=True)
+        draw_card_frame(r, CARD_BG_HAND, card_obj=c, in_hand=True, override_cost=eff)
 
         # NEW: playable glow for your turn
         if g.active_player == 0 and card_is_playable_now(g, 0, cid):
@@ -1377,10 +1381,11 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
         if r0 is not None:
             rz = scale_rect_about_center(r0, HOVER_SCALE, HOVER_LIFT)
             c = g.cards_db[cid0]
+            eff = g.get_effective_cost(0, cid0)
             # backdrop glow
             glow = rz.inflate(14, 14)
             pygame.draw.rect(screen, (255, 255, 255), glow, 6, border_radius=18)
-            draw_card_frame(rz, CARD_BG_HAND, card_obj=c, in_hand=True)
+            draw_card_frame(rz, CARD_BG_HAND, card_obj=c, in_hand=True, override_cost=eff)
 
             lines = keyword_explanations_for_card(c)
             draw_keyword_help_panel(rz, lines, side="right")
@@ -1451,7 +1456,8 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     if dragging_card is not None:
         cid, rdrag = dragging_card
         cobj = g.cards_db[cid]
-        draw_card_frame(rdrag, CARD_BG_HAND, card_obj=cobj, in_hand=True)
+        eff = g.get_effective_cost(1, cid)
+        draw_card_frame(rdrag, CARD_BG_HAND, card_obj=cobj, in_hand=True, override_cost=eff)
         pygame.draw.rect(screen, (255,255,255), rdrag.inflate(12,12), 4, border_radius=18)
 
 
