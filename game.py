@@ -271,6 +271,7 @@ def shuffle_deck(deck, seed=None):
     rng = random.Random(seed)
     rng.shuffle(deck)
     return deck
+
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
@@ -337,9 +338,12 @@ except Exception as e:
     print("[DeckLoader] Failed to read decks.json:", e)
     loaded_decks = {}
 
+playable_decks = ["Classic Hunter Deck (Midrange / Face Hybrid)", "Classic Paladin Deck (Midrange / Control)"]
+
+
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Hunter Deck (Midrange / Face Hybrid)")
-ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Classic Paladin Deck (Midrange / Control)")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
+ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
 #player_deck = None
 if not player_deck:
