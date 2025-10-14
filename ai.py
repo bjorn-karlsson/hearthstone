@@ -428,7 +428,9 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
     except StopIteration:
         return None
     card = g.cards_db[cid]
-    if card.cost > p.mana:
+
+    eff_cost = getattr(g, "get_effective_cost", lambda _pid, _cid: card.cost)(pid, cid)
+    if eff_cost > p.mana:
         return None
 
     # --- Secrets (new): avoid duplicates; value higher if threats are likely, or if we have Eaglehorn Bow ---

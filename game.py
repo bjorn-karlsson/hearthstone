@@ -278,24 +278,24 @@ def make_starter_deck(db, seed=None):
     # What you'd *like* to include:
     desired = [
         # 1-cost
-        "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT_LITE", "GIVE_TAUNT", "SCRAPPY_SCAVENGER",
+        "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT", "GIVE_TAUNT", "SCRAPPY_SCAVENGER",
         "VOODOO_DOCTOR", "TIMBER_WOLF",
         # 2-cost
         "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER", 
         "KOBOLD_GEOMANCER", "AMANI_BERSERKER", "ACIDIC_SWAMP_OOZE",
         # 3-cost
-        "IRONFUR_GRIZZLY", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES_LITE",
+        "IRONFUR_GRIZZLY", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILE",
         "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER", "KOBOLD_BLASTER",
         # 4-cost
-        "CHILLWIND_YETI", "FIREBALL_LITE", "BLESSING_OF_KINGS_LITE",
-        "POLYMORPH_LITE", "ARCANE_INTELLECT_LITE", "ARCANE_INTELLECT",
+        "CHILLWIND_YETI", "FIREBALL", "BLESSING_OF_KINGS",
+        "POLYMORPH", "ARCANE_INTELLECT", "ARCANE_INTELLECT",
         "SPELLBREAKER", "SHIELDMASTA", "DEFENDER_OF_ARGUS", "ARATHI_WEAPONSMITH",
         # 5+ cost
-        "SILVER_HAND_KNIGHT", "CONSECRATION_LITE", "BOULDERFIST_OGRE", "FLAMESTRIKE_LITE", "RAISE_WISPS", "FERAL_SPIRIT_LITE",
-        "MUSTER_FOR_BATTLE_LITE", "SILENCE_LITE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
+        "SILVER_HAND_KNIGHT", "CONSECRATION", "BOULDERFIST_OGRE", "FLAMESTRIKE", "RAISE_WISPS", "FERAL_SPIRIT",
+        "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["ACOLYTE_OF_PAIN"] * 30
+    desired = ["MANA_WYRM", "ARCANE_MISSILES", "SORCERERS_APPRENTICE"] * 30
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -345,7 +345,7 @@ playable_decks = ["Classic Hunter Deck (Midrange / Face Hybrid)", "Classic Palad
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
-#player_deck = None
+player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:

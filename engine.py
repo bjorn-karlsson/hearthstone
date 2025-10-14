@@ -73,6 +73,8 @@ class Minion:
     silenced: bool = False
     deathrattle: Optional[Callable[['Game','Minion'], List[Event]]] = None
     aura_spec: Optional[Dict[str, Any]] = None   # e.g. {"scope":"other_friendly_minions","attack":1,"health":1}
+    cost_aura_spec: Optional[Dict[str, Any]] = None
+    auras: List[Dict[str, Any]] = field(default_factory=list)   # NEW (multi-auras)
     aura_active: bool = False
     enrage_spec: Optional[Dict[str, Any]] = None
     enrage_active: bool = False
@@ -109,6 +111,8 @@ class Card:
     battlecry: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     on_cast: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None
     aura_spec: Optional[Dict[str, Any]] = None
+    cost_aura_spec: Optional[Dict[str, Any]] = None
+    auras: List[Dict[str, Any]] = field(default_factory=list)   # NEW (multi-auras)
     triggers_map: Dict[str, List[Callable]] = field(default_factory=dict)
     text: str = "" 
     rarity: str = ""
@@ -286,6 +290,53 @@ class Game:
             ev += m.deathrattle(self, m)
         return ev
     
+    def get_effective_cost(self, pid: int, cid: str) -> int:
+        cobj = self.cards_db[cid]
+        base = getattr(cobj, "cost", 0)
+        delta = 0
+        floor = 0  # per-auras may request a different min floor, but 0 is the default
+
+        for m in self.players[pid].board:
+            if not m.is_alive() or m.silenced:
+                continue
+
+            # 5a) legacy single cost aura
+            spec = getattr(m, "cost_aura_spec", None)
+            if spec:
+                scope = str(spec.get("scope", "friendly_spells")).lower()
+                d     = int(spec.get("delta", 0))
+                if scope in ("friendly_spells","spells"):
+                    if cobj.type == "SPELL": delta += d
+                elif scope.startswith("friendly_type:"):
+                    want = scope.split(":", 1)[1].strip().upper()
+                    if getattr(cobj, "type", "").upper() == want: delta += d
+
+            # 5b) new list auras with kind:"cost"
+            for a in getattr(m, "auras", []):
+                if str(a.get("kind","")).lower() != "cost":
+                    continue
+                scope = str(a.get("scope", "friendly:SPELL")).lower()
+                d     = int(a.get("delta", 0))
+                fl    = int(a.get("floor", 0))
+                floor = min(floor, fl)  # keep the lowest floor across auras (usually 0)
+
+                apply = False
+                if scope in ("friendly:spell","friendly:spells","spells"):
+                    apply = (cobj.type == "SPELL")
+                elif scope.startswith("friendly:type:"):
+                    want = scope.split(":", 2)[2].upper()
+                    apply = (getattr(cobj, "type","").upper() == want)
+                elif scope.startswith("friendly:tribe:"):
+                    want = scope.split(":", 2)[2].lower()
+                    apply = str(getattr(cobj, "minion_type","none")).lower() == want
+
+                if apply:
+                    delta += d
+
+        return max(floor, base + delta)
+
+
+
     def _update_enrage(self, m: Minion) -> List[Event]:
         ev: List[Event] = []
         spec = getattr(m, "enrage_spec", None)
@@ -355,41 +406,53 @@ class Game:
             ev += self._update_enrage(t)
         return ev
 
-    def _enable_aura(self, source: 'Minion') -> List[Event]:
-        if not getattr(source, "aura_spec", None) or getattr(source, "aura_active", False) or source.silenced:
+    def _enable_aura(self, source: Minion) -> List[Event]:
+        if not source.is_alive() or source.silenced:
             return []
-        targets = self._aura_targets(source.owner, source.id, source.aura_spec)
-        ev = self._apply_aura_delta(targets, source.aura_spec, +1)
-        source.aura_active = True
+        ev: List[Event] = []
+        legacy_used = False
+        for spec in self._iter_stat_auras(source):
+            if spec.get("_legacy_stats"):  # keep your old flag behavior
+                legacy_used = True
+            targets = self._aura_targets(source.owner, source.id, spec)
+            ev += self._apply_aura_delta(targets, spec, +1)
+        if legacy_used:
+            source.aura_active = True
         return ev
 
-    def _disable_aura(self, source: 'Minion') -> List[Event]:
-        if not getattr(source, "aura_spec", None) or not getattr(source, "aura_active", False):
-            return []
-        targets = self._aura_targets(source.owner, source.id, source.aura_spec)
-        ev = self._apply_aura_delta(targets, source.aura_spec, -1)
+    def _disable_aura(self, source: Minion) -> List[Event]:
+        ev: List[Event] = []
+        for spec in self._iter_stat_auras(source):
+            targets = self._aura_targets(source.owner, source.id, spec)
+            ev += self._apply_aura_delta(targets, spec, -1)
         source.aura_active = False
         return ev
 
-    def _apply_existing_auras_to(self, newcomer: 'Minion') -> List[Event]:
-        """
-        When a minion enters play, apply all *friendly active* auras that include it in scope.
-        """
+    def _apply_existing_auras_to(self, newcomer: Minion) -> List[Event]:
         ev: List[Event] = []
         for src in self.players[newcomer.owner].board:
-            if src.id == newcomer.id:
+            if src.id == newcomer.id or not src.is_alive() or src.silenced:
                 continue
-            if not src.is_alive():
-                continue
-            if getattr(src, "aura_spec", None) and getattr(src, "aura_active", False) and not src.silenced:
-                spec = src.aura_spec
+            for spec in self._iter_stat_auras(src):
                 scope = str(spec.get("scope", "other_friendly_minions")).lower()
                 if scope == "other_friendly_minions":
-                    tribe = str(spec.get("tribe", "") or "").strip()
-                    # newcomer is "other" by definition; apply only if tribe matches (or no tribe filter)
+                    tribe = str(spec.get("tribe","") or "").strip()
                     if (not tribe) or _has_tribe(newcomer, tribe):
                         ev += self._apply_aura_delta([newcomer], spec, +1)
         return ev
+
+    def _iter_stat_auras(self, source: Minion):
+        # legacy “aura_spec”
+        if getattr(source, "aura_spec", None) and not source.silenced:
+            # tag the dict so we can detect it if you want to keep source.aura_active
+            spec = dict(source.aura_spec); spec.setdefault("_legacy_stats", True)
+            yield spec
+        # any “auras” with kind:"stats"
+        if not source.silenced:
+            for a in getattr(source, "auras", []):
+                if str(a.get("kind","")).lower() == "stats":
+                    yield a
+
 
     # ---------- Turn Flow ----------
     def start_game(self) -> List[Event]:
@@ -648,6 +711,23 @@ class Game:
             # 4) notify friendly weapon triggers (Eaglehorn Bow, etc.)
             ev += self._run_weapon_triggers(victim_pid, "friendly_secret_revealed", {"secret": s["card_id"]})
         return ev
+    
+    def _fire_friendly_spell_cast(self, pid: int) -> List[Event]:
+        """
+        After a player casts any *spell card*, fire 'friendly_spell_cast' triggers
+        on that player's board. We pass the minion itself as the runtime target
+        so JSON like {effect:add_attack, target:self} works with _fx_add_attack.
+        """
+        ev: List[Event] = []
+        me = self.players[pid]
+        for m in list(me.board):
+            if not m.is_alive() or m.silenced:
+                continue
+            # run compiled trigger runners from triggers_map
+            ev += self._run_minion_triggers(m, "friendly_spell_cast", {"minion": m.id})
+        return ev
+
+
 
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
@@ -670,10 +750,12 @@ class Game:
         if card.type == "MINION" and len(p.board) >= 7:
             raise IllegalAction("Board full")
 
-        if p.mana < card.cost:
+        eff_cost = self.get_effective_cost(pid, cid)
+
+        if p.mana < eff_cost:
             raise IllegalAction("Not enough mana")
         
-        p.mana -= card.cost
+        p.mana -= eff_cost
         p.hand.pop(hand_index)
         ev: List[Event] = [Event("CardPlayed", {"player": pid, "card": cid, "name": card.name})]
 
@@ -703,6 +785,9 @@ class Game:
                 minion_type=getattr(card, "minion_type", "None"),
                 base_minion_type=getattr(card, "minion_type", "None"),
                 triggers_map=dict(getattr(card, "triggers_map", {})),
+                cost_aura_spec=getattr(card, "cost_aura_spec", None),
+                auras=list(getattr(card, "auras", [])),
+                
                 
             )
             self.next_minion_id += 1
@@ -763,12 +848,15 @@ class Game:
                         self.current_battlecry_minion_id = None
                         self.current_battlecry_owner = None
         elif card.type == "SPELL":
+            ev += self._fire_friendly_spell_cast(pid)
+            
             if card.on_cast:
                 tagged = None
                 if target_minion is not None:
                     tagged = {"minion": target_minion}
                 elif target_player in (0, 1):
                     tagged = {"player": target_player}
+                
                 ev += card.on_cast(self, card, tagged)
             self.players[pid].graveyard.append(card.id)
         elif card.type == "WEAPON":
@@ -1691,6 +1779,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             minion_type=str(card_spec.get("minion_type", "None")),
             base_minion_type=str(card_spec.get("minion_type", "None")),
             triggers_map=dict(getattr(card_spec, "triggers_map", {})),
+            cost_aura_spec=card_spec.get("cost_aura"),
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
@@ -1945,6 +2034,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         enrage_spec = raw.get("enrage")  # dict or None
         mtype = str(raw.get("minion_type", "None"))
         secret_spec = raw.get("secret")
+        cost_aura = raw.get("cost_aura")  # dict or None
+        auras_list = list(raw.get("auras", [])) # NEW: list of generic auras
 
         triggers_map: Dict[str, List[Callable]] = {}
         for tr in raw.get("triggers", []) or []:
@@ -1970,6 +2061,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             spell_damage=spell_dmg,
             minion_type=mtype,
             triggers_map=triggers_map,
+            cost_aura_spec=cost_aura, auras=auras_list
+
         )
 
         setattr(card, "enrage_spec", enrage_spec)

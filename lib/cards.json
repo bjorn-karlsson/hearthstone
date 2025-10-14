@@ -354,17 +354,36 @@
             "id": "RAID_LEADER",
             "name": "Raid Leader",
             "type": "MINION",
-            "minion_type": "None",
             "cost": 3,
             "attack": 2,
             "health": 3,
             "rarity": "Common",
-            "keywords": [],
-            "text": "Your other minions have +1 damage.",
-            "aura": {
-                "scope": "other_friendly_minions",
-                "attack": 1
-            }
+            "text": "Your other minions have +1 Attack.",
+            "auras": [
+                {
+                    "kind": "stats",
+                    "scope": "other_friendly_minions",
+                    "attack": 1
+                }
+            ]
+        },
+        {
+            "id": "SORCERERS_APPRENTICE",
+            "name": "Sorcerer's Apprentice",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 3,
+            "health": 2,
+            "rarity": "Common",
+            "text": "Your spells cost (1) less.",
+            "auras": [
+                {
+                    "kind": "cost",
+                    "scope": "friendly:SPELL",
+                    "delta": -1,
+                    "floor": 0
+                }
+            ]
         },
         {
             "id": "STORMWIND_CHAMPION",
@@ -413,7 +432,7 @@
             "text": "Charge, Rush."
         },
         {
-            "id": "MUSTER_FOR_BATTLE_LITE",
+            "id": "MUSTER_FOR_BATTLE",
             "name": "Muster for Battle (Lite)",
             "type": "SPELL",
             "rarity": "Rare",
@@ -1061,19 +1080,51 @@
             ]
         },
         {
-  "id": "ACOLYTE_OF_PAIN",
-  "name": "Acolyte of Pain",
-  "type": "MINION",
-  "cost": 3,
-  "attack": 1,
-  "health": 3,
-  "rarity": "Common",
-  "keywords": [],
-  "text": "Whenever this minion takes damage, draw a card.",
-  "triggers": [
-    { "on": "self_damaged", "effects": [ { "effect": "draw", "count": 1 } ] }
-  ]
-},
+            "id": "ACOLYTE_OF_PAIN",
+            "name": "Acolyte of Pain",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 1,
+            "health": 3,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Whenever this minion takes damage, draw a card.",
+            "triggers": [
+                {
+                    "on": "self_damaged",
+                    "effects": [
+                        {
+                            "effect": "draw",
+                            "count": 1
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "MANA_WYRM",
+            "name": "Mana Wyrm",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 3,
+            "rarity": "Common",
+            "minion_type": "Elemental",
+            "keywords": [],
+            "text": "Whenever you cast a spell, gain +1 Attack.",
+            "triggers": [
+                {
+                    "on": "friendly_spell_cast",
+                    "effects": [
+                        {
+                            "effect": "add_attack",
+                            "amount": 1,
+                            "target": "self"
+                        }
+                    ]
+                }
+            ]
+        },
         {
             "id": "GUARDIAN_OF_KINGS",
             "name": "Guardian of Kings",
@@ -1140,7 +1191,7 @@
             "targeting": "any_character"
         },
         {
-            "id": "ARCANE_INTELLECT_LITE",
+            "id": "ARCANE_INTELLECT",
             "name": "Arcane Intellect",
             "rarity": "Common",
             "type": "SPELL",
@@ -1219,7 +1270,7 @@
             "targeting": "friendly_minion"
         },
         {
-            "id": "SILENCE_LITE",
+            "id": "SILENCE",
             "name": "Silence",
             "type": "SPELL",
             "rarity": "Rare",
@@ -1237,7 +1288,7 @@
             "targeting": "any_minion"
         },
         {
-            "id": "POLYMORPH_LITE",
+            "id": "POLYMORPH",
             "name": "Polymorph",
             "type": "SPELL",
             "rarity": "Rare",
@@ -1269,7 +1320,7 @@
             "targeting": "none"
         },
         {
-            "id": "FLAMESTRIKE_LITE",
+            "id": "FLAMESTRIKE",
             "name": "Flamestrike",
             "type": "SPELL",
             "rarity": "Rare",
@@ -1301,7 +1352,7 @@
             "targeting": "none"
         },
         {
-            "id": "FERAL_SPIRIT_LITE",
+            "id": "FERAL_SPIRIT",
             "name": "Feral Spirit",
             "type": "SPELL",
             "rarity": "Rare",
