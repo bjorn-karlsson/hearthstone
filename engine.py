@@ -2557,6 +2557,33 @@ def _fx_execute(params):
         return ev
     return run
 
+def _fx_brawl(params):
+    """
+    Destroy all minions except one random survivor (both sides).
+    - Uses destroy_minion so Divine Shield won’t save anything.
+    - No targeting; works from on_cast.
+    """
+    def run(g, source_obj, target):
+        # snapshot alive minions on both boards
+        pool = [m for m in list(g.players[0].board) if m.is_alive()]
+        pool += [m for m in list(g.players[1].board) if m.is_alive()]
+
+        if len(pool) <= 1:
+            return []  # nothing to do
+
+        survivor = g.rng.choice(pool)
+        ev = [Event("BrawlSurvivor", {
+            "minion": survivor.id, "player": survivor.owner, "name": survivor.name
+        })]
+
+        # destroy everyone except the survivor
+        for m in pool:
+            if m is survivor or not m.is_alive():
+                continue
+            ev += g.destroy_minion(m, reason="Brawl")
+        return ev
+    return run
+
 
 # Registry maps effect name -> factory
 def _effect_factory(name, params, json_tokens):
@@ -2597,6 +2624,7 @@ def _effect_factory(name, params, json_tokens):
         "random_enemy_damage":              _fx_random_enemy_damage,
         "deal_damage_equal_armor":          _fx_deal_damage_equal_armor,
         "execute":                          _fx_execute,
+        "brawl":                            _fx_brawl,
         
     }
     if name not in table:

@@ -1,4 +1,5 @@
 # ai.py
+import copy
 from typing import Optional, Tuple, List, Dict, Any
 from engine import Game, IllegalAction
 from functools import lru_cache
@@ -185,6 +186,40 @@ def _card_effects(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
         effs += raw["battlecry"]
     return effs
 
+
+def _minion_value_generic(m) -> int:
+    """Cross-side minion value. Reuses enemy threat score; OK for ally too."""
+    return threat_score_enemy_minion(m)
+
+def _board_value(g: Game, pid: int) -> int:
+    """Sum of generic value of all living minions on PID's side."""
+    return sum(_minion_value_generic(m) for m in g.players[pid].board if m.is_alive())
+
+def _best_minion_value(g: Game, pid: int) -> int:
+    vals = [_minion_value_generic(m) for m in g.players[pid].board if m.is_alive()]
+    return max(vals) if vals else 0
+
+def _damaged_enemies(g: Game, pid: int):
+    opp = 1 - pid
+    return [m for m in g.players[opp].board if m.is_alive() and m.health < m.max_health]
+
+def _lowest_removal_alt_cost(g: Game, pid: int) -> int:
+    """
+    Very rough "do we have other removal?" signal.
+    Returns the min effective cost of any 'disable'/'hard_remove_damaged'/'burn' spell in hand, else big.
+    """
+    p = g.players[pid]
+    best = 99
+    for cid in p.hand:
+        raw_kind, _ = classify_card(g, cid)
+        if raw_kind in ("disable", "hard_remove_damaged", "burn", "aoe", "random_dmg"):
+            c = g.cards_db[cid]
+            cost = getattr(g, "get_effective_cost", lambda _pid, _cid: c.cost)(pid, cid)
+            if cost <= p.mana:
+                best = min(best, cost)
+    return best
+
+
 def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
     """
     Returns (kind, info) where kind in:
@@ -198,6 +233,11 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
     has = lambda name: any(e.get("effect") == name for e in effs)
     get_first = lambda name, key, default=0: next((int(e.get(key, default)) for e in effs if e.get("effect")==name and isinstance(e.get(key, None),(int,str))), default)
 
+    if has("set_health"):
+        amt = get_first("set_health", "amount", 1)
+        # Treat as a removal enabler; never use on friendlies
+        return "set_health_debuff", {"amount": amt, "targeting": raw.get("targeting", "").lower()}
+    
     if has("heal"):
         amt = get_first("heal", "amount", 0)
         return "heal", {"amount": amt, "targeting": raw.get("targeting", "").lower()}
@@ -225,6 +265,35 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
             if e.get("effect") == "summon":
                 total += int(e.get("count", 1))
         return "summon", {"count": total}
+    
+    # --- NEW: hard remove (execute-like)
+    if has("execute"):
+        # treated as targeted hard removal of a damaged enemy minion
+        return "hard_remove_damaged", {"targeting": raw.get("targeting", "").lower()}
+    
+    # Treat summon_from_pool like summon (e.g., Animal Companion)
+    if has("summon_from_pool"):
+        # rough count (each effect summons 1 unless 'count' provided)
+        total = 0
+        for e in effs:
+            if e.get("effect") == "summon_from_pool":
+                total += int(e.get("count", 1))
+        if total <= 0:
+            total = 1
+        return "summon", {"count": total}
+
+    # --- NEW: random enemy damage (not pings-by-count, but N damage to a random enemy)
+    if has("random_enemy_damage"):
+        amt = get_first("random_enemy_damage", "amount", 1)
+        return "random_dmg", {"count": amt}  # reuse your random_dmg bucket
+
+    # --- NEW: freeze (as a disable/tempo stall)
+    if has("freeze"):
+        return "freeze", {"targeting": raw.get("targeting", "").lower()}
+
+    # --- NEW: Brawl / random board wipe
+    if has("brawl"):
+        return "brawl", {}
 
     if card.type == "MINION":
         return "generic_minion", {"attack": card.attack, "health": card.health, "cost": card.cost}
@@ -481,6 +550,17 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
     kind, info = classify_card(g, cid)
 
+    # ---- Set-health debuff (Hunter's Mark style)
+    if kind == "set_health_debuff":
+        # Only consider enemy minions with health > amount (usually >1)
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive() and m.health > int(info.get("amount", 1))]
+        if not enemies:
+            return None
+        target = max(enemies, key=threat_score_enemy_minion)
+        # Very high value if it lets our weapon/board cleanly trade down
+        sc = 200 + threat_score_enemy_minion(target)
+        return idx, None, target.id, sc
+
     # ---- Heals
     if kind == "heal":
         amt = int(info.get("amount", 0))
@@ -518,21 +598,6 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
         threat = threat_score_enemy_minion(g.find_minion(tm)[2])
         return idx, None, tm, 120 + threat
 
-    # ---- Burn (single target / face)
-    if kind == "burn":
-        opp = 1 - pid
-        amt = int(info.get("amount", 0))
-        can_go_face = can_face(g, pid)
-        # lethal check
-        if can_go_face and g.players[opp].health <= amt:
-            return idx, opp, None, 1000
-        # removal
-        enemies = [m for m in g.players[opp].board if m.is_alive() and m.health <= amt]
-        if enemies:
-            target = max(enemies, key=threat_score_enemy_minion)
-            return idx, None, target.id, 240 + threat_score_enemy_minion(target)
-        return None
-
     # ---- AoE
     if kind == "aoe":
         enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
@@ -545,14 +610,6 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
         if hits >= 2 or lowhp_hits >= 1:
             return idx, None, None, score
         return None
-
-    # ---- Random pings
-    if kind == "random_dmg":
-        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
-        if not enemies and not can_face(g, pid):
-            return None
-        v = 50 + len(enemies) * 15 + (10 if can_face(g, pid) else 0)
-        return idx, None, None, v
 
     # ---- Draw
     if kind == "draw":
@@ -586,28 +643,60 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
             # Can we create one and still afford this buff this turn? If yes, defer buff.
             for cid2 in g.players[pid].hand:
                 if cid2 == cid: continue
-                f2 = _facts(gid, cid2)
-                if f2["type"] == "MINION" and f2["tribe"] == tribe:
-                    if f2["cost"] + F["cost"] <= g.players[pid].mana:
-                        return None  # let the Beast play get picked; we'll buff after
-        # otherwise score as a normal buff (existing logic uses 'buff' branch)
 
-    # ---- Control-tribe payoffs (e.g., Kill Command) ----
-    if F["control_tribe_gate"]:
-        tribe = F["control_tribe_gate"]
-        control_now = any(m.is_alive() and _lower(getattr(m, "minion_type", "none")) == tribe for m in g.players[pid].board)
-        if not control_now:
-            # Penalize casting before turning it on this turn
-            # (we leave 'kind' as detected earlier; this just affects score via return below)
-            usable = classify_card(g, cid)[0]
-            if usable in ("burn","aoe","random_dmg"):
-                # if we could make the tribe AND still cast this, de-prioritize now
-                for cid2 in g.players[pid].hand:
-                    if cid2 == cid: continue
-                    f2 = _facts(gid, cid2)
-                    if f2["type"] == "MINION" and f2["tribe"] == tribe and f2["cost"] + F["cost"] <= g.players[pid].mana:
-                        # drop score by returning a small value (so minion + then spell wins)
-                        return idx, None, None, 1
+                f2 = _facts(gid, cid2)
+                c2 = g.cards_db[cid2]
+                cost2 = getattr(c2, "cost", 0)
+
+                # 1) a MINION of that tribe
+                creates_tribe = (f2["type"] == "MINION" and f2["tribe"] == tribe)
+                # 2) or a SPELL that summons that tribe
+                creates_tribe |= (tribe in (f2["summons_tribes"] or set()))
+
+                if creates_tribe and (cost2 + F["cost"] <= g.players[pid].mana):
+                    return None  # defer buff; let the enabler play be picked first
+        # otherwise we fall through to the normal buff logic above
+
+
+        # ---- Burn (single target / face)
+    if kind == "burn":
+        opp = 1 - pid
+        amt = int(info.get("amount", 0))
+
+        # Try to upgrade via tribe gate (e.g., Kill Command -> 5)
+        F = _facts(_game_id(g), cid)
+        gate = F.get("control_tribe_gate")
+        if gate and any(m.is_alive() and _lower(getattr(m, "minion_type", "none")) == gate
+                        for m in g.players[pid].board):
+            # If you add RAW for exact upgrade later, read it; default +2 is fine for KC.
+            amt = max(amt, 5)
+
+        can_go_face_now = can_face(g, pid)
+
+        # 1) lethal check (face)
+        if can_go_face_now and g.players[opp].health <= amt:
+            return idx, opp, None, 1000
+
+        # 2) removal check (minion)
+        enemies = [m for m in g.players[opp].board if m.is_alive() and m.health <= amt]
+        if enemies:
+            target = max(enemies, key=threat_score_enemy_minion)
+            return idx, None, target.id, 240 + threat_score_enemy_minion(target)
+
+        # 3) face chip heuristic when no good minion target
+        #    Important for Hunter: KC for 3/5 to face is often correct.
+        if can_go_face_now:
+            hero = g.players[pid].hero.id.upper()
+            opp_hp = g.players[opp].health
+            racey_class = (hero == "HUNTER")
+            pressure = (opp_hp <= 12) or racey_class
+            if pressure:
+                # scale score by damage and how low opponent is
+                chip_score = 120 + amt * 40 + int((30 - min(opp_hp, 30)) * 3)
+                return idx, opp, None, chip_score
+
+        return None
+
 
     # ---- Generic minions (curve + stats + synergy ordering) ----
     if kind == "generic_minion":
@@ -683,15 +772,142 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
         return idx, None, None, base
 
-    # Final safety: if the card *needs* a target and we don't have one, abort.
-    # (Covers any future card types you add.)
-    if _needs_any_target(g, cid):
-        tm = _has_friendly_target_for_buff(g, pid, cid)
-        if tm is None:
+    # ---- HARD REMOVE DAMAGED (Execute-like)
+    if kind == "hard_remove_damaged":
+        # pick highest-value damaged enemy minion
+        cand = _damaged_enemies(g, pid)
+        if not cand:
             return None
+        tgt = max(cand, key=threat_score_enemy_minion)
+        # small preference bump if a Taunt is blocking our attacks
+        bump = 50 if any(m.taunt and m.is_alive() for m in _enemy_minions(g, pid)) else 0
+        return idx, None, tgt.id, 260 + threat_score_enemy_minion(tgt) + bump
 
+    # ---- FREEZE (tempo stall)
+    if kind == "freeze":
+        # Prefer freezing a Taunt with big health when we want to go face,
+        # else the highest attack enemy that can attack soon.
+        enemies = [m for m in _enemy_minions(g, pid)]
+        if not enemies:
+            return None
+        def _freeze_score(m):
+            s = m.attack * 15 + (40 if m.taunt else 0)
+            if not minion_ready(m):  # freezing a non-threat is worse
+                s -= 40
+            return s
+        tgt = max(enemies, key=_freeze_score)
+        if _freeze_score(tgt) < 20:
+            return None
+        return idx, None, tgt.id, 120 + _freeze_score(tgt)
+
+    # ---- BRAWL (random one-survivor wipe)
+    if kind == "brawl":
+        me, opp = pid, 1 - pid
+        my_list   = [m for m in g.players[me].board  if m.is_alive()]
+        opp_list  = [m for m in g.players[opp].board if m.is_alive()]
+        n_my, n_opp = len(my_list), len(opp_list)
+        total = n_my + n_opp
+        if total <= 1:
+            return None  # pointless
+
+        my_val_sum   = sum(_minion_value_generic(m) for m in my_list)
+        opp_val_sum  = sum(_minion_value_generic(m) for m in opp_list)
+        my_best      = max([_minion_value_generic(m) for m in my_list], default=0)
+        opp_best     = max([_minion_value_generic(m) for m in opp_list], default=0)
+
+        # Expected leftover board value after Brawl:
+        #   One survivor with prob n_my/total (our best) or n_opp/total (their best)
+        ev_after = (n_my/total) * my_best + (n_opp/total) * opp_best
+        # Current board value diff (enemy advantage positive)
+        cur_diff = opp_val_sum - my_val_sum
+        # "Benefit" if we Brawl ≈ reduce enemy advantage down to their EV share versus ours.
+        benefit = cur_diff - ( (n_opp/total)*opp_best - (n_my/total)*my_best )
+
+        # Tactical urgency: taunts blocking face, we are low HP, or opponent has multiple readies
+        taunts_block = any(m.taunt and m.is_alive() for m in opp_list) and not can_face(g, pid)
+        low_hp = g.players[pid].health <= 12
+        many_threats = sum(1 for m in opp_list if minion_ready(m)) >= 2
+
+        urgency = 0
+        if taunts_block:   urgency += 80
+        if low_hp:         urgency += 60
+        if many_threats:   urgency += 40
+
+        # If we already lead on board a lot, penalize
+        if cur_diff < -150:
+            benefit -= 120
+
+        # If we have cheap alternative removal available, lower Brawl preference
+        alt = _lowest_removal_alt_cost(g, pid)
+        if alt <= 3:
+            benefit -= 60
+
+        # Final score: only consider if benefit is meaningfully positive or urgent
+        score = int(140 + benefit * 0.35 + urgency)
+        if score < 140:
+            return None
+        return idx, None, None, score
+
+    # Final safety for any *targeted* card we don't fully understand:
+    if _needs_any_target(g, cid):
+        t = _targeting_of(g, cid)
+        # If the card explicitly wants an *enemy* minion/character, pick an enemy target.
+        if t.startswith("enemy_") or t in ("enemy_character",):
+            enemies = _enemy_minions(g, pid)
+            if not enemies and t.endswith("character"):
+                # allow face if no minions and character-targeting
+                return idx, (1 - pid), None, 50
+            if enemies:
+                m = max(enemies, key=threat_score_enemy_minion)
+                return idx, None, m.id, 120 + threat_score_enemy_minion(m)
+            return None
+        # If it explicitly wants *friendly* minion/character, we can re-use the buff target helper.
+        if t.startswith("friendly_") or t in ("friendly_character",):
+            tm = _has_friendly_target_for_buff(g, pid, cid)
+            if tm is not None:
+                m = g.find_minion(tm)[2]
+                return idx, None, tm, 60 + m.attack * 2 + getattr(m, "cost", 0)
+            return None
+        # Unknown/any_minion but we don’t know effect → **don’t cast** (avoid self-harm).
+        return None
+
+    # ---- RANDOM ENEMY DAMAGE (N to a random enemy)
+    if kind == "random_dmg":
+        # if N is small, still ok vs wide boards; reuse enemies count heuristic
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
+        # lighter than deterministic pings; slight face utility
+        v = 40 + len(enemies) * 12 + (8 if can_face(g, pid) else 0)
+        return idx, None, None, v
+
+    
     # Unknown: skip
     return None
+
+# def eval_state(g: Game, pid: int) -> int:
+#     """Higher is better for pid. Cheap, deterministic."""
+#     me, opp = g.players[pid], g.players[1 - pid]
+
+#     def board_score(p):
+#         s = 0
+#         for m in p.board:
+#             if not m.is_alive(): continue
+#             kw = (6 if m.taunt else 0) + (4 if m.charge else 0) + (3 if m.rush else 0) + (3 if m.divine_shield else 0)
+#             s += m.attack * 4 + m.health * 3 + kw + getattr(m, "cost", 0)
+#         if p.weapon:
+#             s += p.weapon.attack * 8 + p.weapon.durability * 3
+#         return s
+
+#     # Health & armor are slow-moving tempos; weight lower than board presence.
+#     my_hp  = min(30, me.health + me.armor)
+#     op_hp  = min(30, opp.health + opp.armor)
+#     hand_bonus = min(len(me.hand), 10) * 6 - min(len(opp.hand), 10) * 6
+
+#     return (
+#         (board_score(me) - board_score(opp)) * 1
+#         + (my_hp - op_hp) * 2
+#         + hand_bonus
+#         + (10 if can_face(g, pid) else 0)
+#     )
 
 
 # ----------------- LETHAL PLANNER -----------------
@@ -901,29 +1117,151 @@ def pick_best_play(g: Game, pid: int) -> Optional[Tuple[Action, int]]:
     return None
 
 
-# ----------------- TOP-LEVEL POLICY -----------------
+# ----------------- Think ahead -----------------
+
+
+def eval_state(g: Game, pid: int) -> int:
+    """Higher is better for pid. Cheap, deterministic."""
+    me, opp = g.players[pid], g.players[1 - pid]
+
+    def board_score(p):
+        s = 0
+        for m in p.board:
+            if not m.is_alive(): continue
+            kw = (6 if m.taunt else 0) + (4 if m.charge else 0) + (3 if m.rush else 0) + (3 if m.divine_shield else 0)
+            s += m.attack * 4 + m.health * 3 + kw + getattr(m, "cost", 0)
+        if p.weapon:
+            s += p.weapon.attack * 8 + p.weapon.durability * 3
+        return s
+
+    # Health & armor are slow-moving tempos; weight lower than board presence.
+    my_hp  = min(30, me.health + me.armor)
+    op_hp  = min(30, opp.health + opp.armor)
+    hand_bonus = min(len(me.hand), 10) * 6 - min(len(opp.hand), 10) * 6
+
+    return (
+        (board_score(me) - board_score(opp)) * 1
+        + (my_hp - op_hp) * 2
+        + hand_bonus
+        + (10 if can_face(g, pid) else 0)
+    )
+
+def enumerate_actions(g: Game, pid: int) -> List[Action]:
+    acts: List[Action] = []
+
+    # Attacks
+    for a in _ally_minions(g, pid):
+        if not minion_ready(a): continue
+        enemies = _enemy_minions(g, pid)
+        taunts  = [m for m in enemies if m.taunt]
+        pool = taunts if taunts else enemies
+        for m in pool:
+            acts.append(('attack', a.id, None, m.id))
+        if not taunts and _face_allowed_for_attacker(g, pid, a):
+            acts.append(('attack', a.id, 1 - pid, None))
+
+    # Spells / minions (try every useful play you already gate)
+    p = g.players[pid]
+    for i, cid in enumerate(p.hand):
+        usable = has_useful_play_for_card(g, pid, cid)
+        if not usable: continue
+        idx, tp, tm, _ = usable
+        acts.append(('play', idx, tp, tm))
+
+    # Hero power if allowed
+    if can_use_hero_power_ai(g, pid):
+        # try a couple of common targets; your use_hero_power validates legality
+        hero = g.players[pid].hero.id.upper()
+        if hero in ("MAGE",):
+            # try face and any 1-HP enemy
+            acts.append(('power', pid, 1 - pid, None))
+            for m in _enemy_minions(g, pid):
+                if m.health <= 1:
+                    acts.append(('power', pid, None, m.id))
+        else:
+            acts.append(('power', pid, None, None))
+
+    # End
+    acts.append(('end',))
+    return acts
+
+def simulate_apply(g: Game, action: Action) -> None:
+    kind = action[0]
+    if kind == 'end':
+        g.end_turn(g.active_player); return
+    if kind == 'attack':
+        _, attacker_id, tp, tm = action
+        g.attack(g.active_player, attacker_id, target_player=tp, target_minion=tm); return
+    if kind == 'play':
+        _, idx, tp, tm = action
+        g.play_card(g.active_player, idx, target_player=tp, target_minion=tm); return
+    if kind == 'power':
+        _, pid, tp, tm = action
+        g.use_hero_power(pid, target_player=tp, target_minion=tm); return
+
+def search_best(g: Game, pid: int, depth: int = 2, beam: int = 6) -> Tuple[Action, int]:
+    # seed candidates with current plausible actions ordered by heuristic score
+    actions = enumerate_actions(g, pid)
+
+    # Score each first move by rollout
+    scored: List[Tuple[int, Action]] = []
+    for a in actions:
+        g2 = copy.deepcopy(g)
+        simulate_apply(g2, a)
+        val = eval_state(g2, pid)
+        scored.append((val, a))
+
+    # Keep top beam
+    scored.sort(reverse=True, key=lambda x: x[0])
+    frontier = scored[:beam]
+
+    # Expand further depths
+    for _ in range(1, depth):
+        new_frontier: List[Tuple[int, Action]] = []
+        for base_val, first_action in frontier:
+            g2 = copy.deepcopy(g)
+            simulate_apply(g2, first_action)
+
+            # Opponent “reply” (greedy, no recursion)
+            if g2.active_player != pid:
+                opp_att = pick_attack(g2, 1 - pid)
+                if opp_att:
+                    simulate_apply(g2, opp_att[0])
+                else:
+                    opp_play = pick_best_play(g2, 1 - pid)
+                    if opp_play:
+                        simulate_apply(g2, opp_play[0])
+
+            # One more move for us (optional for depth 3)
+            # g2 now is our next turn start in many cases; evaluation still meaningful.
+            val = eval_state(g2, pid)
+            new_frontier.append((val, first_action))
+
+        new_frontier.sort(reverse=True, key=lambda x: x[0])
+        frontier = new_frontier[:beam]
+
+    # Pick the action that led to the best projected value
+    best_val, best_action = frontier[0]
+    return best_action, best_val
 
 def pick_best_action(g: Game, pid: int) -> Tuple[Action, int]:
-    """
-    Priority: lethal -> best attack/trade -> best useful play (spells/minions) -> end.
-    Also *never* casts a spell that does nothing.
-    """
     _GAME_BY_ID[_game_id(g)] = g
 
-    # 0) Lethal now?
+    # Try tactical lethal as before
     lethal = find_lethal_action(g, pid)
-    if lethal:
-        return lethal
+    if lethal: return lethal
 
-    # 1) Trades / attacks
+    # Shallow look-ahead (depth=2, beam=6 is fast)
+    try:
+        action, score = search_best(g, pid, depth=2, beam=6)
+        return action, score
+    except Exception:
+        # Fallback to old heuristics if something explodes
+        pass
+
+    # Old pipeline fallback:
     att = pick_attack(g, pid)
-    if att:
-        return att
-
-    # 2) Best *useful* play (development / removal / buffs / etc.)
+    if att: return att
     play = pick_best_play(g, pid)
-    if play:
-        return play
-
-    # 3) Nothing else
+    if play: return play
     return ('end',), 0

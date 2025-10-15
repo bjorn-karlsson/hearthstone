@@ -1914,6 +1914,21 @@
             "targeting": "none"
         },
         {
+            "id": "BRAWL",
+            "name": "Brawl",
+            "type": "SPELL",
+            "cost": 5,
+            "rarity": "Rare",
+            "class": "WARRIOR",
+            "text": "Destroy all minions except one random survivor.",
+            "targeting": "none",
+            "on_cast": [
+                {
+                    "effect": "brawl"
+                }
+            ]
+        },
+        {
             "id": "LEEROY_JENKINS",
             "name": "Leeroy Jenkins",
             "type": "MINION",

@@ -319,7 +319,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = [ "CROWD_FAVORITE", "VOODOO_DOCTOR", "CRUEL_TASKMASTER", "ARMORSMITH", "SHIELD_SLAM", "EXECUTE"] * 5
+    desired = [ "CROWD_FAVORITE", "VOODOO_DOCTOR", "BRAWL"] * 5
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -366,7 +366,8 @@ playable_decks = [
     "Classic Hunter Deck (Midrange / Face Hybrid)", 
     "Classic Paladin Deck (Midrange / Control)",
     "Classic Mage Deck (Spell Control / Burst)",
-    "Classic Warlock Deck (Zoo Aggro)"
+    "Classic Warlock Deck (Zoo Aggro)",
+    "Classic Warrior Deck (Control)"
 ]
 
 
@@ -374,7 +375,7 @@ playable_decks = [
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
-player_deck = None
+#player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -390,8 +391,8 @@ def _pick_hero(hint, default):
     return default
 
 
-#HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
-HERO_PLAYER = hero_db.get("WARRIOR")
+HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
+#HERO_PLAYER = hero_db.get("WARRIOR")
 HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
 STARTER_DECK_PLAYER = player_deck
@@ -2079,8 +2080,6 @@ def main():
     dragging_pos: Tuple[int, int] = (0, 0)
     hover_slot_index: Optional[int] = None  # 0..len(board)
 
-    
-    
     RUNNING = True
     while RUNNING:
         clock.tick(60)
@@ -2134,6 +2133,7 @@ def main():
                     inspected_minion_id = None
             pygame.display.flip()
             continue
+
         # GG
         if g.players[0].health <= 0 or g.players[1].health <= 0:
             winner = "AI" if g.players[0].health <= 0 else "You"
@@ -2143,20 +2143,21 @@ def main():
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: RUNNING = False
             pygame.display.flip()
             continue
+
         if top_overlay is not None:
             screen.blit(top_overlay, (0, 0))
-        # ----- AI turn -----
+
+        # ===================== AI TURN =====================
         if g.active_player == 1:
             if not ANIMS.busy():
                 def decide():
-                    def schedule_if_ai_turn():  
-                        # Only queue the next think if the AI still has the turn
+                    def schedule_if_ai_turn():
                         if g.active_player == 1:
                             ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
                     queued_any = False
 
-                    # 1) Try hero attack
+                    # 1) Try hero attack if ready
                     if g.hero_can_attack(1):
                         mins, face_ok = g.hero_legal_targets(1)
                         target_min = next(iter(mins), None)
@@ -2188,7 +2189,7 @@ def main():
                         queued_any = True
 
                     else:
-                        # 2) Otherwise use AI policy (play/attack)
+                        # 2) Otherwise use AI policy (play/attack/power)
                         result = None
                         try:
                             result = pick_best_action(g, 1)
@@ -2196,7 +2197,7 @@ def main():
                             result = None
 
                         if not result:
-                            # 3) Try hero power, else end turn
+                            # 3) Try hero power (conservative helper), else end turn
                             def try_power_then_end():
                                 try:
                                     from ai import maybe_use_hero_power
@@ -2232,7 +2233,6 @@ def main():
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
                                         flash_from_events(g, ev)
-                                        
                                     except IllegalAction:
                                         pass
                                     schedule_if_ai_turn()
@@ -2279,6 +2279,23 @@ def main():
                                 enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
                                 queued_any = True
 
+                            elif kind == 'power':
+                                # NEW: execute the exact hero power and target picked by the planner
+                                _, pwr_pid, tp, tm = act
+
+                                def on_finish(pwr_pid=pwr_pid, tp=tp, tm=tm):
+                                    try:
+                                        ev = g.use_hero_power(pwr_pid, target_player=tp, target_minion=tm)
+                                        log_events(ev, g)
+                                        flash_from_events(g, ev)
+                                    except IllegalAction:
+                                        pass
+                                    if g.active_player == 1:
+                                        ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
+
+                                ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=on_finish))
+                                queued_any = True
+
                             else:
                                 # Fallback to power/end
                                 def try_power_then_end_fallback():
@@ -2290,7 +2307,8 @@ def main():
                                     if ev:
                                         log_events(ev, g)
                                         flash_from_events(g, ev)
-                                        schedule_if_ai_turn()
+                                        if g.active_player == 1:
+                                            ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
                                         return
                                     try:
                                         ev2 = g.end_turn(1)
@@ -2311,7 +2329,7 @@ def main():
                                 add_log("[AI] Failsafe: could not end turn.")
                         ANIMS.push(AnimStep("think_pause", 200, {}, on_finish=_force_end))
 
-                # IMPORTANT: only schedule the first decide; don't call decide() immediately
+                # IMPORTANT: only schedule the first think
                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
 
             # Drain events while AI acts
@@ -2319,7 +2337,7 @@ def main():
                 if event.type == pygame.QUIT: RUNNING = False
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: RUNNING = False
 
-        # ----- YOUR turn -----
+        # ===================== YOUR TURN =====================
         else:
             events = pygame.event.get()
             if ANIMS.busy():
@@ -2354,7 +2372,7 @@ def main():
                         hilite_enemy_min.clear(); hilite_my_min.clear()
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
-                    
+
                     # Select hero attacker
                     if hot["face_me"].collidepoint(mx, my) and hero_ready_to_act(g, 0):
                         mins, face_ok = hero_legal_targets(g, 0)
@@ -2364,6 +2382,7 @@ def main():
                         hilite_enemy_face = face_ok
                         hilite_my_min.clear(); hilite_my_face = False
                         continue
+
                     # If selecting target for a HERO POWER (Mage)
                     if waiting_target_for_power is not None:
                         pid_power = waiting_target_for_power  # 0
@@ -2426,7 +2445,7 @@ def main():
                                     break
                             if did:
                                 continue
-                    
+
                     # ---- Resolve a pending MINION that needs a battlecry target (pre-play) ----
                     if waiting_target_for_play is not None and waiting_target_for_play[0] == "__PENDING_MINION__":
                         _, idx, cid, src_rect, slot_idx = waiting_target_for_play
@@ -2434,15 +2453,12 @@ def main():
 
                         def _finish_with(target_player=None, target_minion=None, target_rect=None):
                             if len(g.players[0].board) >= 7:
-                                # Board filled up while choosing a target; cancel safely.
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
                                 add_log("Board is full. You can't play more minions.")
                                 return
 
-
-                            # animate from hand to the chosen slot (or to target rect for nice feel)
                             slot_rect = insertion_slots_for_my_row(g, battle_area_rect())[slot_idx]
                             dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
 
@@ -2480,18 +2496,14 @@ def main():
                                         _finish_with(target_player=None, target_minion=mid, target_rect=r)
                                         break
 
-                        # clear highlights if we completed
                         waiting_target_for_play = None
                         hilite_enemy_min.clear(); hilite_my_min.clear()
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
 
-
                     if waiting_target_for_play is not None and waiting_target_for_play[0] == "__PENDING_BC__":
-                        # resolve the pending battlecry target
                         handled = False
 
-                        # enemy face?
                         if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
                             try:
                                 ev = g.resolve_pending_battlecry(0, target_player=1)
@@ -2499,7 +2511,6 @@ def main():
                             except IllegalAction: pass
                             handled = True
 
-                        # my face?
                         elif hilite_my_face and my_face_rect(hot).collidepoint(mx, my):
                             try:
                                 ev = g.resolve_pending_battlecry(0, target_player=0)
@@ -2507,7 +2518,6 @@ def main():
                             except IllegalAction: pass
                             handled = True
 
-                        # enemy minion?
                         if not handled:
                             for mid, r in hot["enemy_minions"]:
                                 if r.collidepoint(mx, my) and mid in hilite_enemy_min:
@@ -2518,7 +2528,6 @@ def main():
                                     handled = True
                                     break
 
-                        # my minion?
                         if not handled:
                             for mid, r in hot["my_minions"]:
                                 if r.collidepoint(mx, my) and mid in hilite_my_min:
@@ -2529,20 +2538,17 @@ def main():
                                     handled = True
                                     break
 
-                        # clear targeting highlights if resolved
                         if handled:
                             waiting_target_for_play = None
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
                         continue
 
-
                     # If selecting target for a spell
                     if waiting_target_for_play is not None:
                         idx, cid, src_rect = waiting_target_for_play
                         enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
 
-                        # Enemy face?
                         if enemy_face_ok and enemy_face_rect(hot).collidepoint(mx, my):
                             def on_finish(i=idx):
                                 try:
@@ -2550,7 +2556,6 @@ def main():
                                     log_events(ev, g)
                                     apply_post_summon_hooks(g, ev)
                                     enqueue_flash(enemy_face_rect(layout_board(g)))
-                                    
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
@@ -2561,16 +2566,13 @@ def main():
                             hilite_enemy_face = False; hilite_my_face = False
                             continue
 
-                        # My face?
                         if my_face_ok and my_face_rect(hot).collidepoint(mx, my):
                             def on_finish(i=idx):
                                 try:
                                     ev = g.play_card(0, i, target_player=0)
                                     log_events(ev, g)
                                     apply_post_summon_hooks(g, ev)
-                                   
                                     enqueue_flash(my_face_rect(layout_board(g)))
-                                    
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
@@ -2581,17 +2583,15 @@ def main():
                             hilite_enemy_face = False; hilite_my_face = False
                             continue
 
-                        # Enemy minion target?
                         targeted = False
                         for mid, r in hot["enemy_minions"]:
                             if r.collidepoint(mx, my) and mid in enemy_mins:
-                                def on_finish(i=idx, mid_target=mid):
+                                def on_finish(i=idx, mid_target=mid, r=r):
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
                                         enqueue_flash(r)
-                                        
                                     except IllegalAction: pass
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": r, "label": db[cid].name},
@@ -2601,19 +2601,16 @@ def main():
                                 hilite_enemy_face = False; hilite_my_face = False
                                 targeted = True
                                 break
-                        if targeted:
-                            continue
+                        if targeted: continue
 
-                        # My minion target?
                         for mid, r in hot["my_minions"]:
                             if r.collidepoint(mx, my) and mid in my_mins:
-                                def on_finish(i=idx, mid_target=mid):
+                                def on_finish(i=idx, mid_target=mid, r=r):
                                     try:
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
                                         enqueue_flash(r)
-                                        
                                     except IllegalAction: pass
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": r, "label": db[cid].name},
@@ -2623,13 +2620,12 @@ def main():
                                 hilite_enemy_face = False; hilite_my_face = False
                                 break
                         continue
-                    
+
                     # Click hero power button
                     if hot["hp_me"].collidepoint(mx, my) and g.active_player == 0 and can_use_hero_power(g, 0):
                         spec = g.players[0].hero.power.targeting.lower()
-                        if spec in ("none", "enemy_face"):  # immediate or auto-resolved
+                        if spec in ("none", "enemy_face"):
                             try:
-                                # enemy_face doesn't need an explicit target; engine resolves via POV
                                 ev = g.use_hero_power(0)
                                 log_events(ev, g)
                                 post = layout_board(g)
@@ -2638,7 +2634,6 @@ def main():
                             except IllegalAction:
                                 pass
                         else:
-                            # enter targeting mode
                             waiting_target_for_power = 0
                             e_min, m_min, e_face, m_face = targets_for_hero_power(g, 0)
                             hilite_enemy_min = set(e_min)
@@ -2654,10 +2649,8 @@ def main():
                             cobj = g.cards_db[cid]
                             if not card_is_playable_now(g, 0, cid):
                                 add_log("You can't play that right now.")
-                                # (Optional) small shake/flash feedback could be queued here.
                                 break
                             if g.active_player == 0 and cobj.type == "MINION" and card_is_playable_now(g, 0, cid) and len(g.players[0].board) < 7:
-                                # ALWAYS begin drag for minions (targeted or not) ✅
                                 dragging_from_hand = (i, cid, r.copy())
                                 dx, dy = mx - r.x, my - r.y
                                 drag_offset = (dx, dy)
@@ -2666,7 +2659,6 @@ def main():
                                 hover_slot_index = slot_index_at_point(slots, mx, my)
                                 started_drag = True
                             else:
-                                # Spells or unplayable minions keep the old click-to-play flow
                                 enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
                                 if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
                                     waiting_target_for_play = (i, cid, r.copy())
@@ -2691,7 +2683,6 @@ def main():
                     if started_drag:
                         continue
 
-
                     # Select attacker (only if has legal targets)
                     for mid, r in hot["my_minions"]:
                         if r.collidepoint(mx, my):
@@ -2706,7 +2697,7 @@ def main():
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
                             break
-                    
+
                     # If HERO is selected, try to attack a highlighted target
                     if selected_hero:
                         did = False
@@ -2719,7 +2710,6 @@ def main():
                                         enqueue_flash(rect)
                                     except IllegalAction:
                                         return
-                                # small dash from hero to target (optional)
                                 enqueue_hero_attack_anim(
                                     hot, pid=0, target_rect=r,
                                     on_hit=lambda rect=r, mid=emid: (
@@ -2735,13 +2725,6 @@ def main():
                             continue
 
                         if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
-                            def do_hit(rect=enemy_face_rect(hot)):
-                                try:
-                                    ev = g.hero_attack(0, target_player=1)
-                                    log_events(ev, g)
-                                    enqueue_flash(rect)
-                                except IllegalAction:
-                                    return
                             enqueue_hero_attack_anim(
                                 hot, pid=0, target_rect=enemy_face_rect(hot),
                                 on_hit=lambda rect=enemy_face_rect(hot): (
@@ -2759,7 +2742,7 @@ def main():
                         for emid, r in hot["enemy_minions"]:
                             if r.collidepoint(mx, my) and emid in hilite_enemy_min:
                                 def on_hit(attacker=selected_attacker, em=emid):
-                                    try: 
+                                    try:
                                         ev = g.attack(0, attacker, target_minion=em)
                                         log_events(ev, g)
                                     except IllegalAction: pass
@@ -2772,7 +2755,7 @@ def main():
                         if did: continue
                         if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
                             def on_hit(attacker=selected_attacker):
-                                try: 
+                                try:
                                     ev = g.attack(0, attacker, target_player=1)
                                     log_events(ev, g)
                                 except IllegalAction: return
@@ -2781,11 +2764,11 @@ def main():
                             selected_attacker = None
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
+
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                     mx, my = event.pos
 
                     # Priority: cancel selection if any
-
                     if selected_attacker is not None or waiting_target_for_play is not None or waiting_target_for_power is not None:
                         selected_attacker = None
                         selected_hero = False
@@ -2794,8 +2777,7 @@ def main():
                         hilite_enemy_min.clear(); hilite_my_min.clear()
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
-                    
-                    
+
                     # Toggle inspector
                     if inspected_minion_id is not None:
                         inspected_minion_id = None
@@ -2805,29 +2787,28 @@ def main():
                     if mid is not None:
                         inspected_minion_id = mid
                         continue
+
                 elif event.type == pygame.MOUSEMOTION:
                     if dragging_from_hand is not None:
                         mx, my = event.pos
                         dragging_pos = (mx, my)
                         slots = insertion_slots_for_my_row(g, battle_area_rect())
                         hover_slot_index = slot_index_at_point(slots, mx, my)
+
                 elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                     if dragging_from_hand is not None:
                         mx, my = event.pos
                         idx, cid, src_rect = dragging_from_hand
                         dragging_from_hand = None
-                        # Did we drop over a valid slot?
                         slots = insertion_slots_for_my_row(g, battle_area_rect())
                         slot_idx = slot_index_at_point(slots, mx, my)
                         if slot_idx is None or len(g.players[0].board) >= 7:
-                            # cancel: no action
                             hover_slot_index = None
                             continue
-                        
+
                         need = (g.cards_db.get("_TARGETING", {}).get(cid, "none") or "none").lower()
 
                         if need == "none":
-                            # same as before: animate and play immediately
                             slot_rect = slots[slot_idx]
                             dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
 
@@ -2847,12 +2828,10 @@ def main():
                             ))
                             hover_slot_index = None
                             continue
-                        else: 
-                            # Check if any legal targets exist
+                        else:
                             enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
                             any_targets = bool(enemy_mins or my_mins or enemy_face_ok or my_face_ok)
                             if any_targets:
-                                # enter targeting mode (same as before)
                                 waiting_target_for_play = ("__PENDING_MINION__", idx, cid, src_rect, slot_idx)
                                 hilite_enemy_min = set(enemy_mins)
                                 hilite_my_min = set(my_mins)
@@ -2861,13 +2840,12 @@ def main():
                                 hover_slot_index = slot_idx
                                 continue
                             else:
-                                # No valid targets → just play the minion; battlecry will fizzle
                                 slot_rect = slots[slot_idx]
                                 dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
 
                                 def on_finish(i=idx, sl=slot_idx):
                                     try:
-                                        ev = g.play_card(0, i, insert_at=sl)   # no target args
+                                        ev = g.play_card(0, i, insert_at=sl)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
                                         flash_from_events(g, ev)
@@ -2879,10 +2857,12 @@ def main():
                                                     on_finish=on_finish))
                                 hover_slot_index = None
                                 continue
+
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_h:
                         SHOW_ENEMY_HAND = not SHOW_ENEMY_HAND
                         continue
+
         pygame.display.flip()
 
     pygame.quit()
