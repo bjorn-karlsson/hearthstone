@@ -330,6 +330,8 @@ def can_face(g: Game, pid: int) -> bool:
     return not any(m.taunt and m.is_alive() for m in g.players[opp].board)
 
 def minion_ready(m) -> bool:
+    if getattr(m, "cant_attack", False):
+        return False
     if getattr(m, "frozen", False):
         return False
     if m.attack <= 0 or m.has_attacked_this_turn or not m.is_alive():

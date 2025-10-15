@@ -73,6 +73,7 @@ class Minion:
     can_attack: bool = False
     exhausted: bool = True
     silenced: bool = False
+    cant_attack: bool = False   # (e.g., Ragnaros)  
     deathrattle: Optional[Callable[['Game','Minion'], List[Event]]] = None
     aura_spec: Optional[Dict[str, Any]] = None   # e.g. {"scope":"other_friendly_minions","attack":1,"health":1}
     cost_aura_spec: Optional[Dict[str, Any]] = None
@@ -367,7 +368,7 @@ class Game:
         fns = m.triggers_map.get(trigger_name, [])
         if not fns:
             return []
-        src = SimpleNamespace(owner=m.owner, name=m.name)  # NEW: tidy source
+        src = SimpleNamespace(owner=m.owner, name=m.name, id=m.id)
         ev: List[Event] = []
         for fn in fns:
             ev += fn(self, src, context)
@@ -396,13 +397,14 @@ class Game:
                 "name": target.name
             }))
             return ev  # no HP loss
-
+        
         # Normal damage flow
         target.health -= amount
         ev.append(Event("MinionDamaged", {
             "minion": target.id, "amount": amount, "source": source
         }))
 
+        ev += self._fire_friendly_minion_damaged(target.owner, target.id, amount, source)
         # Fire “whenever this minion takes damage” hooks
         ev += self._run_minion_triggers(target, "self_damaged", {"amount": amount, "source": source})
 
@@ -700,7 +702,13 @@ class Game:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
         self.active_player = self.other(pid)
-        ev = [Event("TurnEnd", {"player": pid})]
+        ev = []
+
+        ev += self._fire_end_of_turn(pid)
+
+        # now actually end the turn
+        self.active_player = self.other(pid)
+        ev.append(Event("TurnEnd", {"player": pid}))
 
         ev += self._expire_temps_for_pid(pid)
 
@@ -935,6 +943,14 @@ class Game:
             ev += self._run_minion_triggers(m, "friendly_spell_cast", {"minion": m.id})
         return ev
 
+    def _fire_end_of_turn(self, owner: int) -> List[Event]:
+        ev: List[Event] = []
+        for m in list(self.players[owner].board):
+            if not m.is_alive() or m.silenced:
+                continue
+            ev += self._run_minion_triggers(m, "end_of_your_turn", None)
+        return ev
+
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
@@ -993,6 +1009,7 @@ class Game:
                 triggers_map=dict(getattr(card, "triggers_map", {})),
                 cost_aura_spec=getattr(card, "cost_aura_spec", None),
                 auras=list(getattr(card, "auras", [])),
+                cant_attack = ("Can't Attack" in card.keywords) or ("Cant Attack" in card.keywords),
             )
             self.next_minion_id += 1
 
@@ -1015,6 +1032,7 @@ class Game:
             ev += self._refresh_stat_auras(pid)
 
             ev += self._handle_friendly_summon(pid, m.id)
+            
             
 
             # --- after you insert the minion and add MinionSummoned + auras ---
@@ -1251,7 +1269,7 @@ class Game:
                 continue
 
             # Provide a small source object: owner + name
-            src = SimpleNamespace(owner=owner, name=m.name)  # NEW
+            src = SimpleNamespace(owner=owner, name=m.name, id=m.id)  # NEW
 
             for run in runs:
                 # Effects may generate damage events, deaths, etc.
@@ -1272,6 +1290,24 @@ class Game:
             ev += fn(self, src, context)
         return ev
 
+    def _fire_friendly_minion_damaged(self, owner: int, damaged_minion_id: int, amount: int, source: str) -> List[Event]:
+        """
+        Notify all minions on OWNER's board (including the damaged one) that a friendly
+        minion just took real damage. Context includes minion id, amount, and source name.
+        """
+        ev: List[Event] = []
+        for m in list(self.players[owner].board):
+            if m.silenced:
+                continue
+            runs = m.triggers_map.get("friendly_minion_damaged", [])
+            if not runs:
+                continue
+            src = SimpleNamespace(owner=m.owner, name=m.name, id=m.id)
+            for run in runs:
+                ev += run(self, src, {"minion": damaged_minion_id, "amount": amount, "source": source})
+        return ev
+
+
     def attack(self, pid:int, attacker_id:int, target_player:Optional[int]=None, target_minion:Optional[int]=None) -> List[Event]:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
@@ -1281,6 +1317,8 @@ class Game:
         apid, _, att = loc
         if apid != pid:
             raise IllegalAction("You don't control that minion")
+        if getattr(att, "cant_attack", False):
+            raise IllegalAction("This minion can't attack")
         if att.has_attacked_this_turn or not att.is_alive():
             raise IllegalAction("Minion cannot attack")
         if att.attack <= 0:
@@ -1821,6 +1859,27 @@ def _fx_deal_damage(params):
         return ev
     return run
 
+def _fx_deal_damage_equal_armor(params):
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        dmg = max(0, g.players[owner].armor)  # no Spell Damage bonus
+
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+
+        ev = []
+        ev.append(Event("SpellHit", {
+            "source": name, "target_type": "minion",
+            "minion": obj.id, "player": obj.owner
+        }))
+        ev += g.deal_damage_to_minion(obj, dmg, source=name)
+        g.history += ev
+        return ev
+    return run
+
 def _fx_heal(params):
     n = int(params["amount"])
     t_spec = params.get("target")  # optional: "friendly_face" / "enemy_face"
@@ -2000,6 +2059,35 @@ def _fx_random_pings(params):
         return ev
     return run
 
+def _fx_random_enemy_damage(params):
+    n = int(params.get("amount", 1))
+
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)
+        opp   = g.other(owner)
+
+        # pool = enemy face + all living enemy minions
+        pool: list[tuple[str, int]] = [("player", opp)]
+        pool += [("minion", m.id) for m in g.players[opp].board if m.is_alive()]
+        if not pool:
+            return []
+
+        kind, val = g.rng.choice(pool)
+        ev: List[Event] = []
+        if kind == "player":
+            ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": opp}))
+            ev += g.deal_damage_to_player(opp, n, source=name)
+        else:
+            loc = g.find_minion(val)
+            if loc:
+                _, _, mm = loc
+                ev.append(Event("SpellHit", {"source": name, "target_type": "minion", "minion": mm.id, "player": mm.owner}))
+                ev += g.deal_damage_to_minion(mm, n, source=name)
+        g.history += ev
+        return ev
+    return run
+
 def _fx_aoe_damage(params):
     """
     Deal N damage to:
@@ -2161,6 +2249,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             base_minion_type=str(card_spec.get("minion_type", "None")),
             triggers_map=dict(card_spec.get("triggers_map", {})),
             cost_aura_spec=card_spec.get("cost_aura"),
+            cant_attack = ("Can't Attack" in kws) or ("Cant Attack" in kws)
         )
         g.next_minion_id += 1
         g.players[owner].board.append(m)
@@ -2258,6 +2347,32 @@ def _fx_transform(params, json_db_tokens):
         spec = dict(raw); spec.setdefault("id", token_id)
         ev += _summon_from_card_spec(g, pid, spec, 1)
         return ev
+    return run
+
+def _fx_if_target_survived_then(params, json_db_tokens):
+    """
+    Run 'then' effects if the tagged target was a MINION and is still alive on the board
+    after prior effects resolved.
+    """
+    then_spec = params.get("then", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+
+    def run(g, source_obj, target):
+        # We expect the spell to have been cast with a tagged minion target:
+        #   target == {"minion": <id>}
+        if not isinstance(target, dict) or "minion" not in target:
+            return []
+        mid = target["minion"]
+
+        # If it's still on board and alive => survived
+        loc = g.find_minion(mid)
+        if loc:
+            _, _, m = loc
+            if m.is_alive():
+                return then_fn(g, source_obj, target)
+
+        # If it’s gone from board, we consider it dead (or bounced); no draw.
+        return []
     return run
 
 def _fx_if_target_died_then(params, json_db_tokens):
@@ -2370,6 +2485,79 @@ def _fx_set_health(params):
         return ev
     return run
 
+def _fx_if_summoned_has_keyword(params, json_db_tokens):
+    """
+    If the most recently summoned minion (from trigger context) has the given keyword
+    in its *base* keywords (from the card), run 'then' effects.
+    Used by Crowd Favorite to detect Battlecry minions.
+    """
+    want = str(params.get("keyword", "")).strip().lower()
+    then_spec = params.get("then", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+
+    def run(g, source_obj, context):
+        mid = (context or {}).get("minion")
+        if not mid:
+            return []
+        loc = g.find_minion(mid)
+        if not loc:
+            return []  # died or bounced; nothing to do
+        _, _, summoned = loc
+        
+        base_kws = [k.lower() for k in getattr(summoned, "base_keywords", [])]
+        #print(context)
+        if want and want in base_kws:
+            return then_fn(g, source_obj, context)
+        return []
+    return run
+
+def _fx_add_self_stats(params):
+    a = int(params.get("attack", 0))
+    h = int(params.get("health", 0))
+    def run(g, source_obj, context):
+        
+        # We’ll find the source minion by id (see step 3)
+        sid = getattr(source_obj, "id", None)
+        if sid is None:
+            return []
+        loc = g.find_minion(sid)
+        
+        if not loc:
+            return []
+        _, _, me = loc
+        me.attack += a
+        me.max_health += h
+        me.health += h
+        ev = [Event("Buff", {"minion": me.id, "attack_delta": a, "health_delta": h})]
+        ev += g._update_enrage(me)
+        return ev
+    return run
+
+def _fx_execute(params):
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Execute")
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+
+        # Must be enemy and damaged (current HP < max HP)
+        if obj.owner == owner or obj.health >= obj.max_health:
+            # Soft-fail: do nothing (keeps play flow safe)
+            return []
+
+        ev = []
+        ev.append(Event("SpellHit", {
+            "source": name, "target_type": "minion",
+            "minion": obj.id, "player": obj.owner
+        }))
+        ev += g.destroy_minion(obj, reason="Execute")
+        g.history += ev
+        return ev
+    return run
+
+
 # Registry maps effect name -> factory
 def _effect_factory(name, params, json_tokens):
     table = {
@@ -2391,6 +2579,9 @@ def _effect_factory(name, params, json_tokens):
         "if_summoned_tribe":                lambda p: _fx_if_summoned_tribe(p, json_tokens),
         "if_control_tribe":                 lambda p: _fx_if_control_tribe(p, json_tokens),
         "if_target_died_then":              lambda p: _fx_if_target_died_then(p, json_tokens),
+        "if_target_survived_then":          lambda p: _fx_if_target_survived_then(p, json_tokens),
+        "if_summoned_has_keyword":          lambda p: _fx_if_summoned_has_keyword(p, json_tokens),
+        "add_self_stats":                   _fx_add_self_stats,
         "destroy_weapon":                   _fx_destroy_weapon,
         "gain_armor":                       _fx_gain_armor,
         "adjacent_buff":                    _fx_adjacent_buff,
@@ -2403,6 +2594,10 @@ def _effect_factory(name, params, json_tokens):
         "temp_modify":                      _fx_temp_modify,
         "temp_cost":                        _fx_temp_cost,
         "discard_random":                   _fx_discard_random,
+        "random_enemy_damage":              _fx_random_enemy_damage,
+        "deal_damage_equal_armor":          _fx_deal_damage_equal_armor,
+        "execute":                          _fx_execute,
+        
     }
     if name not in table:
         raise ValueError(f"Unknown effect: {name}")

@@ -276,6 +276,61 @@
             ]
         },
         {
+            "id": "CROWD_FAVORITE",
+            "name": "Crowd Favorite",
+            "type": "MINION",
+            "rarity": "Epic",
+            "minion_type": "None",
+            "cost": 4,
+            "attack": 4,
+            "health": 4,
+            "text": "Whenever you play a minion with Battlecry, gain +1/+1.",
+            "keywords": [],
+            "triggers": [
+                {
+                    "on": "friendly_summon",
+                    "effects": [
+                        {
+                            "effect": "if_summoned_has_keyword",
+                            "keyword": "Battlecry",
+                            "then": [
+                                {
+                                    "effect": "add_self_stats",
+                                    "attack": 1,
+                                    "health": 1
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "SLAM",
+            "name": "Slam",
+            "type": "SPELL",
+            "cost": 2,
+            "text": "Deal 2 damage to a minion. If it survives, draw a card.",
+            "targeting": "any_minion",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 2
+                },
+                {
+                    "effect": "if_target_survived_then",
+                    "then": [
+                        {
+                            "effect": "draw",
+                            "count": 1,
+                            "owner": "source_owner"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
             "id": "STARVING_BUZZARD",
             "name": "Starving Buzzard",
             "type": "MINION",
@@ -376,10 +431,36 @@
             "rarity": "Rare",
             "minion_type": "None",
             "keywords": [
-                "Charge", "Divine Shield"
+                "Charge",
+                "Divine Shield"
             ],
             "text": "Charge. Divine Shield.",
             "targeting": "none"
+        },
+        {
+            "id": "CRUEL_TASKMASTER",
+            "name": "Cruel Taskmaster",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "None",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "text": "Battlecry: Deal 1 damage to a minion and give it +2 Attack.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 1
+                },
+                {
+                    "effect": "add_stats",
+                    "attack": 2
+                }
+            ],
+            "targeting": "any_minion"
         },
         {
             "id": "GIVE_TAUNT",
@@ -808,6 +889,9 @@
             "attack": 3,
             "health": 3,
             "text": "Battlecry: Restore 3 Health.",
+            "keywords": [
+                "Battlecry"
+            ],
             "battlecry": [
                 {
                     "effect": "heal",
@@ -826,6 +910,9 @@
             "attack": 3,
             "health": 2,
             "text": "Battlecry: Deal 3 damage to your hero.",
+            "keywords": [
+                "Battlecry"
+            ],
             "battlecry": [
                 {
                     "effect": "deal_damage",
@@ -845,6 +932,9 @@
             "attack": 2,
             "health": 1,
             "text": "Battlecry: Restore 2 Health.",
+            "keywords": [
+                "Battlecry"
+            ],
             "battlecry": [
                 {
                     "effect": "heal",
@@ -863,6 +953,9 @@
             "attack": 4,
             "health": 2,
             "text": "Battlecry: Deal 2 damage to the enemy hero.",
+            "keywords": [
+                "Battlecry"
+            ],
             "battlecry": [
                 {
                     "effect": "deal_damage",
@@ -881,6 +974,9 @@
             "attack": 2,
             "health": 2,
             "text": "Battlecry: Deal 1 damage.",
+            "keywords": [
+                "Battlecry"
+            ],
             "battlecry": [
                 {
                     "effect": "deal_damage",
@@ -899,6 +995,9 @@
             "attack": 2,
             "health": 3,
             "text": "Battlecry: Deal 2 damage.",
+            "keywords": [
+                "Battlecry"
+            ],
             "battlecry": [
                 {
                     "effect": "deal_damage",
@@ -1008,6 +1107,16 @@
                     "count": 1
                 }
             ],
+            "targeting": "none"
+        },
+        {
+            "id": "FIERY_WAR_AXE",
+            "name": "Fiery War Axe",
+            "type": "WEAPON",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 3,
+            "health": 2,
             "targeting": "none"
         },
         {
@@ -1363,6 +1472,78 @@
             "targeting": "enemy_character"
         },
         {
+            "id": "SHIELD_BLOCK",
+            "name": "Shield Block",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 3,
+            "text": "Gain 5 Armor. Draw a card.",
+            "on_cast": [
+                {
+                    "effect": "gain_armor",
+                    "amount": 5
+                },
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "SHIELD_SLAM",
+            "name": "Shield Slam",
+            "type": "SPELL",
+            "rarity": "Epic",
+            "cost": 1,
+            "text": "Deal damage equal to your Armor to a minion.",
+            "targeting": "any_minion",
+            "on_cast": [
+                {
+                    "effect": "deal_damage_equal_armor"
+                }
+            ]
+        },
+        {
+            "id": "EXECUTE",
+            "name": "Execute",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 1,
+            "text": "Destroy a damaged enemy minion.",
+            "targeting": "enemy_minion",
+            "on_cast": [
+                {
+                    "effect": "execute"
+                }
+            ]
+        },
+        {
+            "id": "ARMORSMITH",
+            "name": "Armorsmith",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "None",
+            "cost": 2,
+            "attack": 1,
+            "health": 4,
+            "text": "Whenever a friendly minion takes damage, gain 1 Armor.",
+            "keywords": [],
+            "triggers": [
+                {
+                    "on": "friendly_minion_damaged",
+                    "effects": [
+                        {
+                            "effect": "gain_armor",
+                            "amount": 1,
+                            "target": "friendly_face"
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "HAMMER_OF_WRATH",
             "name": "Hammer of Wrath",
             "type": "SPELL",
@@ -1685,6 +1866,22 @@
             "targeting": "none"
         },
         {
+            "id": "WHIRLWIND",
+            "name": "Whirlwind",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 1,
+            "text": "Deal 1 damage to all minions.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage_minions",
+                    "amount": 1,
+                    "target": "all"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "RAISE_WISPS",
             "name": "Raise Wisps",
             "type": "SPELL",
@@ -1717,7 +1914,7 @@
             "targeting": "none"
         },
         {
-            "id": "LEGENDARY_LEEROY_JENKINS",
+            "id": "LEEROY_JENKINS",
             "name": "Leeroy Jenkins",
             "type": "MINION",
             "rarity": "Legendary",
@@ -1735,6 +1932,51 @@
                     "card_id": "WHELP",
                     "count": 2,
                     "owner": "enemy"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "GROMMASH_HELLSCREAM",
+            "name": "Grommash Hellscream",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "minion_type": "None",
+            "cost": 8,
+            "attack": 4,
+            "health": 9,
+            "keywords": [
+                "Charge",
+                "Enrage"
+            ],
+            "text": "Charge. Has +6 Attack while damaged.",
+            "enrage": {
+                "attack": 6
+            },
+            "targeting": "none"
+        },
+        {
+            "id": "RAGNAROS_THE_FIRELORD",
+            "name": "Ragnaros the Firelord",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "minion_type": "Elemental",
+            "cost": 8,
+            "attack": 8,
+            "health": 8,
+            "text": "Can't attack. At the end of your turn, deal 8 damage to a random enemy.",
+            "keywords": [
+                "Can't Attack"
+            ],
+            "triggers": [
+                {
+                    "on": "end_of_your_turn",
+                    "effects": [
+                        {
+                            "effect": "random_enemy_damage",
+                            "amount": 8
+                        }
+                    ]
                 }
             ],
             "targeting": "none"

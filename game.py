@@ -319,7 +319,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = [ "ARGENT_COMMANDER" , "MORTAL_COIL", "SOULFIRE", "HELLFIRE"] * 15
+    desired = [ "CROWD_FAVORITE", "VOODOO_DOCTOR", "CRUEL_TASKMASTER", "ARMORSMITH", "SHIELD_SLAM", "EXECUTE"] * 5
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -371,10 +371,10 @@ playable_decks = [
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Warlock Deck (Zoo Aggro)")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
-#player_deck = None
+player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -390,7 +390,8 @@ def _pick_hero(hint, default):
     return default
 
 
-HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
+#HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
+HERO_PLAYER = hero_db.get("WARRIOR")
 HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
 STARTER_DECK_PLAYER = player_deck
@@ -538,7 +539,7 @@ def keyword_explanations_for_card(card_obj) -> List[str]:
     if getattr(card_obj, "on_cast", None) and card_obj.type == "MINION":
         kws.add("Battlecry")
 
-    for k in ["Battlecry","Deathrattle","Taunt","Rush","Charge","Silence"]:
+    for k in KEYWORD_HELP:
         if k in kws:
             tips.append(f"{k}: {KEYWORD_HELP[k]}")
     return tips
@@ -687,29 +688,30 @@ def draw_silence_overlay(r: pygame.Rect):
     screen.blit(s, (r.x, r.y))
 
 def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
-    """Green-glow condition for cards in hand."""
     c = g.cards_db[cid]
     p = g.players[pid]
 
-    # Mana + basic board space for minions
     eff_cost = g.get_effective_cost(pid, cid)
     if p.mana < eff_cost:
         return False
     if c.type == "MINION" and len(p.board) >= 7:
         return False
-    
-    # --- Secret duplicate check for UI ---
+
+    # Secrets: prevent duplicate
     is_secret = ("Secret" in getattr(c, "keywords", [])) or getattr(c, "is_secret", False) or (c.type == "SECRET")
     if is_secret:
-        # active_secrets is a list of dicts: {"card_id": ..., "name": ..., ...}
         if any(s.get("card_id") == cid for s in p.active_secrets or []):
             return False
 
-    # Optional: simple target availability checks using JSON "_TARGETING"
+    # Optional per-card requirement (e.g., EXECUTE needs a damaged enemy on board)
+    req = PLAY_REQUIREMENTS.get(cid)
+    if req and not req(g, pid):
+        return False
+
+    # Basic targeting availability (kept from your original)
     targ_map = g.cards_db.get("_TARGETING", {})
     need = (targ_map.get(cid, "none") or "none").lower()
 
-    # Spells still require a valid target; minions may be played without one (BC fizzles)
     if c.type == "SPELL":
         if need in ("friendly_minion", "friendly_minions"):
             return any(m.is_alive() for m in p.board)
@@ -719,10 +721,33 @@ def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
         if need in ("any_minion", "any_minions"):
             opp = 1 - pid
             return any(m.is_alive() for m in p.board) or any(m.is_alive() for m in g.players[opp].board)
-    # for MINION: don't gate on targets at all (we'll fizzle BC if none)
 
-    # "enemy_character" / "any_character" are always targetable (face exists)
     return True
+
+def _exists_damaged_enemy_minion(g, pid: int) -> bool:
+    opp = 1 - pid
+    return any(m.is_alive() and m.health < m.max_health for m in g.players[opp].board)
+
+def _filter_damaged_enemy_minions(g, pid: int, m) -> bool:
+    # Only allow enemy + damaged
+    return (m.owner != pid) and m.is_alive() and (m.health < m.max_health)
+
+# (Examples for future cards)
+def _exists_armor_for_shield_slam(g, pid: int) -> bool:
+    return getattr(g.players[pid], "armor", 0) > 0
+
+def _filter_any_enemy_minion(g, pid: int, m) -> bool:
+    return (m.owner != pid) and m.is_alive()
+
+# Registry: simple, extend as needed
+PLAY_REQUIREMENTS: dict[str, callable] = {
+    "EXECUTE": _exists_damaged_enemy_minion,
+    "SHIELD_SLAM": _exists_armor_for_shield_slam, 
+}
+
+TARGET_FILTERS: dict[str, callable] = {
+    "EXECUTE": _filter_damaged_enemy_minions,
+}
 
 def draw_rarity_droplet(r: pygame.Rect, rarity: Optional[str]):
     """Small gem centered at bottom of the card."""
@@ -1132,6 +1157,10 @@ def hand_hover_index(hot, mx, my) -> Optional[int]:
     return None
 
 def minion_ready_to_act(g: Game, m) -> bool:
+
+    if getattr(m, "cant_attack", False):
+        return False
+
     if getattr(m, "frozen", False):     # NEW
         return False
     if m.has_attacked_this_turn or m.attack <= 0:
@@ -1200,6 +1229,12 @@ def targets_for_card(g: Game, cid: str, pid: int):
     elif kind == "face":
         e_face = (side in ("enemy","any"))
         m_face = (side in ("friendly","any"))
+
+    # --- NEW: apply per-card filtering (e.g., EXECUTE → damaged enemy only)
+    filt = TARGET_FILTERS.get(cid)
+    if filt:
+        enemy_min = {m.id for m in enemy_all if m.id in enemy_min and filt(g, pid, m)}
+        my_min    = {m.id for m in my_all    if m.id in my_min    and filt(g, pid, m)}
 
     return enemy_min, my_min, e_face, m_face
 
@@ -2617,6 +2652,10 @@ def main():
                     for i, cid, r in hot["hand"]:
                         if r.collidepoint(mx, my):
                             cobj = g.cards_db[cid]
+                            if not card_is_playable_now(g, 0, cid):
+                                add_log("You can't play that right now.")
+                                # (Optional) small shake/flash feedback could be queued here.
+                                break
                             if g.active_player == 0 and cobj.type == "MINION" and card_is_playable_now(g, 0, cid) and len(g.players[0].board) < 7:
                                 # ALWAYS begin drag for minions (targeted or not) ✅
                                 dragging_from_hand = (i, cid, r.copy())
