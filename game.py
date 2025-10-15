@@ -156,6 +156,10 @@ def format_event(e, g, skip=False) -> str:
     if DEBUG and not skip:
         return f"{k}: {format_event(e, g, True)}"
 
+    if k == "CardDiscarded":
+        who = "You" if p.get("player") == 0 else "AI"
+        return f"{who} discarded: {p.get('name')}"
+    
     if k == "Frozen":
         t = p.get("target_type")
         if t == "player":
@@ -315,7 +319,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = [ "DEFENDER_OF_ARGUS", "DIRE_WOLF_ALPHA", "STORMWIND_CHAMPION", "SORCERERS_APPRENTICE", "ARCANE_MISSILES"  ] * 15
+    desired = [ "ARGENT_COMMANDER" , "MORTAL_COIL", "SOULFIRE", "HELLFIRE"] * 15
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -361,15 +365,16 @@ except Exception as e:
 playable_decks = [
     "Classic Hunter Deck (Midrange / Face Hybrid)", 
     "Classic Paladin Deck (Midrange / Control)",
-    "Classic Mage Deck (Spell Control / Burst)"
+    "Classic Mage Deck (Spell Control / Burst)",
+    "Classic Warlock Deck (Zoo Aggro)"
 ]
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Warlock Deck (Zoo Aggro)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
-player_deck = None
+#player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:

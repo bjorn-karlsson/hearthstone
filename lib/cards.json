@@ -252,6 +252,30 @@
             ]
         },
         {
+            "id": "MORTAL_COIL",
+            "name": "Mortal Coil",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Deal 1 damage to a minion. If that kills it, draw a card.",
+            "targeting": "any_minion",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 1
+                },
+                {
+                    "effect": "if_target_died_then",
+                    "then": [
+                        {
+                            "effect": "draw",
+                            "count": 1,
+                            "owner": "source_owner"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
             "id": "STARVING_BUZZARD",
             "name": "Starving Buzzard",
             "type": "MINION",
@@ -340,6 +364,21 @@
                 "Charge"
             ],
             "text": "Charge.",
+            "targeting": "none"
+        },
+        {
+            "id": "ARGENT_COMMANDER",
+            "name": "Argent Commander",
+            "type": "MINION",
+            "cost": 6,
+            "attack": 4,
+            "health": 2,
+            "rarity": "Rare",
+            "minion_type": "None",
+            "keywords": [
+                "Charge", "Divine Shield"
+            ],
+            "text": "Charge. Divine Shield.",
             "targeting": "none"
         },
         {
@@ -542,7 +581,7 @@
             "name": "Stormwind Champion",
             "type": "MINION",
             "minion_type": "None",
-            "cost": 1,
+            "cost": 7,
             "attack": 6,
             "health": 6,
             "rarity": "Common",
@@ -874,7 +913,7 @@
             "type": "MINION",
             "rarity": "Rare",
             "minion_type": "None",
-            "cost": 1,
+            "cost": 5,
             "attack": 2,
             "health": 3,
             "text": "Battlecry: Give adjacent minions +1/+1 and Taunt.",
@@ -910,6 +949,48 @@
                 }
             ],
             "targeting": "none"
+        },
+        {
+            "id": "DOOMGUARD",
+            "name": "Doomguard",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Demon",
+            "cost": 5,
+            "attack": 5,
+            "health": 7,
+            "keywords": [
+                "Charge"
+            ],
+            "text": "Charge. Battlecry: Discard two random cards.",
+            "battlecry": [
+                {
+                    "effect": "discard_random",
+                    "count": 2
+                }
+            ]
+        },
+        {
+            "id": "DARK_IRON_DWARF",
+            "name": "Dark Iron Dwarf",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "None",
+            "cost": 4,
+            "attack": 4,
+            "health": 4,
+            "text": "Battlecry: Give a minion +2 Attack this turn.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "temp_modify",
+                    "attack": 2,
+                    "target": "any_minion"
+                }
+            ],
+            "targeting": "any_minion"
         },
         {
             "id": "NOVICE_ENGINEER",
@@ -1082,7 +1163,7 @@
             "id": "TRUESILVER_CHAMPION",
             "name": "Truesilver Champion",
             "type": "WEAPON",
-            "cost": 1,
+            "cost": 4,
             "attack": 4,
             "health": 2,
             "rarity": "Rare",
@@ -1401,6 +1482,25 @@
             ]
         },
         {
+            "id": "SOULFIRE",
+            "name": "Soulfire",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 1,
+            "text": "Deal 4 damage. Discard a random card.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 4
+                },
+                {
+                    "effect": "discard_random",
+                    "count": 1
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
             "id": "FIREBALL",
             "name": "Fireball",
             "type": "SPELL",
@@ -1535,6 +1635,22 @@
                 }
             ],
             "targeting": "any_minion"
+        },
+        {
+            "id": "HELLFIRE",
+            "name": "Hellfire",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 3,
+            "text": "Deal 3 to all characters.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage",
+                    "amount": 3,
+                    "target": "all"
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "CONSECRATION",

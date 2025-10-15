@@ -81,6 +81,8 @@ class Minion:
     enrage_spec: Optional[Dict[str, Any]] = None
     enrage_active: bool = False
     triggers_map: Dict[str, List[Callable[['Game','Minion', Optional[Dict]] , List[Event]]]] = field(default_factory=dict)
+    temp_stats: Dict[int, Dict[str, int]] = field(default_factory=dict)  # {pid: {"attack":0,"health":0,"max_health":0}}
+    temp_keywords: Dict[int, Dict[str, int]] = field(default_factory=dict)  # {pid: {"charge":N,"taunt":N,"rush":N,"divine_shield":N}}
 
     has_attacked_this_turn: bool = False
 
@@ -138,6 +140,7 @@ class PlayerState:
     hero_frozen: bool = False
     weapon: Optional[Weapon] = None
     hero_has_attacked_this_turn: bool = False
+    temp_cost_mods: List[Dict[str, Any]] = field(default_factory=list)
 
     def draw(self, g:'Game', n:int=1) -> List[Event]:
         ev: List[Event] = []
@@ -185,6 +188,149 @@ class Game:
 
     def other(self, pid:int) -> int:
         return 1 - pid
+
+    def _apply_temp_to_minion(self, m: Minion, caster_pid: int,
+                              *, attack=0, health=0, max_health=0,
+                              add_keywords: List[str] = None,
+                              remove_keywords: List[str] = None) -> List[Event]:
+        """
+        Apply temporary deltas & keyword toggles that expire at end of caster_pid's turn.
+        Stacks safely. Health reductions clamp current health if max drops later.
+        """
+        add_keywords = add_keywords or []
+        remove_keywords = remove_keywords or []
+
+        # --- record & apply stat deltas
+        m.temp_stats.setdefault(caster_pid, {"attack":0,"health":0,"max_health":0})
+        rec = m.temp_stats[caster_pid]
+        rec["attack"] += int(attack)
+        rec["health"] += int(health)
+        rec["max_health"] += int(max_health)
+
+        ev: List[Event] = []
+        da, dh, dm = int(attack), int(health), int(max_health)
+
+        if da:
+            before = m.attack
+            m.attack = max(0, m.attack + da)
+            ev.append(Event("Buff", {"minion": m.id, "attack_delta": m.attack - before, "health_delta": 0}))
+
+        if dm:
+            before_max = m.max_health
+            m.max_health = max(1, m.max_health + dm)
+            # On a *max* increase, lift current HP by the delta
+            if dm > 0:
+                m.health += dm
+            else:
+                # clamp current HP down to new max
+                if m.health > m.max_health:
+                    m.health = m.max_health
+            ev.append(Event("Buff", {"minion": m.id, "attack_delta": 0, "health_delta": m.max_health - before_max}))
+        if dh:
+            before_h = m.health
+            # health delta does not change max; clamp to [0, max]
+            m.health = max(0, min(m.max_health, m.health + dh))
+            ev.append(Event("Buff", {"minion": m.id, "attack_delta": 0, "health_delta": m.health - before_h}))
+
+        # --- keywords: keep stack counters so multiple sources are safe
+        m.temp_keywords.setdefault(caster_pid, {})
+        kw = m.temp_keywords[caster_pid]
+
+        def _bump(k, n):
+            k = k.lower().replace(" ", "_")
+            kw[k] = kw.get(k, 0) + n
+            # apply to live boolean flags
+            if k == "taunt":           m.taunt = m.taunt or kw[k] > 0
+            elif k == "charge":        m.charge = m.charge or kw[k] > 0
+            elif k == "rush":          m.rush = m.rush or kw[k] > 0
+            elif k in ("divine_shield","divine_shielded"):
+                # divine shield treated like a boolean grant; temp stacks keep it on (won't re-pop bubbles).
+                if kw[k] > 0: m.divine_shield = True
+
+        for k in add_keywords:
+            _bump(k, +1)
+        for k in remove_keywords:
+            _bump(k, -1)
+
+        # keep enrage correct
+        ev += self._update_enrage(m)
+        return ev
+
+    def _expire_temps_for_pid(self, ending_pid: int) -> List[Event]:
+        """
+        Revert *all* temporary effects that were scheduled to expire at end of ending_pid's turn:
+        - minion stat/keyword temps (both sides)
+        - player temp cost rules (for both players)
+        """
+        ev: List[Event] = []
+
+        # --- Minions: revert stats + keywords for ending_pid
+        for side in (0, 1):
+            for m in list(self.players[side].board):
+                # stats
+                rec = m.temp_stats.pop(ending_pid, None)
+                if rec:
+                    da = rec.get("attack", 0)
+                    dh = rec.get("health", 0)
+                    dm = rec.get("max_health", 0)
+
+                    if da:
+                        before = m.attack
+                        m.attack = max(0, m.attack - da)
+                        ev.append(Event("BuffExpired", {"minion": m.id, "attack_delta": m.attack - before, "reason": "EndOfTurn"}))
+
+                    if dm:
+                        before_max = m.max_health
+                        m.max_health = max(1, m.max_health - dm)
+                        if m.health > m.max_health:
+                            m.health = m.max_health
+                        ev.append(Event("BuffExpired", {"minion": m.id, "attack_delta": 0, "health_delta": m.max_health - before_max, "reason": "EndOfTurn"}))
+
+                    if dh:
+                        before_h = m.health
+                        m.health = max(0, min(m.max_health, m.health - dh))
+                        ev.append(Event("BuffExpired", {"minion": m.id, "attack_delta": 0, "health_delta": m.health - before_h, "reason": "EndOfTurn"}))
+
+                    ev += self._update_enrage(m)
+
+                # keywords
+                kw = m.temp_keywords.pop(ending_pid, None)
+                if kw:
+                    # recompute booleans by subtracting this pid's stacks
+                    for k, n in kw.items():
+                        # Remove stack and then recompute "any stacks > 0 across remaining pids"
+                        pass
+                    # recompute from remaining stacks
+                    def _kw_total(name):
+                        total = 0
+                        for d in m.temp_keywords.values():
+                            total += d.get(name, 0)
+                        return total
+
+                    # Update flags (don't remove permanent flags if base granted them)
+                    if "taunt" in (kw or {}):
+                        m.taunt = (m.taunt and _kw_total("taunt") > 0) or ("Taunt" in m.base_keywords)
+                    if "charge" in (kw or {}):
+                        m.charge = (m.charge and _kw_total("charge") > 0) or ("Charge" in m.base_keywords)
+                    if "rush" in (kw or {}):
+                        m.rush = (m.rush and _kw_total("rush") > 0) or ("Rush" in m.base_keywords)
+                    if "divine_shield" in (kw or {}):
+                        # do not force-remove a live shield if it came from elsewhere or from base card
+                        m.divine_shield = m.divine_shield and (_kw_total("divine_shield") > 0 or ("Divine Shield" in m.base_keywords))
+
+        # --- Player temp cost rules
+        for pid in (0, 1):
+            p = self.players[pid]
+            keep: List[Dict[str, Any]] = []
+            for mod in p.temp_cost_mods:
+                if mod.get("expires_pid") == ending_pid and mod.get("expires_when") == "end_of_turn":
+                    # drop (expired)
+                    continue
+                keep.append(mod)
+            p.temp_cost_mods = keep
+
+        return ev
+
 
     def find_minion(self, minion_id:int) -> Optional[Tuple[int, int, Minion]]:
         for pid in (0,1):
@@ -329,6 +475,27 @@ class Game:
 
                 if apply:
                     delta += d
+
+        for mod in self.players[pid].temp_cost_mods:
+            scope = str(mod.get("scope", "spells")).lower()
+            d     = int(mod.get("delta", 0))
+            fl    = int(mod.get("floor", 0))
+            floor = min(floor, fl)
+
+            apply = False
+            if scope in ("friendly:spell","friendly:spells","spells"):
+                apply = (cobj.type == "SPELL")
+            elif scope.startswith("friendly:type:"):
+                want = scope.split(":", 2)[2].upper()
+                apply = (getattr(cobj, "type","").upper() == want)
+            elif scope.startswith("friendly:tribe:"):
+                want = scope.split(":", 2)[2].lower()
+                apply = str(getattr(cobj, "minion_type","none")).lower() == want
+
+            if apply:
+                delta += d
+
+
 
         return max(floor, base + delta)
 
@@ -534,6 +701,8 @@ class Game:
             raise IllegalAction("Not your turn")
         self.active_player = self.other(pid)
         ev = [Event("TurnEnd", {"player": pid})]
+
+        ev += self._expire_temps_for_pid(pid)
 
         # thaw after this player’s turn finishes
         ev += self._thaw_owner(pid)   # NEW
@@ -1287,6 +1456,18 @@ def _iter_enemy_minions(g:'Game', owner:int):
 
 # ---------------------- Target helpers ----------------------
 
+def _minion_dead_or_gone(g: 'Game', minion_id: int) -> bool:
+    # still on board?
+    loc = g.find_minion(minion_id)
+    if loc:
+        return not loc[2].is_alive()  # should always be alive on board, but keep for safety
+    # not on board — check both graveyards
+    for pid in (0, 1):
+        if any(dm.id == minion_id for dm in g.players[pid].dead_minions):
+            return True
+    # not in graveyard either (e.g., bounced/returned to hand/removed) — treat as "gone"
+    return True
+
 def _resolve_tagged_target(g, target):
     """
     Accepts either:
@@ -1820,32 +2001,64 @@ def _fx_random_pings(params):
     return run
 
 def _fx_aoe_damage(params):
+    """
+    Deal N damage to:
+      - default: enemy hero + enemy minions (backward compatible)
+      - target: "enemy" | "friendly" | "all" (aka both, all_characters)
+    """
     n = int(params["amount"])
+    scope = str(params.get("target", "enemy")).lower()
+
     def run(g, source_obj, target):
         name  = getattr(source_obj, "name", "Effect")
         owner = getattr(source_obj, "owner", g.active_player)
-        dmg   = _with_spell_bonus(n, g, owner, source_obj)  # NEW
+        dmg   = _with_spell_bonus(n, g, owner, source_obj)
+
+        # which sides to hit?
+        if scope in ("all", "both", "all_characters"):
+            sides = [owner, g.other(owner)]
+        elif scope in ("friendly", "ally", "self"):
+            sides = [owner]
+        else:  # "enemy" | "opponent" (default)
+            sides = [g.other(owner)]
 
         ev = []
-        opp = g.other(owner)
-        ev.append(Event("SpellHit", {"source": name, "target_type":"player", "player": opp, "aoe": True}))
-        ev += g.deal_damage_to_player(opp, dmg, source=name)
-        for _, m in _iter_enemy_minions(g, owner):  # NEW
-            ev.append(Event("SpellHit", {"source": name, "target_type":"minion", "minion": m.id, "name": m.name, "aoe": True}))
-            ev += g.deal_damage_to_minion(m, dmg, source=name)
+        for pid in sides:
+            # hit hero
+            ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": pid, "aoe": True}))
+            ev += g.deal_damage_to_player(pid, dmg, source=name)
+
+            # snapshot the board so deaths during iteration don't skip or double-hit
+            for m in list(g.players[pid].board):
+                if not m.is_alive():
+                    continue
+                ev.append(Event("SpellHit", {"source": name, "target_type": "minion",
+                                             "minion": m.id, "name": m.name, "aoe": True}))
+                ev += g.deal_damage_to_minion(m, dmg, source=name)
         return ev
     return run
 
 def _fx_aoe_damage_minions(params):
     n = int(params["amount"])
+    scope = str(params.get("target", "enemy")).lower()
+
     def run(g, source_obj, target):
         name  = getattr(source_obj, "name", "Effect")
         owner = getattr(source_obj, "owner", g.active_player)
-        dmg   = _with_spell_bonus(n, g, owner, source_obj)  # NEW
+        dmg   = _with_spell_bonus(n, g, owner, source_obj)
+
+        if scope in ("all", "both", "all_minions"):
+            sides = [owner, g.other(owner)]
+        elif scope in ("friendly", "ally", "self", "friendly_minions"):
+            sides = [owner]
+        else:  # "enemy", "enemies", "opponent", "enemy_minions"
+            sides = [g.other(owner)]
 
         ev = []
-        for _, m in _iter_enemy_minions(g, owner):  # NEW
-            ev += g.deal_damage_to_minion(m, dmg, source=name)
+        for pid in sides:
+            for m in list(g.players[pid].board):
+                if m.is_alive():
+                    ev += g.deal_damage_to_minion(m, dmg, source=name)
         return ev
     return run
 
@@ -1991,6 +2204,42 @@ def _fx_summon(params, json_db_tokens):
 
     return run
 
+def _fx_temp_modify(params):
+    # Any subset is fine
+    a  = int(params.get("attack", 0))
+    h  = int(params.get("health", 0))
+    mh = int(params.get("max_health", 0))
+    add_kw = [k for k in params.get("add_keywords", [])]
+    rem_kw = [k for k in params.get("remove_keywords", [])]
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        caster = getattr(source_obj, "owner", g.active_player)
+        return g._apply_temp_to_minion(obj, caster_pid=caster,
+                                       attack=a, health=h, max_health=mh,
+                                       add_keywords=add_kw, remove_keywords=rem_kw)
+    return run
+
+def _fx_temp_cost(params):
+    """
+    JSON:
+      { "effect":"temp_cost", "delta":-1, "floor":0, "scope":"friendly:spell|friendly:type:MINION|friendly:tribe:beast|spells" }
+    """
+    delta = int(params.get("delta", 0))
+    floor = int(params.get("floor", 0))
+    scope = str(params.get("scope", "spells")).lower()
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        g.players[owner].temp_cost_mods.append({
+            "scope": scope, "delta": delta, "floor": floor,
+            "expires_pid": owner, "expires_when": "end_of_turn"
+        })
+        return [Event("TempRuleAdded", {"player": owner, "kind": "cost", "delta": delta, "scope": scope})]
+    return run
+
 def _fx_transform(params, json_db_tokens):
     token_id = params["card_id"]
     def run(g, source_obj, target):
@@ -2009,6 +2258,73 @@ def _fx_transform(params, json_db_tokens):
         spec = dict(raw); spec.setdefault("id", token_id)
         ev += _summon_from_card_spec(g, pid, spec, 1)
         return ev
+    return run
+
+def _fx_if_target_died_then(params, json_db_tokens):
+    """
+    After prior effects, if the originally-tagged minion target died (or left play),
+    run 'then' effects.
+    """
+    then_spec = params.get("then", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+
+    def run(g, source_obj, target):
+        # We expect the spell to have been cast with a tagged minion target:
+        #   target == {"minion": <id>}
+        mid = None
+        if isinstance(target, dict) and "minion" in target:
+            mid = target["minion"]
+        elif isinstance(target, int):
+            # legacy int-minion id targeting supported
+            mid = target
+
+        if mid is None:
+            return []
+
+        if _minion_dead_or_gone(g, mid):
+            return then_fn(g, source_obj, target)
+        return []
+    return run
+
+
+
+def _fx_discard_random(params):
+    """
+    Discard N random cards from the caster's hand.
+    JSON:
+      { "effect":"discard_random", "count": 2 }
+    """
+    count = int(params.get("count", 1))
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        p = g.players[owner]
+        n = min(count, len(p.hand))
+        ev: List[Event] = []
+        # choose n distinct random indices
+        if n <= 0:
+            return ev
+        # pick indices, then remove by descending index so positions stay valid
+        idxs = list(range(len(p.hand)))
+        picks = g.rng.sample(idxs, n)
+        picks.sort(reverse=True)
+        for i in picks:
+            cid = p.hand.pop(i)
+            p.graveyard.append(cid)
+            cname = cid
+            if cid in g.cards_db:
+                try:
+                    cname = getattr(g.cards_db[cid], "name", cid)
+                except Exception:
+                    pass
+            ev.append(Event("CardDiscarded", {
+                "player": owner,
+                "card": cid,        # keep id for consumers
+                "name": cname       # add human-readable name
+            }))
+            
+        return ev
+
     return run
 
 def _fx_set_attack(params):
@@ -2057,32 +2373,36 @@ def _fx_set_health(params):
 # Registry maps effect name -> factory
 def _effect_factory(name, params, json_tokens):
     table = {
-        "deal_damage":              _fx_deal_damage,
-        "heal":                     _fx_heal,
-        "draw":                     _fx_draw,
-        "gain_temp_mana":           _fx_gain_temp_mana,
-        "random_pings":             _fx_random_pings,
-        "aoe_damage":               _fx_aoe_damage,
-        "aoe_damage_minions":       _fx_aoe_damage_minions,
-        "add_attack":               _fx_add_attack,
-        "add_stats":                _fx_add_stats,
-        "silence":                  _fx_silence,
-        "add_keyword":              _fx_add_keyword,
-        "summon":                   lambda p: _fx_summon(p, json_tokens),
-        "summon_from_pool":         lambda p: _fx_summon_from_pool(p, json_tokens),
-        "transform":                lambda p: _fx_transform(p, json_tokens),
-        "equip_weapon":             lambda p: _fx_equip_weapon(p, json_tokens),
-        "if_summoned_tribe":        lambda p: _fx_if_summoned_tribe(p, json_tokens),
-        "if_control_tribe":         lambda p: _fx_if_control_tribe(p, json_tokens),
-        "destroy_weapon":           _fx_destroy_weapon,
-        "gain_armor":               _fx_gain_armor,
-        "adjacent_buff":            _fx_adjacent_buff,
-        "set_health":               _fx_set_health,
-        "set_attack":               _fx_set_attack,
-        "multiply_attack":          _fx_multiply_attack,
-        "weapon_durability_delta":  _fx_weapon_durability_delta,
-        "freeze":                   _fx_freeze,
-        "discover_equal_remaining_mana": _fx_discover_equal_remaining_mana,
+        "deal_damage":                      _fx_deal_damage,
+        "heal":                             _fx_heal,
+        "draw":                             _fx_draw,
+        "gain_temp_mana":                   _fx_gain_temp_mana,
+        "random_pings":                     _fx_random_pings,
+        "aoe_damage":                       _fx_aoe_damage,
+        "aoe_damage_minions":               _fx_aoe_damage_minions,
+        "add_attack":                       _fx_add_attack,
+        "add_stats":                        _fx_add_stats,
+        "silence":                          _fx_silence,
+        "add_keyword":                      _fx_add_keyword,
+        "summon":                           lambda p: _fx_summon(p, json_tokens),
+        "summon_from_pool":                 lambda p: _fx_summon_from_pool(p, json_tokens),
+        "transform":                        lambda p: _fx_transform(p, json_tokens),
+        "equip_weapon":                     lambda p: _fx_equip_weapon(p, json_tokens),
+        "if_summoned_tribe":                lambda p: _fx_if_summoned_tribe(p, json_tokens),
+        "if_control_tribe":                 lambda p: _fx_if_control_tribe(p, json_tokens),
+        "if_target_died_then":              lambda p: _fx_if_target_died_then(p, json_tokens),
+        "destroy_weapon":                   _fx_destroy_weapon,
+        "gain_armor":                       _fx_gain_armor,
+        "adjacent_buff":                    _fx_adjacent_buff,
+        "set_health":                       _fx_set_health,
+        "set_attack":                       _fx_set_attack,
+        "multiply_attack":                  _fx_multiply_attack,
+        "weapon_durability_delta":          _fx_weapon_durability_delta,
+        "freeze":                           _fx_freeze,
+        "discover_equal_remaining_mana":    _fx_discover_equal_remaining_mana,
+        "temp_modify":                      _fx_temp_modify,
+        "temp_cost":                        _fx_temp_cost,
+        "discard_random":                   _fx_discard_random,
     }
     if name not in table:
         raise ValueError(f"Unknown effect: {name}")
