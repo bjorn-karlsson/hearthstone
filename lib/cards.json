@@ -427,6 +427,21 @@
             "targeting": "none"
         },
         {
+            "id": "VOIDWALKER",
+            "name": "Voidwalker",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Demon",
+            "cost": 1,
+            "attack": 1,
+            "health": 3,
+            "keywords": [
+                "Taunt"
+            ],
+            "text": "Taunt.",
+            "targeting": "none"
+        },
+        {
             "id": "KOBOLD_GEOMANCER",
             "name": "Kobold Geomancer",
             "type": "MINION",
@@ -452,7 +467,8 @@
             "attack": 4,
             "health": 4,
             "keywords": [
-                "Spell Damage", "Battlecry"
+                "Spell Damage",
+                "Battlecry"
             ],
             "battlecry": [
                 {
@@ -526,7 +542,7 @@
             "name": "Stormwind Champion",
             "type": "MINION",
             "minion_type": "None",
-            "cost": 7,
+            "cost": 1,
             "attack": 6,
             "health": 6,
             "rarity": "Common",
@@ -762,6 +778,25 @@
             "targeting": "any_character"
         },
         {
+            "id": "FLAMEIMP",
+            "name": "Flame imp",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Demon",
+            "cost": 1,
+            "attack": 3,
+            "health": 2,
+            "text": "Battlecry: Deal 3 damage to your hero.",
+            "battlecry": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 3,
+                    "target": "friendly_face"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "VOODOO_DOCTOR",
             "name": "Voodoo Doctor",
             "type": "MINION",
@@ -839,7 +874,7 @@
             "type": "MINION",
             "rarity": "Rare",
             "minion_type": "None",
-            "cost": 5,
+            "cost": 1,
             "attack": 2,
             "health": 3,
             "text": "Battlecry: Give adjacent minions +1/+1 and Taunt.",
@@ -852,6 +887,26 @@
                     "attack": 1,
                     "health": 1,
                     "taunt": true
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "DIRE_WOLF_ALPHA",
+            "name": "Dire Wolf Alpha",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Beast",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "text": "Adjacent minions have +1 Attack.",
+            "keywords": [],
+            "auras": [
+                {
+                    "kind": "stats",
+                    "scope": "adjacent_friendly_minions",
+                    "attack": 1
                 }
             ],
             "targeting": "none"

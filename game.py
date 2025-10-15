@@ -308,14 +308,14 @@ def make_starter_deck(db, seed=None):
         "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER", "KOBOLD_BLASTER",
         # 4-cost
         "CHILLWIND_YETI", "FIREBALL", "BLESSING_OF_KINGS",
-        "POLYMORPH", "ARCANE_INTELLECT", "ARCANE_INTELLECT",
+        "POLYMORPH", "ARCANE_INTELLECT",
         "SPELLBREAKER", "SHIELDMASTA", "DEFENDER_OF_ARGUS", "ARATHI_WEAPONSMITH",
         # 5+ cost
         "SILVER_HAND_KNIGHT", "CONSECRATION", "BOULDERFIST_OGRE", "FLAMESTRIKE", "RAISE_WISPS", "FERAL_SPIRIT",
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = ["LOOT_HOARDER"] * 15
+    desired = [ "DEFENDER_OF_ARGUS", "DIRE_WOLF_ALPHA", "STORMWIND_CHAMPION", "SORCERERS_APPRENTICE", "ARCANE_MISSILES"  ] * 15
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -369,7 +369,7 @@ playable_decks = [
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
-#player_deck = None
+player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:

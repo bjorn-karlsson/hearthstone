@@ -284,6 +284,7 @@ class Game:
         ev.append(Event("MinionDied", {"minion": m.id, "owner": pid, "reason": reason, "name": m.name}))
         if m.deathrattle:
             ev += m.deathrattle(self, m)
+        ev += self._refresh_stat_auras(pid)
         return ev
 
     def get_effective_cost(self, pid: int, cid: str) -> int:
@@ -367,12 +368,24 @@ class Game:
         - "other_friendly_minions"
         """
         scope = str(spec.get("scope", "other_friendly_minions")).lower()
-        tribe = str(spec.get("tribe", "") or "").strip()  # NEW: optional
+        tribe = str(spec.get("tribe", "") or "").strip() 
         if scope == "other_friendly_minions":
             pool = [m for m in self.players[owner].board if m.is_alive() and m.id != source_id]
             if tribe:
                 pool = [m for m in pool if _has_tribe(m, tribe)]     # NEW
             return pool
+        
+        if scope == "adjacent_friendly_minions":
+            board = self.players[owner].board
+            idx = next((i for i, m in enumerate(board) if m.id == source_id), -1)
+            if idx == -1:
+                return []
+            neigh = []
+            if idx - 1 >= 0 and board[idx - 1].is_alive():
+                neigh.append(board[idx - 1])
+            if idx + 1 < len(board) and board[idx + 1].is_alive():
+                neigh.append(board[idx + 1])
+            return neigh
         # Fallback: no targets
         return []
 
@@ -405,35 +418,64 @@ class Game:
             return []
         ev: List[Event] = []
         legacy_used = False
-        for spec in self._iter_stat_auras(source):
-            if spec.get("_legacy_stats"):  # keep your old flag behavior
+
+        specs = list(self._iter_stat_auras(source))
+        cache = getattr(source, "_aura_targets_cache", None)
+        if cache is None:
+            cache = {}
+            setattr(source, "_aura_targets_cache", cache)
+
+        for i, spec in enumerate(specs):
+            if spec.get("_legacy_stats"):
                 legacy_used = True
             targets = self._aura_targets(source.owner, source.id, spec)
+            # remember exactly who we buffed
+            cache[i] = {t.id for t in targets}
             ev += self._apply_aura_delta(targets, spec, +1)
+
         if legacy_used:
             source.aura_active = True
         return ev
 
     def _disable_aura(self, source: Minion) -> List[Event]:
         ev: List[Event] = []
-        for spec in self._iter_stat_auras(source):
-            targets = self._aura_targets(source.owner, source.id, spec)
-            ev += self._apply_aura_delta(targets, spec, -1)
+        specs = list(self._iter_stat_auras(source))
+        cache = getattr(source, "_aura_targets_cache", {})  # may be missing
+
+        for i, spec in enumerate(specs):
+            # use the cached targets (who actually had the buff)
+            idset = set(cache.get(i, set()))
+            if not idset:
+                continue
+            # resolve ids -> current Minion objects (and still alive)
+            tlist: List[Minion] = []
+            for mid in list(idset):
+                loc = self.find_minion(mid)
+                if loc:
+                    _, _, mm = loc
+                    if mm.is_alive():
+                        tlist.append(mm)
+            ev += self._apply_aura_delta(tlist, spec, -1)
+            # clear cache entry
+            cache.pop(i, None)
+
         source.aura_active = False
         return ev
 
-    def _apply_existing_auras_to(self, newcomer: Minion) -> List[Event]:
-        ev: List[Event] = []
-        for src in self.players[newcomer.owner].board:
-            if src.id == newcomer.id or not src.is_alive() or src.silenced:
-                continue
-            for spec in self._iter_stat_auras(src):
-                scope = str(spec.get("scope", "other_friendly_minions")).lower()
-                if scope == "other_friendly_minions":
-                    tribe = str(spec.get("tribe","") or "").strip()
-                    if (not tribe) or _has_tribe(newcomer, tribe):
-                        ev += self._apply_aura_delta([newcomer], spec, +1)
-        return ev
+    # def _apply_existing_auras_to(self, newcomer: Minion) -> List[Event]:
+    #     ev: List[Event] = []
+    #     for src in self.players[newcomer.owner].board:
+    #         if src.id == newcomer.id or not src.is_alive() or src.silenced:
+    #             continue
+    #         for spec in self._iter_stat_auras(src):
+    #             scope = str(spec.get("scope", "other_friendly_minions")).lower()
+    #             if scope == "other_friendly_minions":
+    #                 continue
+    #             elif scope == "adjacent_friendly_minions":
+    #                 # Defer adjacency to the global refresh so caches stay correct.
+    #                 # (No direct application here.)
+    #                 continue
+    #     return ev
 
     def _iter_stat_auras(self, source: Minion):
         # legacy “aura_spec”
@@ -798,9 +840,13 @@ class Game:
             # if the minion provides an aura, enable it now
             ev += self._enable_aura(m)
             # and let existing friendly auras affect this newcomer
-            ev += self._apply_existing_auras_to(m)
+            #ev += self._apply_existing_auras_to(m)
+
+            # Recompute all adjacent auras for this side so old neighbors lose stale buffs
+            ev += self._refresh_stat_auras(pid)
 
             ev += self._handle_friendly_summon(pid, m.id)
+            
 
             # --- after you insert the minion and add MinionSummoned + auras ---
             if card.battlecry:
@@ -1145,6 +1191,30 @@ class Game:
             ev += self._run_minion_triggers(att, "self_deals_damage", {"player": opp})
 
         self.history += ev
+        return ev
+    
+    def _refresh_stat_auras(self, owner: int) -> List[Event]:
+        """Re-evaluate all *stats* auras (legacy aura_spec or auras[kind=stats]) for OWNER."""
+        ev: List[Event] = []
+        for src in list(self.players[owner].board):
+            if not src.is_alive() or src.silenced:
+                continue
+
+            # Needs refresh if the source has any stats aura (regardless of scope)
+            has_legacy_stats = (
+                getattr(src, "aura_spec", None)
+                and str(src.aura_spec.get("scope", "")).lower() in (
+                    "adjacent_friendly_minions", "other_friendly_minions"
+                )
+            )
+            has_list_stats = any(
+                str(a.get("kind", "")).lower() == "stats" and
+                str(a.get("scope", "")).lower() in ("adjacent_friendly_minions", "other_friendly_minions")
+                for a in getattr(src, "auras", [])
+            )
+            if has_legacy_stats or has_list_stats:
+                ev += self._disable_aura(src)
+                ev += self._enable_aura(src)
         return ev
 
 def _ev_hero_power(pid, hero_name):
@@ -1718,25 +1788,32 @@ def _fx_gain_temp_mana(params):
     return run
 
 def _fx_random_pings(params):
-    count = int(params["count"])
+    base_count = int(params["count"])
+
     def run(g, source_obj, target):
         name  = getattr(source_obj, "name", "Effect")
         owner = getattr(source_obj, "owner", g.active_player)
-        per_hit = _with_spell_bonus(1, g, owner, source_obj)  # NEW
+
+        # NEW: Spell Damage increases the *number* of pings, not the damage per ping
+        extra = g.get_spell_damage(owner) if _is_spell_source(source_obj) else 0
+        total = max(0, base_count + extra)
+        per_hit = 1  # each missile still deals 1
 
         opp = g.other(owner)
         ev = []
-        for _ in range(count):
-            pool = [("player", opp)] + [("minion", m.id) for m in g.players[opp].board if m.is_alive()]
+        for _ in range(total):
+            pool = [("player", opp)] + [
+                ("minion", m.id) for m in g.players[opp].board if m.is_alive()
+            ]
             tgt_kind, tgt_val = g.rng.choice(pool)
             if tgt_kind == "player":
-                ev.append(Event("SpellHit", {"source": name, "target_type":"player", "player": opp}))
+                ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": opp}))
                 ev += g.deal_damage_to_player(opp, per_hit, source=name)
             else:
                 loc = g.find_minion(tgt_val)
                 if loc:
                     _, _, mm = loc
-                    ev.append(Event("SpellHit", {"source": name, "target_type":"minion", "minion": mm.id, "player": mm.owner}))
+                    ev.append(Event("SpellHit", {"source": name, "target_type": "minion", "minion": mm.id, "player": mm.owner}))
                     ev += g.deal_damage_to_minion(mm, per_hit, source=name)
         g.history += ev
         return ev
@@ -1878,8 +1955,9 @@ def _summon_from_card_spec(g, owner, card_spec, count):
 
         # NEW: enable the token's own aura (if any), then apply existing friendly auras to it
         ev += g._enable_aura(m)
-        ev += g._apply_existing_auras_to(m)
+        #ev += g._apply_existing_auras_to(m)
         ev += g._handle_friendly_summon(owner, m.id)
+        ev += g._refresh_stat_auras(owner)
     return ev
 
 def _fx_summon(params, json_db_tokens):
