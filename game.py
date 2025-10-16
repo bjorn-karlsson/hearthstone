@@ -319,7 +319,8 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = [ "CROWD_FAVORITE", "VOODOO_DOCTOR", "BRAWL"] * 5
+    desired = [ "MALYGOS", "ARCANE_EXPLOSION", "MIRROR_IMAGE", "FROST_NOVA", "BLIZZARD", 
+               "ARCANE_MISSILES", "ARCHMAGE_ANTONIDAS",  "COUNTERSPELL", "MIRROR_ENTITY", "ICE_BARRIER" ] * 3
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -366,13 +367,14 @@ playable_decks = [
     "Classic Hunter Deck (Midrange / Face Hybrid)", 
     "Classic Paladin Deck (Midrange / Control)",
     "Classic Mage Deck (Spell Control / Burst)",
+    "Big Big Mage"
     "Classic Warlock Deck (Zoo Aggro)",
-    "Classic Warrior Deck (Control)"
+    "Classic Warrior Deck (Control)",
 ]
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Big Big Mage")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
 #player_deck = None

@@ -186,6 +186,7 @@ class Game:
         self.pending_battlecry: Optional[Dict[str, Any]] = None
         self.current_battlecry_minion_id: Optional[int] = None
         self.current_battlecry_owner: Optional[int] = None
+        self._spell_countered = False
 
     def other(self, pid:int) -> int:
         return 1 - pid
@@ -907,7 +908,7 @@ class Game:
 
         raise IllegalAction("Hero attack needs a target")
 
-    def _trigger_secrets(self, victim_pid: int, trigger: str) -> List[Event]:
+    def _trigger_secrets(self, victim_pid: int, trigger: str, context: Optional[Dict[str, Any]] = None) -> List[Event]:
         p = self.players[victim_pid]
         if not p.active_secrets:
             return []
@@ -918,15 +919,16 @@ class Game:
         for s in fired:
             # 1) reveal
             ev.append(Event("SecretRevealed", {"player": victim_pid, "card": s["card_id"], "name": s["name"]}))
-            # 2) run the secret's effect (from defender POV)
-            src = SimpleNamespace(owner=victim_pid, name=s["name"])  # NEW
-            ev += s["runner"](self, src, None)
+            # 2) run the secret's effect (now with context)
+            src = SimpleNamespace(owner=victim_pid, name=s["name"])
+            ev += s["runner"](self, src, context or None)
             # 3) consume
             p.active_secrets.remove(s)
             self.players[victim_pid].graveyard.append(s["card_id"])
-            # 4) notify friendly weapon triggers (Eaglehorn Bow, etc.)
+            # 4) notify friendly weapon triggers (unchanged)
             ev += self._run_weapon_triggers(victim_pid, "friendly_secret_revealed", {"secret": s["card_id"]})
         return ev
+
 
     def _fire_friendly_spell_cast(self, pid: int) -> List[Event]:
         """
@@ -1033,7 +1035,8 @@ class Game:
 
             ev += self._handle_friendly_summon(pid, m.id)
             
-            
+            # --- after summon/auras/summon-triggers, before this minion's battlecry
+            ev += self._trigger_secrets(self.other(pid), "enemy_minion_played", {"minion": m.id})
 
             # --- after you insert the minion and add MinionSummoned + auras ---
             if card.battlecry:
@@ -1075,6 +1078,17 @@ class Game:
         elif card.type == "SPELL":
             ev += self._fire_friendly_spell_cast(pid)
 
+            # Let opponent secrets (e.g., Counterspell) react to the cast and possibly cancel it
+            self._spell_countered = False
+            ev += self._trigger_secrets(self.other(pid), "enemy_spell_cast", {"card": cid, "name": card.name})
+            if self._spell_countered:
+                # Spell fizzles: no on_cast effects, still goes to graveyard
+                ev.append(Event("SpellCountered", {"player": pid, "card": cid, "name": card.name}))
+                self.players[pid].graveyard.append(card.id)
+                self.history += ev
+                return ev
+
+            # Not countered → resolve normally
             if card.on_cast:
                 tagged = None
                 if target_minion is not None:
@@ -1617,10 +1631,98 @@ def _minion_owner_matches(source_pid: int, target_pid: int, scope: str) -> bool:
 
 # ---- Effect factories ----
 
+def _fx_counterspell(params):
+    """
+    Counter the just-cast enemy spell by setting a flag on the Game.
+    The spell is considered cast (so friendly 'cast a spell' triggers already fired),
+    but its effects will not resolve.
+    """
+    def run(g, source_obj, context):
+        g._spell_countered = True
+        return []
+    return run
+
+def _fx_mirror_played_minion(params):
+    """
+    Summon a copy of the just-played enemy minion for the source owner.
+    Expects context {"minion": <id>} from _trigger_secrets(..., context=...).
+    """
+    def run(g, source_obj, context):
+        mid = (context or {}).get("minion")
+        if not mid:
+            return []
+        loc = g.find_minion(mid)
+        if not loc:
+            return []
+        _, _, enemy_minion = loc
+
+        # Build a spec from the original card (so it's a proper summon, no Battlecry)
+        cid = getattr(enemy_minion, "card_id", "")
+        raw_map = g.cards_db.get("_RAW", {})
+        raw = dict(raw_map.get(cid, {}))
+        if not raw or raw.get("type") != "MINION":
+            return []
+
+        spec = {
+            "id": raw.get("id", cid),
+            "name": raw.get("name", enemy_minion.name),
+            "type": "MINION",
+            "cost": raw.get("cost", enemy_minion.cost),
+            "attack": raw.get("attack", enemy_minion.base_attack or enemy_minion.attack),
+            "health": raw.get("health", enemy_minion.base_health or enemy_minion.health),
+            "rarity": raw.get("rarity", "Common"),
+            "keywords": list(raw.get("keywords", [])),
+            "minion_type": raw.get("minion_type", enemy_minion.base_minion_type or "None"),
+            "text": raw.get("text", ""),
+            "spell_damage": raw.get("spell_damage", 0),
+            "enrage": raw.get("enrage"),
+            "aura": raw.get("aura"),
+            "auras": list(raw.get("auras", [])),
+            "cost_aura": raw.get("cost_aura"),
+            "triggers_map": {},  # tokens summoned shouldn't inherit runtime trigger callables
+        }
+        # Summon the copy for the secret owner (source_obj.owner)
+        return _summon_from_card_spec(g, getattr(source_obj, "owner", g.active_player), spec, 1)
+    return run
+
 def _fx_freeze(params):
+    """
+    Supports:
+      - Single tagged target (minion or player) via play-time target
+      - AOE scopes via params["target"]:
+          "enemy_minions"     -> freeze all enemy minions
+          "friendly_minions"  -> freeze all friendly minions
+          "all_minions"       -> freeze all minions (both sides)
+    """
+    scope = str(params.get("target", "") or "").lower()
+
     def run(g, source_obj, target):
-        kind, obj = _resolve_tagged_target(g, target)
+        owner = getattr(source_obj, "owner", g.active_player)
         ev: List[Event] = []
+
+        # ----- AOE minion scopes -----
+        if scope in ("enemy_minions", "friendly_minions", "all_minions"):
+            if scope == "enemy_minions":
+                sides = [g.other(owner)]
+            elif scope == "friendly_minions":
+                sides = [owner]
+            else:  # "all_minions"
+                sides = [owner, g.other(owner)]
+
+            for pid in sides:
+                for m in list(g.players[pid].board):
+                    if m.is_alive() and not m.frozen:
+                        m.frozen = True
+                        ev.append(Event("Frozen", {
+                            "target_type": "minion",
+                            "minion": m.id,
+                            "owner": m.owner,
+                            "aoe": True
+                        }))
+            return ev
+
+        # ----- Single tagged targets (backward compatible) -----
+        kind, obj = _resolve_tagged_target(g, target)
         if kind == "minion" and obj is not None:
             if not obj.frozen:
                 obj.frozen = True
@@ -1633,8 +1735,12 @@ def _fx_freeze(params):
                 p.hero_frozen = True
                 ev.append(Event("Frozen", {"target_type": "player", "player": pid}))
             return ev
+
+        # No valid target provided; do nothing (safe no-op).
         return ev
+
     return run
+
 
 def _fx_weapon_durability_delta(params):
     delta = int(params.get("amount", 0))
@@ -2585,6 +2691,46 @@ def _fx_brawl(params):
     return run
 
 
+def _fx_add_card_to_hand(params):
+    card_id = str(params.get("card_id", "")).strip()
+    count   = int(params.get("count", 1))
+    who     = params.get("owner", "friendly")  # defaults to source owner
+
+    def run(g, source_obj, target):
+        if not card_id or card_id not in g.cards_db:
+            return []
+        src_owner = getattr(source_obj, "owner", g.active_player)
+
+        # resolve recipient pid
+        if isinstance(who, int) and who in (0, 1):
+            pid = who
+        else:
+            s = str(who).lower()
+            if s in ("friendly", "self", "owner", "player", "controller"):
+                pid = src_owner
+            elif s in ("enemy", "opponent", "foe"):
+                pid = g.other(src_owner)
+            elif s in ("active", "current"):
+                pid = g.active_player
+            elif s in ("inactive", "other_active"):
+                pid = g.other(g.active_player)
+            else:
+                pid = src_owner
+
+        ev = []
+        for _ in range(max(0, count)):
+            if len(g.players[pid].hand) < 10:
+                g.players[pid].hand.append(card_id)
+                ev.append(Event("CardCreated", {"player": pid, "card": card_id}))
+            else:
+                g.players[pid].graveyard.append(card_id)
+                ev.append(Event("CardBurned", {"player": pid, "card": card_id}))
+        return ev
+
+    return run
+
+
+
 # Registry maps effect name -> factory
 def _effect_factory(name, params, json_tokens):
     table = {
@@ -2625,6 +2771,9 @@ def _effect_factory(name, params, json_tokens):
         "deal_damage_equal_armor":          _fx_deal_damage_equal_armor,
         "execute":                          _fx_execute,
         "brawl":                            _fx_brawl,
+        "add_card_to_hand":                 _fx_add_card_to_hand,
+        "mirror_played_minion":             _fx_mirror_played_minion,
+        "counterspell":                     _fx_counterspell,
         
     }
     if name not in table:

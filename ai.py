@@ -287,8 +287,16 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
         amt = get_first("random_enemy_damage", "amount", 1)
         return "random_dmg", {"count": amt}  # reuse your random_dmg bucket
 
-    # --- NEW: freeze (as a disable/tempo stall)
+    # --- freeze (single target or AOE)
     if has("freeze"):
+        # If any freeze effect targets multiple minions, treat as AOE
+        aoe_targets = {"enemy_minions", "all_enemy_minions", "all_minions", "board_enemies"}
+        for e in effs:
+            if e.get("effect") == "freeze":
+                tgt = str(e.get("target", "")).lower()
+                if tgt in aoe_targets:
+                    return "freeze_aoe", {}
+        # otherwise single-target freeze
         return "freeze", {"targeting": raw.get("targeting", "").lower()}
 
     # --- NEW: Brawl / random board wipe
@@ -799,6 +807,29 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
         if _freeze_score(tgt) < 20:
             return None
         return idx, None, tgt.id, 120 + _freeze_score(tgt)
+
+        # ---- FREEZE AOE (Frost Nova)
+    if kind == "freeze_aoe":
+        enemies = [m for m in _enemy_minions(g, pid)]
+        if not enemies:
+            return None
+
+        # We care most about things that can attack soon and taunts that block face
+        ready = [m for m in enemies if minion_ready(m)]
+        taunts = [m for m in enemies if m.taunt and m.is_alive()]
+
+        # Simple scoring: more ready attack → higher value
+        total_ready_attack = sum(m.attack for m in ready)
+        score = 100 + len(ready) * 35 + len(taunts) * 15 + total_ready_attack * 3
+
+        # Extra urgency if we're low HP
+        if g.players[pid].health <= 12:
+            score += 40
+
+        # Only cast if it meaningfully hits something
+        if len(ready) >= 1 or len(taunts) >= 1:
+            return idx, None, None, score
+        return None
 
     # ---- BRAWL (random one-survivor wipe)
     if kind == "brawl":

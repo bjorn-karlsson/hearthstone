@@ -64,7 +64,7 @@
                 "text": "Deal 1 damage.",
                 "cost": 2,
                 "targeting": "any_character",
-                "counts_as_spell": true,
+                "counts_as_spell": false,
                 "effects": [
                     {
                         "effect": "deal_damage",

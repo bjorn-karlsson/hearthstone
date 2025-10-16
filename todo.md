@@ -15,7 +15,11 @@
 # [x] Water Elemental — 3/6, Freeze any character damaged by this minion
 # [] Lightspawn — 0/5, Attack equal to Health
 # [] Add stealth mechanic, Worgen Infiltrator 2/1 stealth
+# [] Add combo mechanic
+# [] Add immune effect
+# [] Add Lifesteal
 # [x] Add Divine shield
+# [x] Fix arcane missle spelldamage
 #
 # ------- Unordered General stuff ----------
 # [x] Add weapon mechanic, drawing, logic, ai, etc
@@ -24,12 +28,42 @@
 # [] Add Class Priest
 # [] Add class Shaman
 # [] Add class Rougue
+# [] Draw diffrent mechanics on cards, Aura, triggers, Deathrattle, etc.
 # [x] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
 # [] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
+# [] Add class color for cards
+# [] Draw mana crystals
 # [x] Draw hero health  damaged
 # [x] Add secrets
 # [x] Draw secrets, ? and color by Hero color
 # [x] Loading stored deck
 # [] Creating, managing and saving decks
 # [x] Recreate a deck in hearthstone
-
+# [] Add choose/discard 3 cards before the match begins. 
+# [] Fix minion bug when attacking, not centered.
+# [] Fix drawing hero when attacking minion bug.
+# [] Fix so that user can cancel hero attack.
+# [] When casting non-target spells, make sure that the player has to drag them on the board so it doesnt trigger randomly.
+# [x] Add Brawl
+# [x] Add Ragnaros
+# [] Create more coding files, and move stuff to better locations
+# ---------------- UI / Animation -------------
+# [] Add Timer for each round
+# [] Add animation for drawing card
+# [] Add animation for when card dies
+# [] add animation for when cards are summoned
+# [] add animation for spells, diffrent kinds. 
+# [] Add music
+# [] Add sound
+# --------------- AI STUFF ----------
+# [] Make sure AI knows about adjecancy
+# [] Fix coin bug.
+# [] BIG: make sure that the AI simulates its choices atleast 5 times and then pick the best option.
+#
+# ---------------- BUG FIX ---------------
+# [] Whenever freeze attackes a armoured enemy it doesnt freeze it, it should
+# [] AI doesnt use Shield Slam or Slam
+# [] Show Spell Damage increase for cards.
+#
+#
+#

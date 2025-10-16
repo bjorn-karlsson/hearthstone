@@ -64,6 +64,33 @@
             }
         },
         {
+            "name": "Big Big Mage",
+            "hero": "MAGE",
+            "cards": {
+                "ARCANE_MISSILES": 1,
+                "MANA_WYRM": 2,
+                "MIRROR_IMAGE": 1,
+                "ARCANE_EXPLOSION": 1,
+                "FROSTBOLT": 2,
+                "SORCERERS_APPRENTICE": 2,
+                "ARCANE_INTELLECT": 2,
+                "COUNTERSPELL": 1,
+                "FROST_NOVA": 1,
+                "ICE_BARRIER": 1,
+                "MIRROR_ENTITY": 2,
+                "FIREBALL": 2,
+                "POLYMORPH": 2,
+                "WATER_ELEMENTAL": 2,
+                "BLIZZARD": 1,
+                "ARCHMAGE_ANTONIDAS": 1,
+                "FLAMESTRIKE": 1,
+                "PYROBLAST": 1,
+                "BLOODMAGE_THALNOS": 1,
+                "AZURE_DRAKE": 2,
+                "MALYGOS": 1
+            }
+        },
+        {
             "name": "Classic Warlock Deck (Zoo Aggro)",
             "hero": "WARLOCK",
             "cards": {

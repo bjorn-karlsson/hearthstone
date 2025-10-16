@@ -140,6 +140,18 @@
             "rarity": "Common",
             "minion_type": "None"
         },
+        "_MIRROR_IMAGE": {
+            "name": "Mirror Image",
+            "type": "MINION",
+            "cost": 0,
+            "attack": 0,
+            "health": 2,
+            "rarity": "Common",
+            "minion_type": "None",
+            "keywords": [
+                "Taunt"
+            ]
+        },
         "SPIRIT_WOLF": {
             "name": "Spirit Wolf",
             "type": "MINION",
@@ -727,6 +739,41 @@
             "targeting": "none"
         },
         {
+            "id": "FROST_NOVA",
+            "name": "Frost Nova",
+            "type": "SPELL",
+            "cost": 3,
+            "text": "Freeze all enemy minions.",
+            "on_cast": [
+                {
+                    "effect": "freeze",
+                    "target": "enemy_minions"
+                }
+            ],
+            "rarity": "Common",
+            "targeting": "none"
+        },
+        {
+            "id": "BLIZZARD",
+            "name": "Blizzard",
+            "type": "SPELL",
+            "cost": 6,
+            "text": "Deal 2 damage to all enemy minions and Freeze them.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage_minions",
+                    "amount": 2,
+                    "target": "enemy_minions"
+                },
+                {
+                    "effect": "freeze",
+                    "target": "enemy_minions"
+                }
+            ],
+            "rarity": "Rare",
+            "targeting": "none"
+        },
+        {
             "id": "FROSTBOLT",
             "name": "Frostbolt",
             "type": "SPELL",
@@ -1233,6 +1280,59 @@
             "targeting": "none"
         },
         {
+            "id": "ICE_BARRIER",
+            "name": "Ice Barrier",
+            "type": "SECRET",
+            "rarity": "Common",
+            "cost": 3,
+            "text": "As soon as your hero is attacked, gain 8 Armor.",
+            "secret": {
+                "trigger": "hero_attacked",
+                "effects": [
+                    {
+                        "effect": "gain_armor",
+                        "amount": 8,
+                        "target": "friendly_face"
+                    }
+                ]
+            },
+            "targeting": "none"
+        },
+        {
+            "id": "MIRROR_ENTITY",
+            "name": "Mirror Entity",
+            "type": "SECRET",
+            "rarity": "Common",
+            "cost": 3,
+            "text": "Secret: When your opponent plays a minion, summon a copy of it.",
+            "secret": {
+                "trigger": "enemy_minion_played",
+                "effects": [
+                    {
+                        "effect": "mirror_played_minion"
+                    }
+                ]
+            },
+            "targeting": "none"
+        },
+        {
+            "id": "COUNTERSPELL",
+            "name": "Counterspell",
+            "type": "SECRET",
+            "rarity": "Rare",
+            "cost": 3,
+            "text": "Secret: When your opponent casts a spell, counter it.",
+            "secret": {
+                "trigger": "enemy_spell_cast",
+                "effects": [
+                    {
+                        "effect": "counterspell"
+                    }
+                ]
+            },
+            "targeting": "none"
+        },
+        {
             "id": "HUNTERS_MARK",
             "name": "Hunter's Mark",
             "type": "SPELL",
@@ -1685,16 +1785,31 @@
             "id": "FIREBALL",
             "name": "Fireball",
             "type": "SPELL",
-            "rarity": "Rare",
+            "rarity": "Common",
             "cost": 4,
-            "text": "Deal 4 damage.",
+            "text": "Deal 6 damage.",
             "on_cast": [
                 {
                     "effect": "deal_damage",
-                    "amount": 4
+                    "amount": 6
                 }
             ],
-            "targeting": "enemy_character"
+            "targeting": "any_character"
+        },
+        {
+            "id": "PYROBLAST",
+            "name": "Pyroblast",
+            "type": "SPELL",
+            "rarity": "Epic",
+            "cost": 10,
+            "text": "Deal 10 damage.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 10
+                }
+            ],
+            "targeting": "any_character"
         },
         {
             "id": "HOLY_LIGHT",
@@ -1850,6 +1965,22 @@
             "targeting": "none"
         },
         {
+            "id": "ARCANE_EXPLOSION",
+            "name": "Arcane Explosion",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 2,
+            "text": "Deal 1 damage to all enemy minions.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage_minions",
+                    "amount": 1,
+                    "target": "enemy_minions"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "FLAMESTRIKE",
             "name": "Flamestrike",
             "type": "SPELL",
@@ -1892,6 +2023,22 @@
                 {
                     "effect": "summon",
                     "card_id": "WISP",
+                    "count": 2
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "MIRROR_IMAGE",
+            "name": "Mirror Image",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 1,
+            "text": "Summon two 0/2 minions with Taunt.",
+            "on_cast": [
+                {
+                    "effect": "summon",
+                    "card_id": "_MIRROR_IMAGE",
                     "count": 2
                 }
             ],
@@ -1990,6 +2137,70 @@
                         {
                             "effect": "random_enemy_damage",
                             "amount": 8
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "MALYGOS",
+            "name": "Malygos",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "minion_type": "Dragon",
+            "cost": 9,
+            "attack": 4,
+            "health": 12,
+            "keywords": [
+                "Spell Damage"
+            ],
+            "spell_damage": 5,
+            "text": "Spell Damage +5.",
+            "targeting": "none"
+        },
+        {
+            "id": "BLOODMAGE_THALNOS",
+            "name": "Bloodmage Thalnos",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "minion_type": "None",
+            "cost": 2,
+            "attack": 1,
+            "health": 1,
+            "keywords": [
+                "Spell Damage"
+            ],
+            "deathrattle": [
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "spell_damage": 1,
+            "text": "Spell Damage +1 Deathrattle: Draw a card.",
+            "targeting": "none"
+        },
+        {
+            "id": "ARCHMAGE_ANTONIDAS",
+            "name": "Archmage Antonidas",
+            "type": "MINION",
+            "cost": 7,
+            "attack": 5,
+            "health": 7,
+            "rarity": "Legendary",
+            "minion_type": "None",
+            "text": "Whenever you cast a spell, add a 'Fireball' to your hand.",
+            "keywords": [],
+            "triggers": [
+                {
+                    "on": "friendly_spell_cast",
+                    "effects": [
+                        {
+                            "effect": "add_card_to_hand",
+                            "card_id": "FIREBALL",
+                            "count": 1,
+                            "owner": "friendly"
                         }
                     ]
                 }
