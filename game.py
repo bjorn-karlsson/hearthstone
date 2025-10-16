@@ -279,7 +279,7 @@ def format_event(e, g, skip=False) -> str:
             return f"{src} hits {_minion_name(g, mid)}."
         return ""
     
-    print(f"not logging {k}")
+    print(f"not logging {k}, data: {p}")
     
 def log_events(ev_list, g):
     for e in ev_list or []:
@@ -2225,13 +2225,17 @@ def main():
                             kind = act[0]
 
                             if kind == 'play':
-                                _, idx, tp, tm = act
+                                if len(act) == 5:
+                                    _, idx, tp, tm, bp = act
+                                else:
+                                    _, idx, tp, tm = act
+                                    bp = None
                                 cid = g.players[1].hand[idx]
                                 src = pygame.Rect(W // 2 - CARD_W // 2, 20, CARD_W, CARD_H)
 
                                 def do_on_finish(i=idx, tpp=tp, tmm=tm):
                                     try:
-                                        ev = g.play_card(1, i, target_player=tpp, target_minion=tmm)
+                                        ev = g.play_card(1, i, target_player=tpp, target_minion=tmm, insert_at=bp)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
                                         flash_from_events(g, ev)
