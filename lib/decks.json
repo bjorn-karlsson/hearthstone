@@ -112,6 +112,32 @@
             }
         },
         {
+            "name": "Handlock",
+            "hero": "WARLOCK",
+            "cards": {
+                "SACRIFICIAL_PACT": 1,
+                "SOULFIRE": 2,
+                "MORTAL_COIL": 2,
+                "VOIDWALKER": 1,
+                "HELLFIRE": 2,
+                "SHADOWFLAME": 1,
+                "SIPHON_SOUL": 1,
+                "LORD_JARAXXUS": 1,
+                "ANCIENT_WATCHER": 2,
+                "IRONBEAK_OWL": 1,
+                "SUNFURY_PROTECTOR": 2,
+                "BIG_GAME_HUNTER": 1,
+                "EARTHEN_RING_FARSEER": 2,
+                "DEFENDER_OF_ARGUS": 2,
+                "LEEROY_JENKINS": 1,
+                "TWILIGHT_DRAKE": 2,
+                "ABOMINATION": 1,
+                "FACELESS_MANIPULATOR": 1,
+                "MOUNTAIN_GIANT": 2,
+                "MOLTEN_GIANT": 2
+            }
+        },
+        {
             "name": "Classic Warrior Deck (Control)",
             "hero": "WARRIOR",
             "cards": {

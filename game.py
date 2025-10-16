@@ -86,6 +86,9 @@ HERO_COLORS = {
     "HUNTER":  (35, 155, 75),
 }
 
+# Track where minions were on the previous frame (for deaths, etc.)
+LAST_MINION_RECTS: dict[int, pygame.Rect] = {}
+
 def hero_name(h) -> str:
     if isinstance(h, str):
         return h.capitalize()
@@ -374,7 +377,7 @@ playable_decks = [
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Big Big Mage")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Warrior Deck (Control)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
 #player_deck = None
@@ -1028,6 +1031,95 @@ def draw_frozen_overlay(r: pygame.Rect):
     lbl = BIG.render("FROZEN", True, (235, 245, 255))
     s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.12))))
     screen.blit(s, (r.x, r.y))
+
+def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
+    """
+    Queue small ambient animations based on events. Uses LAST_MINION_RECTS for
+    things that disappear (death, discard, burn).
+    """
+    if not ev_list:
+        return
+
+    post = layout_board(g)  # for rectangles that exist after the event
+
+    # Useful targets
+    arena = battle_area_rect()
+    abyss_pt = (arena.centerx, H + 140)  # fall off screen
+
+    # hero plate badges
+    def _weapon_badge_rect(pid: int) -> pygame.Rect | None:
+        face = post["face_me"] if pid == 0 else post["face_enemy"]
+        if getattr(g.players[pid], "weapon", None) is None:
+            return None
+        cx, cy = face.x + 26, face.bottom - 18
+        return _badge_rect_from_center(cx, cy, 14)
+
+    def _my_secret_badge_slot() -> pygame.Rect | None:
+        # pulse on the rightmost secret slot
+        if not post["secrets_me"]:
+            return None
+        return post["secrets_me"][0][1]  # newest is placed right-most in draw order
+
+    # index quick-lookup for minion id -> rect (post)
+    rect_by_mid = {}
+    for mid, r in post["my_minions"] + post["enemy_minions"]:
+        rect_by_mid[mid] = r
+
+    for e in ev_list:
+        k = getattr(e, "kind", "")
+        p = getattr(e, "payload", {}) or {}
+
+        if k == "MinionDied":
+            mid = p.get("minion")
+            r = LAST_MINION_RECTS.get(mid)
+            if r:
+                ANIMS.push(AnimStep("fade_rect", 420, {"rect": r, "non_blocking": True, "layer": 1}))
+
+        elif k == "CardDiscarded":
+            who = p.get("player", 0)
+            # animate from that side's hand region center to abyss
+            # (we may not know exact card rect, so use a generic card slab near hand row)
+            y = ROW_Y_HAND if who == 0 else ROW_Y_ENEMY - 30
+            x = W//2
+            src = pygame.Rect(x - CARD_W//2, y, CARD_W, CARD_H)
+            ANIMS.push(AnimStep("to_abyss", 520, {"src": src, "dst": abyss_pt, "non_blocking": True}))
+
+        elif k == "CardBurned":
+            who = p.get("player", 0)
+            y = ROW_Y_HAND if who == 0 else ROW_Y_ENEMY - 30
+            x = (W//2) + 120
+            src = pygame.Rect(x - CARD_W//2, y, CARD_W, CARD_H)
+            ANIMS.push(AnimStep("to_abyss", 520, {"src": src, "dst": abyss_pt, "non_blocking": True}))
+
+        elif k == "MinionSummoned":
+            mid = p.get("minion")
+            r = rect_by_mid.get(mid)
+            if r:
+                ANIMS.push(AnimStep("poof", 380, {"rect": r, "non_blocking": True, "layer": 1}))
+
+        elif k == "SecretPlayed":
+            # pulse your secret badge if it's you; otherwise enemy's strip
+            pid = p.get("player", 0)
+            if pid == 0:
+                rr = _my_secret_badge_slot()
+            else:
+                # pulse on enemy hero strip near right side
+                face = post["face_enemy"]
+                rr = pygame.Rect(face.right - 26, face.y + 2, 22, 22)
+            if rr:
+                ANIMS.push(AnimStep("badge_pulse", 420, {"rect": rr, "non_blocking": True, "layer": 1}))
+
+        elif k == "WeaponEquipped":
+            pid = p.get("player", 0)
+            rr = _weapon_badge_rect(pid)
+            if rr:
+                ANIMS.push(AnimStep("badge_pulse", 420, {"rect": rr, "non_blocking": True, "layer": 1}))
+
+        elif k == "SpellHit":
+            # you already call queue_spell_projectiles_from_events elsewhere,
+            # but if you want to ensure it here:
+            pass  # handled by queue_spell_projectiles_from_events
+
 
 def flash_from_events(g: Game, ev_list: List[Any]):
     """Reads damage events and enqueues appropriate flash overlays."""
@@ -1899,7 +1991,12 @@ class AnimQueue:
         if self.blocking:
             step = self.blocking[0]
             k = step.kind
-            if k == "play_move":       self._draw_play_move(step)
+            if k == "fade_rect":       self._draw_fade_rect(step)
+            elif k == "poof":          self._draw_poof(step)
+            elif k == "to_abyss":      self._draw_to_abyss(step)
+            elif k == "badge_pulse":   self._draw_badge_pulse(step)
+            elif k == "spell_orbs":    self._draw_spell_orbs(step)
+            elif k == "play_move":     self._draw_play_move(step)
             elif k == "attack_dash":   self._draw_attack_dash(step)
             elif k == "flash":         self._draw_flash(step)     # normally NB, but supported
             elif k == "think_pause":   pass                       # invisible timing gate
@@ -1920,7 +2017,12 @@ class AnimQueue:
             to_remove = []
             for s in self.ambient:
                 k = s.kind
-                if k == "flash":       self._draw_flash(s)
+                if k == "fade_rect":       self._draw_fade_rect(s)
+                elif k == "poof":          self._draw_poof(s)
+                elif k == "to_abyss":      self._draw_to_abyss(s)
+                elif k == "badge_pulse":   self._draw_badge_pulse(s)
+                elif k == "spell_orbs":    self._draw_spell_orbs(s)
+                elif k == "flash":       self._draw_flash(s)
                 elif k == "banner":    self._draw_banner(s)
                 elif k == "start_game":self._draw_start_game(s)
                 elif k == "think_pause": pass
@@ -1938,6 +2040,66 @@ class AnimQueue:
 
         # We now composite overlays internally; keep signature compatibility
         return hidden_ids, None
+    def _draw_fade_rect(self, step: AnimStep):
+        r: pygame.Rect = step.data["rect"]
+        t = step.raw_progress()
+        alpha = max(0, 255 - int(255 * t))
+        scale = 1.0 - 0.15 * t
+        rw, rh = int(r.w * scale), int(r.h * scale)
+        rr = pygame.Rect(0, 0, rw, rh); rr.center = r.center
+        s = pygame.Surface((rw, rh), pygame.SRCALPHA)
+        pygame.draw.rect(s, (255, 255, 255, alpha), s.get_rect(), border_radius=10)
+        screen.blit(s, rr.topleft)
+
+    def _draw_poof(self, step: AnimStep):
+        r: pygame.Rect = step.data["rect"]
+        t = step.raw_progress()
+        # expanding soft circle + inner flash
+        rad = int(max(r.w, r.h) * (0.3 + 0.7 * t))
+        alpha = int(180 * (1 - t))
+        s = pygame.Surface((rad*2, rad*2), pygame.SRCALPHA)
+        pygame.draw.circle(s, (255, 255, 255, alpha), (rad, rad), rad)
+        pygame.draw.circle(s, (230, 200, 90, int(alpha*0.8)), (rad, rad), int(rad*0.6))
+        screen.blit(s, (r.centerx - rad, r.centery - rad))
+
+    def _draw_to_abyss(self, step: AnimStep):
+        src: pygame.Rect = step.data["src"]
+        dst_pt: tuple[int,int] = step.data["dst"]
+        t = step.eased()
+        x = lerp(src.centerx, dst_pt[0], t)
+        y = lerp(src.centery, dst_pt[1], t) - 50 * (t - t*t)  # small arc
+        scale = 1.0 - 0.25 * t
+        alpha = int(255 * (1 - t))
+        w, h = int(src.w * scale), int(src.h * scale)
+        rr = pygame.Rect(0, 0, w, h); rr.center = (int(x), int(y))
+        s = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(s, (255, 255, 255, alpha), s.get_rect(), border_radius=10)
+        screen.blit(s, rr.topleft)
+
+    def _draw_badge_pulse(self, step: AnimStep):
+        r: pygame.Rect = step.data["rect"]
+        t = step.raw_progress()
+        # scale up then back a bit
+        if t < 0.5:
+            s = 1.0 + 0.4 * (t / 0.5)
+        else:
+            s = 1.4 - 0.3 * ((t - 0.5) / 0.5)
+        w, h = int(r.w * s), int(r.h * s)
+        rr = pygame.Rect(0, 0, w, h); rr.center = r.center
+        pygame.draw.rect(screen, (255, 255, 255), rr, 2, border_radius=10)
+
+    def _draw_spell_orbs(self, step: AnimStep):
+        src = step.data["src"]; dst = step.data["dst"]
+        count = int(step.data.get("count", 5))
+        radius = int(step.data.get("radius", 6))
+        t = step.raw_progress()
+        for i in range(count):
+            # staggered progress per orb
+            ti = clamp((t * 1.1) - (i * 0.06))
+            x = lerp(src[0], dst[0], ti)
+            y = lerp(src[1], dst[1], ti) - 25 * (ti - ti*ti)
+            pygame.draw.circle(screen, (255,255,255), (int(x), int(y)), radius)
+
 
 ANIMS = AnimQueue()
 
@@ -2097,6 +2259,15 @@ def start_game() -> Game:
     log_events(ev, g)
     return g
 
+# refresh last-known rects for minions
+def _update_last_minion_rects(hot):
+    # Keep only ids we saw last frame to avoid unbounded growth
+    seen = {}
+    for mid, r in hot["my_minions"] + hot["enemy_minions"]:
+        seen[mid] = r.copy()
+    LAST_MINION_RECTS.clear()
+    LAST_MINION_RECTS.update(seen)
+
 def main():
     global GLOBAL_GAME
     global SHOW_ENEMY_HAND
@@ -2125,6 +2296,7 @@ def main():
         clock.tick(60)
         screen.fill(BG)
         hot = layout_board(g)
+        _update_last_minion_rects(hot)
 
         #draw_headers(g)
         draw_action_log()
@@ -2253,6 +2425,8 @@ def main():
                                     ev = []
                                 if ev:
                                     log_events(ev, g)
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
                                     flash_from_events(g, ev)
                                     schedule_if_ai_turn()
                                     return
@@ -2283,6 +2457,8 @@ def main():
                                         ev = g.play_card(1, i, target_player=tpp, target_minion=tmm, insert_at=bp)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                         flash_from_events(g, ev)
                                     except IllegalAction:
                                         pass
@@ -2338,6 +2514,8 @@ def main():
                                     try:
                                         ev = g.use_hero_power(pwr_pid, target_player=tp, target_minion=tm)
                                         log_events(ev, g)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                         flash_from_events(g, ev)
                                     except IllegalAction:
                                         pass
@@ -2357,6 +2535,8 @@ def main():
                                         ev = []
                                     if ev:
                                         log_events(ev, g)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                         flash_from_events(g, ev)
                                         if g.active_player == 1:
                                             ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}, on_finish=decide))
@@ -2364,6 +2544,8 @@ def main():
                                     try:
                                         ev2 = g.end_turn(1)
                                         log_events(ev2, g)
+                                        queue_spell_projectiles_from_events(g.active_player, ev2)
+                                        animate_from_events(g, ev2)
                                         ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
                                     except IllegalAction:
                                         pass
@@ -2376,6 +2558,8 @@ def main():
                             try:
                                 ev2 = g.end_turn(1)
                                 log_events(ev2, g)
+                                queue_spell_projectiles_from_events(g.active_player, ev2)
+                                animate_from_events(g, ev2)
                             except IllegalAction:
                                 add_log("[AI] Failsafe: could not end turn.")
                         ANIMS.push(AnimStep("think_pause", 200, {}, on_finish=_force_end))
@@ -2415,11 +2599,14 @@ def main():
                         try:
                             ev = g.end_turn(0)
                             log_events(ev, g)
+                            queue_spell_projectiles_from_events(g.active_player, ev)
+                            animate_from_events(g, ev)
                             ANIMS.push(AnimStep("banner", 700, {"text": "End Turn"}))
                         except IllegalAction:
                             pass
                         selected_attacker = None
                         waiting_target_for_play = None
+                        selected_hero = False
                         hilite_enemy_min.clear(); hilite_my_min.clear()
                         hilite_enemy_face = False; hilite_my_face = False
                         continue
@@ -2444,12 +2631,15 @@ def main():
                             try:
                                 ev = g.use_hero_power(0, target_player=1)
                                 log_events(ev, g)
-                                enqueue_flash(enemy_face_rect(layout_board(g)))
+                                queue_spell_projectiles_from_events(g.active_player, ev)
+                                animate_from_events(g, ev)
                             except IllegalAction:
                                 pass
                             waiting_target_for_power = None
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
+                            selected_attacker = None       # <-- add
+                            selected_hero = False          # <-- add
                             continue
 
                         # My face?
@@ -2457,7 +2647,8 @@ def main():
                             try:
                                 ev = g.use_hero_power(0, target_player=0)
                                 log_events(ev, g)
-                                enqueue_flash(my_face_rect(layout_board(g)))
+                                queue_spell_projectiles_from_events(g.active_player, ev)
+                                animate_from_events(g, ev)
                             except IllegalAction:
                                 pass
                             waiting_target_for_power = None
@@ -2471,7 +2662,8 @@ def main():
                                 try:
                                     ev = g.use_hero_power(0, target_minion=mid)
                                     log_events(ev, g)
-                                    enqueue_flash(r)
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
                                 except IllegalAction:
                                     pass
                                 waiting_target_for_power = None
@@ -2486,7 +2678,8 @@ def main():
                                     try:
                                         ev = g.use_hero_power(0, target_minion=mid)
                                         log_events(ev, g)
-                                        enqueue_flash(r)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                     except IllegalAction:
                                         pass
                                     waiting_target_for_power = None
@@ -2507,6 +2700,8 @@ def main():
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
+                                selected_attacker = None     # <-- add
+                                selected_hero = False        # <-- add
                                 add_log("Board is full. You can't play more minions.")
                                 return
 
@@ -2518,6 +2713,8 @@ def main():
                                     ev = g.play_card(0, i, insert_at=sl, target_player=tp, target_minion=tm)
                                     log_events(ev, g)
                                     apply_post_summon_hooks(g, ev)
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
                                     flash_from_events(g, ev)
                                 except IllegalAction:
                                     pass
@@ -2558,14 +2755,20 @@ def main():
                         if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
                             try:
                                 ev = g.resolve_pending_battlecry(0, target_player=1)
-                                log_events(ev, g); flash_from_events(g, ev)
+                                log_events(ev, g)
+                                queue_spell_projectiles_from_events(g.active_player, ev)
+                                animate_from_events(g, ev)
+                                flash_from_events(g, ev)
                             except IllegalAction: pass
                             handled = True
 
                         elif hilite_my_face and my_face_rect(hot).collidepoint(mx, my):
                             try:
                                 ev = g.resolve_pending_battlecry(0, target_player=0)
-                                log_events(ev, g); flash_from_events(g, ev)
+                                log_events(ev, g)
+                                queue_spell_projectiles_from_events(g.active_player, ev)
+                                animate_from_events(g, ev)
+                                flash_from_events(g, ev)
                             except IllegalAction: pass
                             handled = True
 
@@ -2574,7 +2777,10 @@ def main():
                                 if r.collidepoint(mx, my) and mid in hilite_enemy_min:
                                     try:
                                         ev = g.resolve_pending_battlecry(0, target_minion=mid)
-                                        log_events(ev, g); flash_from_events(g, ev)
+                                        log_events(ev, g)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
+                                        flash_from_events(g, ev)
                                     except IllegalAction: pass
                                     handled = True
                                     break
@@ -2584,7 +2790,10 @@ def main():
                                 if r.collidepoint(mx, my) and mid in hilite_my_min:
                                     try:
                                         ev = g.resolve_pending_battlecry(0, target_minion=mid)
-                                        log_events(ev, g); flash_from_events(g, ev)
+                                        log_events(ev, g)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
+                                        flash_from_events(g, ev)
                                     except IllegalAction: pass
                                     handled = True
                                     break
@@ -2593,6 +2802,8 @@ def main():
                             waiting_target_for_play = None
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
+                            selected_attacker = None     # <-- add
+                            selected_hero = False        # <-- add
                         continue
 
                     # If selecting target for a spell
@@ -2606,13 +2817,17 @@ def main():
                                     ev = g.play_card(0, i, target_player=1)
                                     log_events(ev, g)
                                     apply_post_summon_hooks(g, ev)
-                                    enqueue_flash(enemy_face_rect(layout_board(g)))
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
+                                    #enqueue_flash(enemy_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                 {"src": src_rect, "dst": dst, "label": db[cid].name},
                                                 on_finish=on_finish))
                             waiting_target_for_play = None
+                            selected_attacker = None     # <-- add
+                            selected_hero = False        # <-- add
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
                             continue
@@ -2622,14 +2837,20 @@ def main():
                                 try:
                                     ev = g.play_card(0, i, target_player=0)
                                     log_events(ev, g)
+                                    
                                     apply_post_summon_hooks(g, ev)
-                                    enqueue_flash(my_face_rect(layout_board(g)))
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
+                                    
+                                    #enqueue_flash(my_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
                             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                 {"src": src_rect, "dst": dst, "label": db[cid].name},
                                                 on_finish=on_finish))
                             waiting_target_for_play = None
+                            selected_attacker = None     # <-- add
+                            selected_hero = False        # <-- add
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
                             continue
@@ -2642,7 +2863,9 @@ def main():
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
-                                        enqueue_flash(r)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
+                                        #enqueue_flash(r)
                                     except IllegalAction: pass
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": r, "label": db[cid].name},
@@ -2661,7 +2884,9 @@ def main():
                                         ev = g.play_card(0, i, target_minion=mid_target)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
-                                        enqueue_flash(r)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
+                                        #enqueue_flash(r)
                                     except IllegalAction: pass
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": r, "label": db[cid].name},
@@ -2680,17 +2905,22 @@ def main():
                                 ev = g.use_hero_power(0)
                                 log_events(ev, g)
                                 post = layout_board(g)
-                                if spec == "enemy_face":
-                                    enqueue_flash(enemy_face_rect(post))
+                                queue_spell_projectiles_from_events(g.active_player, ev)
+                                animate_from_events(g, ev)
+                                #if spec == "enemy_face":
+                                    #enqueue_flash(enemy_face_rect(post))
+                                
                             except IllegalAction:
                                 pass
+                            selected_attacker = None  
+                            selected_hero = False  
                         else:
                             waiting_target_for_power = 0
                             e_min, m_min, e_face, m_face = targets_for_hero_power(g, 0)
                             hilite_enemy_min = set(e_min)
                             hilite_my_min = set(m_min)
                             hilite_enemy_face = e_face
-                            hilite_my_face = m_face
+                            hilite_my_face = m_face   
                         continue
 
                     # Click/drag from hand
@@ -2754,6 +2984,7 @@ def main():
                             if mins or face_ok:
                                 selected_attacker = mid
                                 hilite_enemy_min = mins
+                                selected_hero = False 
                                 hilite_enemy_face = face_ok
                                 hilite_my_min.clear(); hilite_my_face = False
                             else:
@@ -2767,20 +2998,16 @@ def main():
                         did = False
                         for emid, r in hot["enemy_minions"]:
                             if r.collidepoint(mx, my) and emid in hilite_enemy_min:
-                                def do_hit(mid=emid, rect=r):
+                                def on_hit(rect=r, tgt_mid=emid):
                                     try:
-                                        ev = g.hero_attack(0, target_minion=mid)
+                                        ev = g.hero_attack(0, target_minion=tgt_mid)
                                         log_events(ev, g)
-                                        enqueue_flash(rect)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
+                                        #enqueue_flash(rect)
                                     except IllegalAction:
                                         return
-                                enqueue_hero_attack_anim(
-                                    hot, pid=0, target_rect=r,
-                                    on_hit=lambda rect=r, mid=emid: (
-                                        log_events(g.hero_attack(0, target_minion=mid), g),
-                                        enqueue_flash(rect)
-                                    )
-                                )
+                                enqueue_hero_attack_anim(hot, pid=0, target_rect=r, on_hit=on_hit)
                                 did = True
                                 break
                         if did:
@@ -2788,19 +3015,8 @@ def main():
                             hilite_enemy_min.clear(); hilite_enemy_face = False
                             continue
 
-                        if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
-                            enqueue_hero_attack_anim(
-                                hot, pid=0, target_rect=enemy_face_rect(hot),
-                                on_hit=lambda rect=enemy_face_rect(hot): (
-                                    log_events(g.hero_attack(0, target_player=1), g),
-                                    enqueue_flash(rect)
-                                )
-                            )
-                            selected_hero = False
-                            hilite_enemy_min.clear(); hilite_enemy_face = False
-                            continue
-
                     # If an attacker is selected, attempt to attack a highlighted target
+
                     if selected_attacker is not None:
                         did = False
                         for emid, r in hot["enemy_minions"]:
@@ -2809,31 +3025,52 @@ def main():
                                     try:
                                         ev = g.attack(0, attacker, target_minion=em)
                                         log_events(ev, g)
-                                    except IllegalAction: pass
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
+                                    except IllegalAction:
+                                        pass
                                 enqueue_attack_anim(hot, attacker_mid=selected_attacker, target_rect=r, enemy=False, on_hit=on_hit)
                                 selected_attacker = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
                                 did = True
                                 break
-                        if did: continue
-                        if hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
+
+                        # NEW: minion → face attack
+                        if not did and hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
                             def on_hit(attacker=selected_attacker):
                                 try:
                                     ev = g.attack(0, attacker, target_player=1)
                                     log_events(ev, g)
-                                except IllegalAction: return
-                                enqueue_flash(enemy_face_rect(layout_board(g)))
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
+                                except IllegalAction:
+                                    pass
                             enqueue_attack_anim(hot, attacker_mid=selected_attacker, target_rect=enemy_face_rect(hot), enemy=False, on_hit=on_hit)
                             selected_attacker = None
                             hilite_enemy_min.clear(); hilite_my_min.clear()
                             hilite_enemy_face = False; hilite_my_face = False
+                            continue
+                    if selected_hero and hilite_enemy_face and enemy_face_rect(hot).collidepoint(mx, my):
+                        def on_hit():
+                            try:
+                                ev = g.hero_attack(0, target_player=1)
+                                log_events(ev, g)
+                                queue_spell_projectiles_from_events(g.active_player, ev)
+                                animate_from_events(g, ev)
+                                #enqueue_flash(enemy_face_rect(layout_board(g)))
+                            except IllegalAction:
+                                return
+                        enqueue_hero_attack_anim(hot, pid=0, target_rect=enemy_face_rect(hot), on_hit=on_hit)
+                        selected_hero = False
+                        hilite_enemy_min.clear(); hilite_enemy_face = False
+                        continue
 
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                     mx, my = event.pos
 
                     # Priority: cancel selection if any
-                    if selected_attacker is not None or waiting_target_for_play is not None or waiting_target_for_power is not None:
+                    if selected_attacker is not None or waiting_target_for_play is not None or waiting_target_for_power is not None or selected_hero :
                         selected_attacker = None
                         selected_hero = False
                         waiting_target_for_play = None
@@ -2887,6 +3124,8 @@ def main():
                                         ev = g.play_card(0, i, insert_at=slot_idx)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                         flash_from_events(g, ev)
                                     except IllegalAction:
                                         pass
@@ -2918,6 +3157,8 @@ def main():
                                             ev = g.play_card(0, i, insert_at=sl)
                                             log_events(ev, g)
                                             apply_post_summon_hooks(g, ev)
+                                            queue_spell_projectiles_from_events(g.active_player, ev)
+                                            animate_from_events(g, ev)
                                             flash_from_events(g, ev)
                                         except IllegalAction:
                                             pass
@@ -2945,6 +3186,8 @@ def main():
                                         ev = g.play_card(0, i)   # no targets
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                         flash_from_events(g, ev)
                                     except IllegalAction:
                                         pass
@@ -2980,6 +3223,8 @@ def main():
                                     ev = g.play_card(0, i, insert_at=slot_idx)
                                     log_events(ev, g)
                                     apply_post_summon_hooks(g, ev)
+                                    queue_spell_projectiles_from_events(g.active_player, ev)
+                                    animate_from_events(g, ev)
                                     flash_from_events(g, ev)
                                 except IllegalAction:
                                     pass
@@ -2989,6 +3234,8 @@ def main():
                                 {"src": src_rect, "dst": dst, "label": db[cid].name},
                                 on_finish=on_finish
                             ))
+                            selected_attacker = None    # <-- add
+                            selected_hero = False       # <-- add
                             hover_slot_index = None
                             continue
                         else:
@@ -3011,6 +3258,8 @@ def main():
                                         ev = g.play_card(0, i, insert_at=sl)
                                         log_events(ev, g)
                                         apply_post_summon_hooks(g, ev)
+                                        queue_spell_projectiles_from_events(g.active_player, ev)
+                                        animate_from_events(g, ev)
                                         flash_from_events(g, ev)
                                     except IllegalAction:
                                         pass
@@ -3018,6 +3267,8 @@ def main():
                                 ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                                     {"src": src_rect, "dst": dst, "label": db[cid].name},
                                                     on_finish=on_finish))
+                                selected_attacker = None    # <-- add
+                                selected_hero = False       # <-- add
                                 hover_slot_index = None
                                 continue
 
