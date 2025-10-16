@@ -452,7 +452,7 @@ class Game:
                 scope = str(spec.get("scope", "friendly_spells")).lower()
                 d     = int(spec.get("delta", 0))
                 if scope in ("friendly_spells","spells"):
-                    if cobj.type == "SPELL": delta += d
+                    if _is_spell_like_card(cobj): delta += d
                 elif scope.startswith("friendly_type:"):
                     want = scope.split(":", 1)[1].strip().upper()
                     if getattr(cobj, "type", "").upper() == want: delta += d
@@ -468,7 +468,7 @@ class Game:
 
                 apply = False
                 if scope in ("friendly:spell","friendly:spells","spells"):
-                    apply = (cobj.type == "SPELL")
+                    apply = _is_spell_like_card(cobj)
                 elif scope.startswith("friendly:type:"):
                     want = scope.split(":", 2)[2].upper()
                     apply = (getattr(cobj, "type","").upper() == want)
@@ -1120,7 +1120,22 @@ class Game:
             # no duplicate of same secret for that player
             if any(s["card_id"] == card.id for s in p.active_secrets):
                 raise IllegalAction("You already have that Secret active")
-            # require it has a compiled trigger/runner
+            
+            # === Secrets are SPELL-LIKE on cast ===
+            # 1) Friendly "cast a spell" triggers (e.g., Antonidas)
+            ev += self._fire_friendly_spell_cast(pid)
+
+            # 2) Enemy secrets may counter spells (Counterspell)
+            self._spell_countered = False
+            ev += self._trigger_secrets(self.other(pid), "enemy_spell_cast", {"card": cid, "name": card.name})
+            if self._spell_countered:
+                # Fizzles like a spell: effects don't arm; card still goes to graveyard
+                ev.append(Event("SpellCountered", {"player": pid, "card": cid, "name": card.name}))
+                self.players[pid].graveyard.append(card.id)
+                self.history += ev
+                return ev
+            
+            # 3) Not countered → arm the secret (reveal effects are NOT “spells”)
             trig = getattr(card, "secret_trigger", None)
             run  = getattr(card, "secret_runner", None)
             if not trig or not callable(run):
@@ -1588,6 +1603,11 @@ def _has_tribe(m: 'Minion', tribe: str) -> bool:
     if mt == "all":
         return True
     return mt == tribe.lower()
+
+def _is_spell_like_card(cobj) -> bool:
+    """Cards that should count as 'spells' for cost & 'cast a spell' triggers."""
+    t = str(getattr(cobj, "type", "")).upper()
+    return t in ("SPELL", "SECRET")
 
 def _parse_minion_targeting(spec: str):
     """

@@ -64,6 +64,6 @@
 # [] Whenever freeze attackes a armoured enemy it doesnt freeze it, it should
 # [] AI doesnt use Shield Slam or Slam
 # [] Show Spell Damage increase for cards.
-#
+# [] Fix so that Secrets are actually spells
 #
 #
