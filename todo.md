@@ -28,6 +28,7 @@
 # [] Add Class Priest
 # [] Add class Shaman
 # [] Add class Rougue
+# [] Add heroCards like Jarraxuss.
 # [] Draw diffrent mechanics on cards, Aura, triggers, Deathrattle, etc.
 # [x] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
 # [] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
@@ -39,20 +40,24 @@
 # [x] Loading stored deck
 # [] Creating, managing and saving decks
 # [x] Recreate a deck in hearthstone
-# [] Add choose/discard 3 cards before the match begins. 
-# [] Fix minion bug when attacking, not centered.
-# [] Fix drawing hero when attacking minion bug.
-# [] Fix so that user can cancel hero attack.
-# [] When casting non-target spells, make sure that the player has to drag them on the board so it doesnt trigger randomly.
+# [x] Add choose/discard 3 cards before the match begins. 
+# [x] Fix minion bug when attacking, not centered.
+# [x] Fix drawing hero when attacking minion bug.
+# [x] Fix so that user can cancel hero attack.
+# [x] When casting non-target spells, make sure that the player has to drag them on the board so it doesnt trigger randomly.
 # [x] Add Brawl
 # [x] Add Ragnaros
 # [] Create more coding files, and move stuff to better locations
 # ---------------- UI / Animation -------------
 # [] Add Timer for each round
-# [] Add animation for drawing card
-# [] Add animation for when card dies
-# [] add animation for when cards are summoned
+# [x] Add animation for drawing card
+# [x] Add animation for when card dies
+# [x] add animation for when cards are summoned
+# [] Make sure that the Hand-Cards are centered
+# [] Show cards for enemy, but not revealed
+# [] Draw the deck on the side and amount of cards left.
 # [] add animation for spells, diffrent kinds. 
+# [] Draw secrets a little more to the left of hero
 # [] Add music
 # [] Add sound
 # --------------- AI STUFF ----------
@@ -64,5 +69,6 @@
 # [x] AI doesnt use Shield Slam or Slam
 # [] Show Spell Damage increase for cards.
 # [x] Fix so that Secrets are actually spells
+# 
 #
 #

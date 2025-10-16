@@ -86,6 +86,17 @@ HERO_COLORS = {
     "HUNTER":  (35, 155, 75),
 }
 
+# Hide specific hand indices while an animation is flying toward them
+HIDDEN_HAND_INDICES_ME: set[int] = set()
+HIDDEN_HAND_INDICES_EN: set[int] = set()
+
+def _deck_source_rect_for_pid(pid: int) -> pygame.Rect:
+    """Where cards 'come from' visually."""
+    if pid == 0:
+        return pygame.Rect(W - CARD_W - 20, ROW_Y_HAND + CARD_H // 4, CARD_W, CARD_H)
+    else:
+        return pygame.Rect(W - CARD_W - 20, ROW_Y_ENEMY - 30, CARD_W, CARD_H)
+
 # Track where minions were on the previous frame (for deaths, etc.)
 LAST_MINION_RECTS: dict[int, pygame.Rect] = {}
 
@@ -113,6 +124,7 @@ ANIM_PLAY_MS    = 550
 ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
+ANIM_DRAW_MS    = 420
 AI_THINK_MS     = 750
 ANIM_SPELL_MS   = 420   # spell projectile travel
 ANIM_HERO_MS    = 460   # hero lift + dash
@@ -1016,7 +1028,49 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
             r = LAST_MINION_RECTS.get(mid)
             if r:
                 ANIMS.push(AnimStep("fade_rect", 420, {"rect": r, "non_blocking": True, "layer": 1}))
+        elif k == "CardDrawn":
+            who = p.get("player", 0)
+            post = layout_board(g)
 
+            # where the deck will be: right edge, near the appropriate row
+            arena = battle_area_rect()
+            if who == 0:
+                src_y = ROW_Y_HAND + CARD_H // 4
+                src_rect = pygame.Rect(W - CARD_W - 20, src_y, CARD_W, CARD_H)
+                # fly to the newest hand slot (rightmost in the stacked fan)
+                if post["hand"]:
+                    _, maybe_cid, dst = post["hand"][-1]
+                else:
+                    # Fallback if we somehow don't have a hand slot yet
+                    dst = pygame.Rect(W//2, ROW_Y_HAND, CARD_W, CARD_H)
+                    maybe_cid = None
+                # Animate: show the actual card if we can (nice polish)
+                data = {
+                    "src": src_rect,
+                    "dst": dst,
+                    "pid": 0,
+                    "cid": maybe_cid,            # will render the true card if available
+                    "color": CARD_BG_HAND,
+                    "ease": "quart",
+                }
+                ANIMS.push(AnimStep("play_move", ANIM_DRAW_MS, data, on_finish=None))
+
+            else:
+                # Enemy: use a generic back moving toward their hand area (top)
+                src_y = ROW_Y_ENEMY - 30
+                src_rect = pygame.Rect(W - CARD_W - 20, src_y, CARD_W, CARD_H)
+
+                # Aim roughly where the enemy "hand" lives visually
+                # (you don't render it by default; this just sells the motion)
+                dst = pygame.Rect(W - (CARD_W + 40), ROW_Y_ENEMY - 30, CARD_W, CARD_H)
+
+                ANIMS.push(AnimStep(
+                    "play_move",
+                    ANIM_DRAW_MS,
+                    {"src": src_rect, "dst": dst, "pid": 1, "color": CARD_BG_EN, "ease": "quart"},
+                    on_finish=None
+                ))
+        
         elif k == "CardDiscarded":
             who = p.get("player", 0)
             # animate from that side's hand region center to abyss
@@ -1217,9 +1271,11 @@ def scale_rect_about_center(r: pygame.Rect, s: float, lift: int = 0) -> pygame.R
     return pygame.Rect(cx - w // 2, cy - h // 2, w, h)
 
 def hand_hover_index(hot, mx, my) -> Optional[int]:
-    """Return the hand index under the mouse (consider a slightly enlarged hitbox)."""
     for i, cid, r in hot["hand"]:
-        hit = scale_rect_about_center(r, 1.10, 0)  # generous hit area
+        # skip hidden slots (e.g., during mulligan fly-in)
+        if i in HIDDEN_HAND_INDICES_ME:
+            continue
+        hit = scale_rect_about_center(r, 1.10, 0)
         if hit.collidepoint(mx, my):
             return i
     return None
@@ -1506,6 +1562,8 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
 
     # draw non-hovered first (so hovered can render on top)
     for i, cid, r in hot["hand"]:
+        if i in HIDDEN_HAND_INDICES_ME:
+            continue
         if i == hover_idx:
             continue
         c = g.cards_db[cid]
@@ -1520,7 +1578,7 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
             pygame.draw.rect(screen, GREEN, r.inflate(10, 10), 3, border_radius=16)
 
     # hovered last (zoomed + lifted)
-    if hover_idx is not None:
+    if hover_idx is not None and hover_idx not in HIDDEN_HAND_INDICES_ME:
         # find its original rect
         r0 = None; cid0 = None
         for i, cid, r in hot["hand"]:
@@ -2366,6 +2424,261 @@ def minion_under_point(g: Game, hot, mx, my) -> Optional[int]:
     return None
 
 
+def _hand_slot_rect_for(pid: int, index: int, g: Game) -> Optional[pygame.Rect]:
+    """
+    Destination rect of a given hand index for a player.
+    - pid == 0 → use the real on-screen hand layout from layout_board(...)
+    - pid == 1 → synthesize a stacked hand row near the enemy area
+                 (we don't normally render enemy hand, but this keeps
+                  their mulligan draw visuals off your side).
+    """
+    if pid == 0:
+        post = layout_board(g)
+        for i, _cid, r in post["hand"]:
+            if i == index:
+                return r
+        return None
+
+    # pid == 1 (enemy): build a virtual stacked hand row at the top
+    # Keep it centered and slightly below the enemy name strip.
+    n = len(g.players[1].hand)
+    if not (0 <= index < n):
+        return None
+    rects = _stacked_hand_rects(n, ROW_Y_ENEMY - 30)
+    return rects[index] if 0 <= index < len(rects) else None
+
+
+def _mulligan_pick_count(g, pid: int) -> int:
+    """
+    Show up to 3 cards for the starting player; 4 for the player who goes second,
+    but we clamp to their current hand size so we don't overreach the engine.
+    """
+    # If active_player == pid at game start → that pid goes first
+    goes_first = (getattr(g, "active_player", 0) == pid)
+    want = 3 if goes_first else 4
+    return min(want, len(g.players[pid].hand))
+
+def _mulligan_ai_should_keep(g, cid: str) -> bool:
+    """
+    Heuristic:
+      - Keep MINION with printed cost 1–3.
+      - Keep 0-cost flexible cards (optional sweetener).
+      - Toss 5+ cost always.
+      - Toss expensive spells (>3) by default.
+    """
+    c = g.cards_db[cid]
+    t = getattr(c, "type", "").upper()
+    cost = int(getattr(c, "cost", 0))
+
+    if cost >= 5:
+        return False
+    if t == "MINION":
+        return 1 <= cost <= 3
+    if t == "SPELL":
+        return cost <= 3
+    # WEAPON/SECRET/ETC: keep if cheap
+    return cost <= 3
+
+def _mulligan_replace(g, pid: int, replace_indices: list[int]):
+    """
+    Return the selected cards to the deck, shuffle, and draw the same count.
+    We keep it simple and deterministic:
+      - Move selected (by index in *current* hand order snapshot) to the bottom of deck,
+      - Shuffle deck,
+      - Draw the same amount.
+    """
+    p = g.players[pid]
+
+    if not replace_indices:
+        return
+
+    # Work on a snapshot of the hand so indices remain stable
+    # as we pop and reinsert.
+    replace_indices = sorted(set(replace_indices))
+    original_hand = list(p.hand)
+
+    to_replace: list[str] = []
+    keep: list[str] = []
+    for i, cid in enumerate(original_hand):
+        if i in replace_indices:
+            to_replace.append(cid)
+        else:
+            keep.append(cid)
+
+    # Put replaced cards to bottom of deck
+    for cid in to_replace:
+        p.deck.append(cid)
+
+    # Shuffle deck
+    random.shuffle(p.deck)
+
+    # New hand = kept + (draw N)
+    draws = min(len(p.deck), len(to_replace))
+    new_cards = [p.deck.pop(0) for _ in range(draws)]
+    p.hand[:] = keep + new_cards
+
+    # ---- Animate newly drawn cards into the hand ----
+    # New cards are placed at the end of the hand (indices tail_start..tail_end)
+    tail_start = len(keep)
+    tail_end   = len(p.hand) - 1
+    if draws > 0:
+        post = layout_board(GLOBAL_GAME)
+        # choose whose hide set
+        hide_set = HIDDEN_HAND_INDICES_ME if pid == 0 else HIDDEN_HAND_INDICES_EN
+        src_rect = _deck_source_rect_for_pid(pid)
+
+        # mark these slots hidden until their animation finishes
+        for idx in range(tail_start, tail_end + 1):
+            hide_set.add(idx)
+
+        # queue one animation per new card (right → slot)
+        for idx in range(tail_start, tail_end + 1):
+            # find the destination rect for this hand index
+            dst_rect = None 
+            dst_rect = _hand_slot_rect_for(pid, idx, GLOBAL_GAME)
+            if dst_rect is None:
+                continue  # safety
+
+            this_cid = p.hand[idx] if idx < len(p.hand) else None
+            def _unhide(i=idx, hs=hide_set):
+                try:
+                    hs.remove(i)
+                except KeyError:
+                    pass
+
+            ANIMS.push(AnimStep(
+                "play_move",
+                ANIM_DRAW_MS,  # same timing as normal draws
+                {
+                    "src": src_rect.copy(),
+                    "dst": dst_rect.copy(),
+                    "pid": pid,
+                    "cid": this_cid if pid == 0 else None,  # show real card for you; slab for enemy
+                    "color": CARD_BG_HAND if pid == 0 else CARD_BG_EN,
+                    "ease": "quart",
+                },
+                on_finish=_unhide
+            ))
+
+    # Optional: log
+    add_log(f"{'You' if pid == 0 else 'AI'} mulliganed {len(to_replace)} card(s).")
+
+def run_player_mulligan(g: Game) -> None:
+    """
+    Full-screen overlay before turn 1: show first N cards of your hand,
+    allow toggling each to replace. Confirm with a button.
+    """
+    clock = pygame.time.Clock()
+    N = _mulligan_pick_count(g, 0)
+    if N <= 0: 
+        return
+
+    # we mulligan the *first N* hand cards to keep logic simple and fair
+    hand_view = list(g.players[0].hand[:N])
+    selected = set()  # indices 0..N-1 chosen to replace
+
+    # precompute card rects (centered row, larger size)
+    CARDW, CARDH = int(CARD_W * 1.25), int(CARD_H * 1.35)
+    gap = 18
+    total_w = N * CARDW + (N - 1) * gap
+    start_x = (W - total_w) // 2
+    row_y = H // 2 - CARDH // 2
+
+    rects = [pygame.Rect(start_x + i * (CARDW + gap), row_y, CARDW, CARDH) for i in range(N)]
+    confirm_rect = pygame.Rect(W//2 - 140, row_y + CARDH + 30, 130, 42)
+    keep_rect     = pygame.Rect(W//2 + 10,  row_y + CARDH + 30, 130, 42)
+
+    while True:
+        clock.tick(60)
+
+        # Dim background and draw board as context (optional)
+        screen.fill(BG)
+        hot_preview = layout_board(g)
+        hot_preview["hand"] = []
+        draw_board(g, hot_preview)  # background context
+        shade = pygame.Surface((W, H), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 180))
+        screen.blit(shade, (0, 0))
+
+        title = BIG.render("Choose cards to REPLACE", True, WHITE)
+        screen.blit(title, title.get_rect(center=(W//2, row_y - 36)))
+
+        # Cards
+        for i, (cid, r) in enumerate(zip(hand_view, rects)):
+            pygame.draw.rect(screen, (28, 32, 40), r, border_radius=14)
+            # draw the actual card onto an offscreen surface then scale
+            base = pygame.Surface((CARD_W * 1.25, CARD_H * 1.25), pygame.SRCALPHA)
+            draw_card_frame(
+                pygame.Rect(0, 0, CARD_W * 1.25, CARD_H * 1.25),
+                CARD_BG_HAND,
+                card_obj=g.cards_db[cid],
+                in_hand=True,
+                override_cost=g.get_effective_cost(0, cid),
+                surface=base,
+            )
+            surf = pygame.transform.smoothscale(base, (r.w, r.h))
+            screen.blit(surf, r.topleft)
+
+            # toggle overlay
+            if i in selected:
+                ov = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+                ov.fill((210, 70, 70, 90))
+                screen.blit(ov, r.topleft)
+                x_txt = BIG.render("REPLACE", True, WHITE)
+                screen.blit(x_txt, x_txt.get_rect(center=(r.centerx, r.bottom - 18)))
+
+            # rim
+            pygame.draw.rect(screen, (60, 90, 130), r, 2, border_radius=14)
+
+        # Buttons
+        pygame.draw.rect(screen, (80, 140, 240), confirm_rect, border_radius=10)
+        pygame.draw.rect(screen, (120, 120, 120), keep_rect, border_radius=10)
+        screen.blit(FONT.render("Confirm", True, WHITE), FONT.render("Confirm", True, WHITE).get_rect(center=confirm_rect.center))
+        screen.blit(FONT.render("Keep All", True, WHITE), FONT.render("Keep All", True, WHITE).get_rect(center=keep_rect.center))
+
+        hint = RULE_FONT.render("Click cards to toggle. Confirm to redraw selected.", True, WHITE)
+        screen.blit(hint, hint.get_rect(center=(W//2, keep_rect.bottom + 20)))
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                # ESC = keep all
+                _mulligan_replace(g, 0, [])
+                return
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                # cards
+                for i, r in enumerate(rects):
+                    if r.collidepoint(mx, my):
+                        if i in selected: selected.remove(i)
+                        else: selected.add(i)
+                        break
+                # buttons
+                if confirm_rect.collidepoint(mx, my):
+                    _mulligan_replace(g, 0, list(selected))
+                    return
+                if keep_rect.collidepoint(mx, my):
+                    _mulligan_replace(g, 0, [])
+                    return
+
+def run_ai_mulligan(g: Game) -> None:
+    N = _mulligan_pick_count(g, 1)
+    if N <= 0:
+        return
+
+    # Evaluate first N cards of AI hand
+    ai_hand = list(g.players[1].hand[:N])
+    replace_indices = []
+    for i, cid in enumerate(ai_hand):
+        if not _mulligan_ai_should_keep(g, cid):
+            replace_indices.append(i)
+
+    _mulligan_replace(g, 1, replace_indices)
+
+
 # ---------- Main loop ----------
 GLOBAL_GAME: Game
 
@@ -2395,6 +2708,13 @@ def main():
     g = start_game()
     GLOBAL_GAME = g
 
+    # --- MULLIGAN PHASE (player first so UI is visible, then AI) ---
+    run_player_mulligan(g)
+    run_ai_mulligan(g)
+
+    # small banner for feedback
+    ANIMS.push(AnimStep("banner", 800, {"text": "Mulligan complete"}))
+
     selected_attacker: Optional[int] = None
     selected_hero: bool = False
     waiting_target_for_play: Optional[Tuple[int, str, pygame.Rect]] = None
@@ -2409,7 +2729,7 @@ def main():
     drag_offset: Tuple[int, int] = (0, 0)  # mouse-to-card offset while dragging
     dragging_pos: Tuple[int, int] = (0, 0)
     hover_slot_index: Optional[int] = None  # 0..len(board)
-
+    
     RUNNING = True
     while RUNNING:
         clock.tick(60)
