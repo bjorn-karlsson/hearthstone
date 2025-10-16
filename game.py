@@ -727,6 +727,34 @@ def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
 
     return True
 
+def card_is_secret(cobj) -> bool:
+    return (
+        "Secret" in (getattr(cobj, "keywords", []) or [])
+        or getattr(cobj, "is_secret", False)
+        or getattr(cobj, "type", "").upper() == "SECRET"
+    )
+
+def card_is_non_target_cast(g: Game, pid: int, cid: str) -> bool:
+    """
+    True if the card should be cast by dragging onto the board (no targeting step):
+    - non-target spell
+    - secret
+    - weapon
+    """
+    c = g.cards_db[cid]
+    if getattr(c, "type", "").upper() == "WEAPON":
+        return True
+    if card_is_secret(c):
+        return True
+
+    # Spells with no targets
+    if getattr(c, "type", "").upper() == "SPELL":
+        enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid)
+        return not (enemy_mins or my_mins or enemy_face_ok or my_face_ok)
+
+    return False
+
+
 def _exists_damaged_enemy_minion(g, pid: int) -> bool:
     opp = 1 - pid
     return any(m.is_alive() and m.health < m.max_health for m in g.players[opp].board)
@@ -1316,7 +1344,8 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
                *,
                show_slots: bool = False,
                active_slot_index: Optional[int] = None,
-               dragging_card: Optional[Tuple[str, pygame.Rect]] = None):
+               dragging_card: Optional[Tuple[str, pygame.Rect]] = None,
+               show_cast_zone: bool = False):
     hidden_minion_ids = hidden_minion_ids or set()
     highlight_enemy_minions = highlight_enemy_minions or set()
     highlight_my_minions = highlight_my_minions or set()
@@ -1531,6 +1560,15 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
             col = (255, 255, 255) if i == active_slot_index else (120, 140, 180)
             pygame.draw.rect(screen, col, s, 0, border_radius=6)
             pygame.draw.rect(screen, (30, 40, 55), s, 2, border_radius=6)
+
+    # --- cast zone (when dragging a non-target spell/secret/weapon) ---
+    if show_cast_zone:
+        arena = battle_area_rect()
+        glow = arena.inflate(12, 12)
+        pygame.draw.rect(screen, (255, 255, 255), glow, 4, border_radius=16)
+        pygame.draw.rect(screen, (230, 200, 90), arena, 3, border_radius=16)  # yellow rim
+        msg = BIG.render("Release on board to CAST", True, WHITE)
+        screen.blit(msg, msg.get_rect(center=arena.center))
 
     # --- draw dragged hand card on top ---
     if dragging_card is not None:
@@ -2096,12 +2134,18 @@ def main():
         # 2) draw the board first (so the arena is underneath)
         # compute dragging preview rect if any
         drag_preview = None
+        show_cast_zone = False
         if dragging_from_hand is not None:
             _, cid_drag, _r0 = dragging_from_hand
             mx, my = pygame.mouse.get_pos()
             dx, dy = drag_offset
             drag_rect = pygame.Rect(mx - dx, my - dy, CARD_W, CARD_H)
             drag_preview = (cid_drag, drag_rect)
+
+            # if we are dragging a non-minion (non-target spell/secret/weapon), show cast zone
+            cobj_drag = g.cards_db[cid_drag]
+            if getattr(cobj_drag, "type", "").upper() != "MINION" and card_is_non_target_cast(g, 0, cid_drag):
+                show_cast_zone = True
 
         show_slots = dragging_from_hand is not None and len(g.players[0].board) < 7
         draw_board(
@@ -2113,7 +2157,8 @@ def main():
             highlight_my_face=hilite_my_face,
             show_slots=show_slots,
             active_slot_index=hover_slot_index,
-            dragging_card=drag_preview
+            dragging_card=drag_preview,
+            show_cast_zone=show_cast_zone,
         )
         # 3) now draw the animations ON TOP
         _, top_overlay = ANIMS.update_and_draw(g, hot)
@@ -2656,7 +2701,11 @@ def main():
                             if not card_is_playable_now(g, 0, cid):
                                 add_log("You can't play that right now.")
                                 break
-                            if g.active_player == 0 and cobj.type == "MINION" and card_is_playable_now(g, 0, cid) and len(g.players[0].board) < 7:
+
+                            card_type = getattr(cobj, "type", "").upper()
+
+                            # MINION → drag to a slot (existing behavior)
+                            if g.active_player == 0 and card_type == "MINION" and len(g.players[0].board) < 7:
                                 dragging_from_hand = (i, cid, r.copy())
                                 dx, dy = mx - r.x, my - r.y
                                 drag_offset = (dx, dy)
@@ -2664,26 +2713,35 @@ def main():
                                 slots = insertion_slots_for_my_row(g, battle_area_rect())
                                 hover_slot_index = slot_index_at_point(slots, mx, my)
                                 started_drag = True
+
                             else:
-                                enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
-                                if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
-                                    waiting_target_for_play = (i, cid, r.copy())
-                                    hilite_enemy_min = set(enemy_mins)
-                                    hilite_my_min = set(my_mins)
-                                    hilite_enemy_face = enemy_face_ok
-                                    hilite_my_face = my_face_ok
+                                # Determine if this should be a DRAG-TO-CAST card
+                                if card_is_non_target_cast(g, 0, cid):
+                                    # Start dragging to the board (cast zone)
+                                    dragging_from_hand = (i, cid, r.copy())
+                                    dx, dy = mx - r.x, my - r.y
+                                    drag_offset = (dx, dy)
+                                    dragging_pos = (mx, my)
+                                    hover_slot_index = None
+                                    started_drag = True
+
                                 else:
-                                    def on_finish(i=i):
-                                        try:
-                                            ev = g.play_card(0, i)
-                                            log_events(ev, g)
-                                            apply_post_summon_hooks(g, ev)
-                                        except IllegalAction:
-                                            pass
-                                    dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                                    ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                        {"src": r.copy(), "dst": dst, "label": db[cid].name},
-                                                        on_finish=on_finish))
+                                    # TARGETED spell → show targeting highlights (existing)
+                                    enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
+                                    if enemy_mins or my_mins or enemy_face_ok or my_face_ok:
+                                        waiting_target_for_play = (i, cid, r.copy())
+                                        hilite_enemy_min = set(enemy_mins)
+                                        hilite_my_min = set(my_mins)
+                                        hilite_enemy_face = enemy_face_ok
+                                        hilite_my_face = my_face_ok
+                                    else:
+                                        # (Very rare) truly no-target but not covered above → fall back to drag-to-cast
+                                        dragging_from_hand = (i, cid, r.copy())
+                                        dx, dy = mx - r.x, my - r.y
+                                        drag_offset = (dx, dy)
+                                        dragging_pos = (mx, my)
+                                        hover_slot_index = None
+                                        started_drag = True
                             break
 
                     if started_drag:
@@ -2802,6 +2860,105 @@ def main():
                         hover_slot_index = slot_index_at_point(slots, mx, my)
 
                 elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    if dragging_from_hand is not None:
+                        mx, my = event.pos
+                        idx, cid, src_rect = dragging_from_hand
+                        dragging_from_hand = None
+
+                        cobj = g.cards_db[cid]
+                        ctype = getattr(cobj, "type", "").upper()
+
+                        # MINION dropping (existing behavior)
+                        if ctype == "MINION":
+                            slots = insertion_slots_for_my_row(g, battle_area_rect())
+                            slot_idx = slot_index_at_point(slots, mx, my)
+                            if slot_idx is None or len(g.players[0].board) >= 7:
+                                hover_slot_index = None
+                                continue
+
+                            need = (g.cards_db.get("_TARGETING", {}).get(cid, "none") or "none").lower()
+
+                            if need == "none":
+                                slot_rect = slots[slot_idx]
+                                dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
+
+                                def on_finish(i=idx):
+                                    try:
+                                        ev = g.play_card(0, i, insert_at=slot_idx)
+                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
+                                        flash_from_events(g, ev)
+                                    except IllegalAction:
+                                        pass
+
+                                ANIMS.push(AnimStep(
+                                    "play_move", ANIM_PLAY_MS,
+                                    {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                    on_finish=on_finish
+                                ))
+                                hover_slot_index = None
+                                continue
+                            else:
+                                enemy_mins, my_mins, enemy_face_ok, my_face_ok = targets_for_card(g, cid, pid=0)
+                                any_targets = bool(enemy_mins or my_mins or enemy_face_ok or my_face_ok)
+                                if any_targets:
+                                    waiting_target_for_play = ("__PENDING_MINION__", idx, cid, src_rect, slot_idx)
+                                    hilite_enemy_min = set(enemy_mins)
+                                    hilite_my_min = set(my_mins)
+                                    hilite_enemy_face = enemy_face_ok or (need in ("any_character", "enemy_character"))
+                                    hilite_my_face = my_face_ok or (need in ("any_character", "friendly_character"))
+                                    hover_slot_index = slot_idx
+                                    continue
+                                else:
+                                    slot_rect = slots[slot_idx]
+                                    dst = pygame.Rect(slot_rect.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
+
+                                    def on_finish(i=idx, sl=slot_idx):
+                                        try:
+                                            ev = g.play_card(0, i, insert_at=sl)
+                                            log_events(ev, g)
+                                            apply_post_summon_hooks(g, ev)
+                                            flash_from_events(g, ev)
+                                        except IllegalAction:
+                                            pass
+
+                                    ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
+                                                        {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                                        on_finish=on_finish))
+                                    hover_slot_index = None
+                                    continue
+
+                        # NON-MINION (Spell/Secret/Weapon) dropping → must drop on arena to cast
+                        else:
+                            arena = battle_area_rect()
+                            if not card_is_non_target_cast(g, 0, cid):
+                                # safety: if this was a targeted spell we shouldn't be here,
+                                # but just in case, do nothing (user must click to target).
+                                continue
+
+                            if arena.collidepoint(mx, my):
+                                # Animate into a nice board-ish destination (center bottom of arena)
+                                dst = pygame.Rect(arena.centerx - CARD_W // 2, ROW_Y_ME, CARD_W, CARD_H)
+
+                                def on_finish(i=idx):
+                                    try:
+                                        ev = g.play_card(0, i)   # no targets
+                                        log_events(ev, g)
+                                        apply_post_summon_hooks(g, ev)
+                                        flash_from_events(g, ev)
+                                    except IllegalAction:
+                                        pass
+
+                                ANIMS.push(AnimStep(
+                                    "play_move", ANIM_PLAY_MS,
+                                    {"src": src_rect, "dst": dst, "label": db[cid].name},
+                                    on_finish=on_finish
+                                ))
+                            else:
+                                # dropped outside the board → cancel (do nothing)
+                                pass
+                            continue
+
                     if dragging_from_hand is not None:
                         mx, my = event.pos
                         idx, cid, src_rect = dragging_from_hand
