@@ -1704,63 +1704,73 @@ def _fx_mirror_played_minion(params):
         # Summon the copy for the secret owner (source_obj.owner)
         return _summon_from_card_spec(g, getattr(source_obj, "owner", g.active_player), spec, 1)
     return run
-
 def _fx_freeze(params):
     """
     Supports:
-      - Single tagged target (minion or player) via play-time target
-      - AOE scopes via params["target"]:
-          "enemy_minions"     -> freeze all enemy minions
-          "friendly_minions"  -> freeze all friendly minions
-          "all_minions"       -> freeze all minions (both sides)
+      - Tagged target (minion or player): target={"minion": id} | {"player": pid}
+      - AOE minion scopes via params["target"]:
+          "enemy_minions", "friendly_minions", "all_minions"
+      - Character scopes via params["target"] (NEW):
+          "enemy_character", "friendly_character", "any_character",
+          "enemy_face"/"enemy_hero", "friendly_face"/"friendly_hero"
+    Notes:
+      - Freezing a hero ignores Armor completely (Armor only affects damage).
     """
     scope = str(params.get("target", "") or "").lower()
+
+    def _freeze_minion(m: Minion, ev: list[Event]):
+        if m.is_alive() and not m.frozen:
+            m.frozen = True
+            ev.append(Event("Frozen", {
+                "target_type": "minion",
+                "minion": m.id,
+                "owner": m.owner
+            }))
+
+    def _freeze_hero(g: 'Game', pid: int, ev: list[Event]):
+        p = g.players[pid]
+        if not p.hero_frozen:
+            p.hero_frozen = True
+            ev.append(Event("Frozen", {"target_type": "player", "player": pid}))
 
     def run(g, source_obj, target):
         owner = getattr(source_obj, "owner", g.active_player)
         ev: List[Event] = []
 
-        # ----- AOE minion scopes -----
+        # ----- 1) AOE minion scopes -----
         if scope in ("enemy_minions", "friendly_minions", "all_minions"):
-            if scope == "enemy_minions":
-                sides = [g.other(owner)]
-            elif scope == "friendly_minions":
-                sides = [owner]
-            else:  # "all_minions"
-                sides = [owner, g.other(owner)]
-
+            sides = (
+                [g.other(owner)] if scope == "enemy_minions"
+                else [owner] if scope == "friendly_minions"
+                else [owner, g.other(owner)]
+            )
             for pid in sides:
                 for m in list(g.players[pid].board):
-                    if m.is_alive() and not m.frozen:
-                        m.frozen = True
-                        ev.append(Event("Frozen", {
-                            "target_type": "minion",
-                            "minion": m.id,
-                            "owner": m.owner,
-                            "aoe": True
-                        }))
+                    _freeze_minion(m, ev)
             return ev
 
-        # ----- Single tagged targets (backward compatible) -----
+        # ----- 2) Character scopes (NEW) -----
+        if scope in ("enemy_character", "enemy_face", "enemy_hero"):
+            _freeze_hero(g, g.other(owner), ev); return ev
+        if scope in ("friendly_character", "friendly_face", "friendly_hero"):
+            _freeze_hero(g, owner, ev); return ev
+        if scope in ("any_character", "character", "any_face", "any_hero"):
+            # Default to enemy hero if not tagged
+            _freeze_hero(g, g.other(owner), ev); return ev
+
+        # ----- 3) Tagged targets (backward compatible) -----
         kind, obj = _resolve_tagged_target(g, target)
         if kind == "minion" and obj is not None:
-            if not obj.frozen:
-                obj.frozen = True
-                ev.append(Event("Frozen", {"target_type": "minion", "minion": obj.id, "owner": obj.owner}))
+            _freeze_minion(obj, ev)
             return ev
         if kind == "player":
-            pid = obj
-            p = g.players[pid]
-            if not p.hero_frozen:
-                p.hero_frozen = True
-                ev.append(Event("Frozen", {"target_type": "player", "player": pid}))
+            _freeze_hero(g, obj, ev)
             return ev
 
-        # No valid target provided; do nothing (safe no-op).
+        # No valid target → safe no-op.
         return ev
 
     return run
-
 
 def _fx_weapon_durability_delta(params):
     delta = int(params.get("amount", 0))

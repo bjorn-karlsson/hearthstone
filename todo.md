@@ -56,14 +56,13 @@
 # [] Add music
 # [] Add sound
 # --------------- AI STUFF ----------
-# [] Make sure AI knows about adjecancy
-# [] Fix coin bug.
-# [] BIG: make sure that the AI simulates its choices atleast 5 times and then pick the best option.
+# [x] Make sure AI knows about adjecancy
+# [x] Fix coin bug.
 #
 # ---------------- BUG FIX ---------------
-# [] Whenever freeze attackes a armoured enemy it doesnt freeze it, it should
-# [] AI doesnt use Shield Slam or Slam
+# [x] Whenever freeze attackes a armoured enemy it doesnt freeze it, it should
+# [x] AI doesnt use Shield Slam or Slam
 # [] Show Spell Damage increase for cards.
-# [] Fix so that Secrets are actually spells
+# [x] Fix so that Secrets are actually spells
 #
 #
