@@ -2385,6 +2385,7 @@ def _summon_from_card_spec(g, owner, card_spec, count):
             base_minion_type=str(card_spec.get("minion_type", "None")),
             triggers_map=dict(card_spec.get("triggers_map", {})),
             cost_aura_spec=card_spec.get("cost_aura"),
+            auras=list(card_spec.get("auras", [])),
             cant_attack = ("Can't Attack" in kws) or ("Cant Attack" in kws)
         )
         g.next_minion_id += 1
