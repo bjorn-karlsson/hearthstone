@@ -377,7 +377,7 @@ playable_decks = [
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Warrior Deck (Control)")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Paladin Deck (Midrange / Control)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
 #player_deck = None
@@ -681,18 +681,6 @@ def card_name_from_db(db, cid: str) -> str:
         return obj.get("name", cid)
     return str(cid)
 
-def draw_silence_overlay(r: pygame.Rect):
-    # diagonal ribbon across the card
-    s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
-    pygame.draw.polygon(
-        s, (100, 80, 150, 180),  # semi-transparent purple
-        [( -10, r.h*0.35), (r.w+10, r.h*0.10), (r.w+10, r.h*0.25), (-10, r.h*0.50)]
-    )
-    # text
-    lbl = BIG.render("SILENCED", True, (240, 235, 255))
-    s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.23))))
-    screen.blit(s, (r.x, r.y))
-
 def card_is_playable_now(g: Game, pid: int, cid: str) -> bool:
     c = g.cards_db[cid]
     p = g.players[pid]
@@ -783,19 +771,6 @@ TARGET_FILTERS: dict[str, callable] = {
     "EXECUTE": _filter_damaged_enemy_minions,
 }
 
-def draw_rarity_droplet(r: pygame.Rect, rarity: Optional[str]):
-    """Small gem centered at bottom of the card."""
-    if not rarity:
-        rarity = "COMMON"
-    key = str(rarity).upper()
-    color = RARITY_COLORS.get(key, RARITY_COLORS["COMMON"])
-
-    radius = 9
-    cx, cy = r.centerx, r.bottom - 16
-    pygame.draw.circle(screen, color, (cx, cy), radius)
-    # subtle rim
-    pygame.draw.circle(screen, (20, 20, 20), (cx, cy), radius, 2)
-
 def centered_text(text: str, y: int, font=BIG, color=WHITE):
     surf = font.render(text, True, color)
     screen.blit(surf, surf.get_rect(center=(W//2, y)))
@@ -813,216 +788,97 @@ def wrap_text(text: str, font: pygame.font.Font, max_w: int) -> List[str]:
             cur = w
     if cur: lines.append(cur)
     return lines
-
-def draw_cost_gem(r: pygame.Rect, cost: int):
+def draw_cost_gem(r: pygame.Rect, cost: int, *, surface=None):
+    if surface is None: surface = screen
     gem = pygame.Rect(r.x + 8, r.y + 8, 30, 30)
-    pygame.draw.ellipse(screen, COST_BADGE, gem)
+    pygame.draw.ellipse(surface, COST_BADGE, gem)
     t = BIG.render(str(cost), True, WHITE)
-    screen.blit(t, t.get_rect(center=gem.center))
+    surface.blit(t, t.get_rect(center=gem.center))
 
-
-def draw_name_footer(r: pygame.Rect, name: str):
-    """
-    Bottom-centered pill for name, sitting just above rarity droplet.
-    Leaves room for stats at the very bottom row.
-    """
+def draw_name_footer(r: pygame.Rect, name: str, *, surface=None):
+    if surface is None: surface = screen
     name_h   = 22
     stats_h  = 28
     gap      = 4
-    footer_w = r.w - 20  # insets for a nicer shape
+    footer_w = r.w - 20
     footer_x = r.x + (r.w - footer_w)//2
     footer_y = r.bottom - stats_h - gap - name_h
-
     bar = pygame.Rect(footer_x, footer_y, footer_w, name_h)
-    pygame.draw.rect(screen, (30, 35, 45), bar, border_radius=10)
-
-    # truncate gracefully
+    pygame.draw.rect(surface, (30, 35, 45), bar, border_radius=10)
     nm = name
-    while FONT.size(nm)[0] > bar.w - 16 and len(nm) > 0:
-        nm = nm[:-1]
-    if len(nm) < len(name) and len(nm) > 0:
-        nm = nm[:-1] + "…"
+    while FONT.size(nm)[0] > bar.w - 16 and len(nm) > 0: nm = nm[:-1]
+    if len(nm) < len(name) and len(nm) > 0: nm = nm[:-1] + "…"
     text_surf = FONT.render(nm, True, WHITE)
-    screen.blit(text_surf, text_surf.get_rect(center=bar.center))
+    surface.blit(text_surf, text_surf.get_rect(center=bar.center))
 
-def draw_text_box(
-    r: pygame.Rect,
-    body_text: str,
-    max_lines: int,
-    *,
-    title: Optional[str] = None,
-    font_body=RULE_FONT,
-    font_title=BIG
-):
-    # Top padding inside the card art area
+def draw_text_box(r: pygame.Rect, body_text: str, max_lines: int, *,
+                  title: Optional[str] = None, font_body=RULE_FONT, font_title=BIG, surface=None):
+    if surface is None: surface = screen
     top_pad = 45
-
-    # Reserve bottom area: footer (type) + stats + gaps
     name_h  = 22
     stats_h = 28
     gap     = 4
     bottom_reserved = name_h + stats_h + gap + 6
-
-    # Text box rect
     box = pygame.Rect(r.x + 10, r.y + top_pad, r.w - 20, r.h - top_pad - bottom_reserved)
-    pygame.draw.rect(screen, (28, 28, 34), box, border_radius=8)
-
+    pygame.draw.rect(surface, (28, 28, 34), box, border_radius=8)
     y = box.y + 6
-
-    # --- Title (centered) ---
     if title:
-        # shrink with ellipsis if needed
         t_txt = title
-        while font_title.size(t_txt)[0] > box.w - 12 and len(t_txt) > 0:
-            t_txt = t_txt[:-1]
-        if len(t_txt) < len(title) and len(t_txt) > 0:
-            t_txt = t_txt[:-1] + "…"
-
+        while font_title.size(t_txt)[0] > box.w - 12 and len(t_txt) > 0: t_txt = t_txt[:-1]
+        if len(t_txt) < len(title) and len(t_txt) > 0: t_txt = t_txt[:-1] + "…"
         ts = font_title.render(t_txt, True, WHITE)
-        screen.blit(ts, ts.get_rect(center=(box.centerx, y + ts.get_height()//2)))
+        surface.blit(ts, ts.get_rect(center=(box.centerx, y + ts.get_height()//2)))
         y += ts.get_height() + 4
-
-        # thin divider under title
-        pygame.draw.line(screen, (60, 70, 85), (box.x + 6, y), (box.right - 6, y), 1)
+        pygame.draw.line(surface, (60, 70, 85), (box.x + 6, y), (box.right - 6, y), 1)
         y += 6
-
-    # --- Body (wrapped, left-aligned) ---
     lines = wrap_text(body_text, font_body, box.w - 12)[:max_lines]
     for ln in lines:
         surf = font_body.render(ln, True, WHITE)
-        screen.blit(surf, (box.x + 6, y))
+        surface.blit(surf, (box.x + 6, y))
         y += surf.get_height() + 2
 
-def draw_minion_stats(r: pygame.Rect, attack: int, health: int,
-                      max_health: int, *, base_attack: int, base_health: int):
-    # Attack bottom-left
+def draw_minion_stats(r: pygame.Rect, attack: int, health: int, max_health: int, *,
+                      base_attack: int, base_health: int, surface=None):
+    if surface is None: surface = screen
     atk_rect = pygame.Rect(r.x + 10, r.bottom - 28, 28, 22)
-    pygame.draw.rect(screen, (40, 35, 25), atk_rect, border_radius=6)
-    atk_col = (60, 200, 90) if attack > base_attack else ATTK_COLOR  # green if buffed
+    pygame.draw.rect(surface, (40, 35, 25), atk_rect, border_radius=6)
+    atk_col = (60, 200, 90) if attack > base_attack else ATTK_COLOR
     ta = FONT.render(str(attack), True, atk_col)
-    screen.blit(ta, ta.get_rect(center=atk_rect.center))
-
-    # Health bottom-right
+    surface.blit(ta, ta.get_rect(center=atk_rect.center))
     hp_rect = pygame.Rect(r.right - 38, r.bottom - 28, 28, 22)
-    pygame.draw.rect(screen, (40, 35, 35), hp_rect, border_radius=6)
+    pygame.draw.rect(surface, (40, 35, 35), hp_rect, border_radius=6)
     if health < max_health:
         hp_col = HP_HURT
     elif max_health > base_health:
-        hp_col = (60, 200, 90)  # green only when at full *and* buffed
+        hp_col = (60, 200, 90)
     else:
         hp_col = HP_OK
     th = FONT.render(str(health), True, hp_col)
-    screen.blit(th, th.get_rect(center=hp_rect.center))
+    surface.blit(th, th.get_rect(center=hp_rect.center))
 
+def draw_rarity_droplet(r: pygame.Rect, rarity: Optional[str], *, surface=None):
+    if surface is None: surface = screen
+    if not rarity: rarity = "COMMON"
+    key = str(rarity).upper()
+    color = RARITY_COLORS.get(key, RARITY_COLORS["COMMON"])
+    radius = 9
+    cx, cy = r.centerx, r.bottom - 16
+    pygame.draw.circle(surface, color, (cx, cy), radius)
+    pygame.draw.circle(surface, (20, 20, 20), (cx, cy), radius, 2)
 
-def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool, override_cost: int | None = None):
-    pygame.draw.rect(screen, color_bg, r, border_radius=12)
+def draw_silence_overlay(r: pygame.Rect, *, surface=None):
+    if surface is None: surface = screen
+    s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+    pygame.draw.polygon(
+        s, (100, 80, 150, 180),
+        [(-10, int(r.h*0.35)), (r.w+10, int(r.h*0.10)), (r.w+10, int(r.h*0.25)), (-10, int(r.h*0.50))]
+    )
+    lbl = BIG.render("SILENCED", True, (240, 235, 255))
+    s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.23))))
+    surface.blit(s, (r.x, r.y))
 
-    
-
-    if card_obj:
-        cost_to_show = card_obj.cost if override_cost is None else int(override_cost)
-        draw_cost_gem(r, cost_to_show)
-
-        kw = []
-        if "Taunt" in card_obj.keywords: kw.append("Taunt")
-        if "Charge" in card_obj.keywords: kw.append("Charge")
-        if "Rush" in card_obj.keywords:   kw.append("Rush")
-        
-
-        text = (card_obj.text or "").strip()
-        if text in kw: text = ""
-        for k in kw:
-            if text.lower().startswith(k.lower()):
-                text = text[len(k):].lstrip(" :.-").strip()
-
-        header = " / ".join(kw) 
-        body   = header if header and not text else (header + ("\n" + text if text else ""))
-        draw_text_box(r, body, max_lines=6, title=card_obj.name, font_body=RULE_FONT)
-        
-        draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"))
-        if card_obj.type == "MINION":
-            draw_minion_stats(
-                r, card_obj.attack, card_obj.health, card_obj.health,
-                base_attack=card_obj.attack, base_health=card_obj.health
-            )
-            if card_obj.minion_type != "None":
-                draw_name_footer(r, card_obj.minion_type)
-            else:
-                draw_name_footer(r, "Neutral")
-        elif card_obj.type == "WEAPON":
-            draw_minion_stats(
-                r, card_obj.attack, card_obj.health, card_obj.health,
-                base_attack=card_obj.attack, base_health=card_obj.health
-            )
-            draw_name_footer(r, "Weapon")
-        else: 
-            draw_name_footer(r, card_obj.type)
-
-    elif minion_obj:
-        draw_cost_gem(r, getattr(minion_obj, "cost", 0))
-
-        # Compose short description: keywords header + first lines of base rules text
-        kws = []
-        if getattr(minion_obj, "taunt", False):  kws.append("Taunt")
-        if getattr(minion_obj, "charge", False): kws.append("Charge")
-        if getattr(minion_obj, "rush", False):   kws.append("Rush")
-
-        header = " / ".join(kws)
-
-        text = (getattr(minion_obj, "base_text", "") or "").strip()
-        # If body starts with a keyword line, trim it (avoid duplicate)
-        for k in ["Taunt", "Charge", "Rush"]:
-            if text.lower().startswith(k.lower()):
-                text = text[len(k):].lstrip(" :.-").strip()
-        # Final short text (2–3 lines on board)
-        body   = header if header and not text else (header + ("\n" + text if text else ""))
-        
-
-        draw_text_box(r, body, max_lines=4, title=minion_obj.name, font_body=RULE_FONT)
-
-        # Bottom UI
-        #draw_name_footer(r, minion_obj.name)
-        draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"))
-        draw_minion_stats(
-            r,
-            minion_obj.attack,
-            minion_obj.health,
-            minion_obj.max_health,
-            base_attack=getattr(minion_obj, "base_attack", minion_obj.attack),
-            base_health=getattr(minion_obj, "base_health", minion_obj.max_health),
-        )
-        if minion_obj.minion_type != "None":
-            draw_name_footer(r, minion_obj.minion_type)
-        else:
-            draw_name_footer(r, "Neutral") 
-
-    # Tiny Divine Shield indicator on board
-    if getattr(minion_obj, "divine_shield", False) and not getattr(minion_obj, "silenced", False):
-        
-        sx, sy = r.x + (CARD_W / 2) - 11, r.y
-        badge = pygame.Rect(sx, sy, 22, 22)
-        pygame.draw.ellipse(screen, (235, 200, 80), badge)            # golden fill
-        pygame.draw.ellipse(screen, (30, 24, 10), badge, 2)           # rim
-        # simple shield glyph
-        p1 = (badge.centerx, badge.y + 5)
-        p2 = (badge.x + 5, badge.y + 11)
-        p3 = (badge.centerx, badge.bottom - 5)
-        p4 = (badge.right - 5, badge.y + 11)
-        pygame.draw.polygon(screen, (255, 245, 180), [p1, p2, p3, p4])
-
-    if getattr(minion_obj, "silenced", False):
-        draw_silence_overlay(r)
-
-    if getattr(minion_obj, "frozen", False):
-        draw_frozen_overlay(r)
-
-def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
-    if taunt: pygame.draw.rect(screen, GREY, r, 3, border_radius=10)
-    if rush:  pygame.draw.rect(screen, RED,  r.inflate(4, 4), 3, border_radius=12)
-    if ready: pygame.draw.rect(screen, GREEN,r.inflate(10,10), 3, border_radius=16)
-
-def draw_frozen_overlay(r: pygame.Rect):
+def draw_frozen_overlay(r: pygame.Rect, *, surface=None):
+    if surface is None: surface = screen
     s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
     pygame.draw.polygon(
         s, (120, 180, 255, 170),
@@ -1030,7 +886,93 @@ def draw_frozen_overlay(r: pygame.Rect):
     )
     lbl = BIG.render("FROZEN", True, (235, 245, 255))
     s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.12))))
-    screen.blit(s, (r.x, r.y))
+    surface.blit(s, (r.x, r.y))
+
+def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool,
+                    override_cost: int | None = None, surface=None):
+    if surface is None: surface = screen
+
+    pygame.draw.rect(surface, color_bg, r, border_radius=12)
+
+    if card_obj:
+        cost_to_show = card_obj.cost if override_cost is None else int(override_cost)
+        draw_cost_gem(r, cost_to_show, surface=surface)
+
+        kw = []
+        if "Taunt" in card_obj.keywords:   kw.append("Taunt")
+        if "Charge" in card_obj.keywords:  kw.append("Charge")
+        if "Rush" in card_obj.keywords:    kw.append("Rush")
+
+        text = (card_obj.text or "").strip()
+        if text in kw: text = ""
+        for k in kw:
+            if text.lower().startswith(k.lower()):
+                text = text[len(k):].lstrip(" :.-").strip()
+
+        header = " / ".join(kw)
+        body = header if header and not text else (header + ("\n" + text if text else ""))
+        draw_text_box(r, body, max_lines=6, title=card_obj.name, font_body=RULE_FONT, surface=surface)
+
+        draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"), surface=surface)
+
+        if card_obj.type == "MINION":
+            draw_minion_stats(
+                r, card_obj.attack, card_obj.health, card_obj.health,
+                base_attack=card_obj.attack, base_health=card_obj.health, surface=surface
+            )
+            draw_name_footer(r, card_obj.minion_type if card_obj.minion_type != "None" else "Neutral", surface=surface)
+        elif card_obj.type == "WEAPON":
+            draw_minion_stats(
+                r, card_obj.attack, card_obj.health, card_obj.health,
+                base_attack=card_obj.attack, base_health=card_obj.health, surface=surface
+            )
+            draw_name_footer(r, "Weapon", surface=surface)
+        else:
+            draw_name_footer(r, card_obj.type, surface=surface)
+
+    elif minion_obj:
+        draw_cost_gem(r, getattr(minion_obj, "cost", 0), surface=surface)
+        kws = []
+        if getattr(minion_obj, "taunt", False):  kws.append("Taunt")
+        if getattr(minion_obj, "charge", False): kws.append("Charge")
+        if getattr(minion_obj, "rush", False):   kws.append("Rush")
+        header = " / ".join(kws)
+        text = (getattr(minion_obj, "base_text", "") or "").strip()
+        for k in ["Taunt", "Charge", "Rush"]:
+            if text.lower().startswith(k.lower()):
+                text = text[len(k):].lstrip(" :.-").strip()
+        body = header if header and not text else (header + ("\n" + text if text else ""))
+        draw_text_box(r, body, max_lines=4, title=minion_obj.name, font_body=RULE_FONT, surface=surface)
+        draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"), surface=surface)
+        draw_minion_stats(
+            r, minion_obj.attack, minion_obj.health, minion_obj.max_health,
+            base_attack=getattr(minion_obj, "base_attack", minion_obj.attack),
+            base_health=getattr(minion_obj, "base_health", minion_obj.max_health),
+            surface=surface
+        )
+        draw_name_footer(r, minion_obj.minion_type if minion_obj.minion_type != "None" else "Neutral", surface=surface)
+
+    if getattr(minion_obj, "divine_shield", False) and not getattr(minion_obj, "silenced", False):
+        sx, sy = r.x + (CARD_W / 2) - 11, r.y
+        badge = pygame.Rect(sx, sy, 22, 22)
+        pygame.draw.ellipse(surface, (235, 200, 80), badge)
+        pygame.draw.ellipse(surface, (30, 24, 10), badge, 2)
+        p1 = (badge.centerx, badge.y + 5)
+        p2 = (badge.x + 5, badge.y + 11)
+        p3 = (badge.centerx, badge.bottom - 5)
+        p4 = (badge.right - 5, badge.y + 11)
+        pygame.draw.polygon(surface, (255, 245, 180), [p1, p2, p3, p4])
+
+    if getattr(minion_obj, "silenced", False):
+        draw_silence_overlay(r, surface=surface)
+    if getattr(minion_obj, "frozen", False):
+        draw_frozen_overlay(r, surface=surface)
+
+def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
+    if taunt: pygame.draw.rect(screen, GREY, r, 3, border_radius=10)
+    if rush:  pygame.draw.rect(screen, RED,  r.inflate(4, 4), 3, border_radius=12)
+    if ready: pygame.draw.rect(screen, GREEN,r.inflate(10,10), 3, border_radius=16)
+
 
 def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
     """
@@ -1095,7 +1037,10 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
             mid = p.get("minion")
             r = rect_by_mid.get(mid)
             if r:
-                ANIMS.push(AnimStep("poof", 380, {"rect": r, "non_blocking": True, "layer": 1}))
+                # Fancy materialization (ambient)
+                ANIMS.push(AnimStep("summon_materialize", 420, {"rect": r, "non_blocking": True, "layer": 1}))
+                # (optional) keep your old poof too for extra punch)
+                # ANIMS.push(AnimStep("poof", 320, {"rect": r, "non_blocking": True, "layer": 1}))
 
         elif k == "SecretPlayed":
             # pulse your secret badge if it's you; otherwise enemy's strip
@@ -1450,9 +1395,12 @@ def draw_board(g: Game, hot, hidden_minion_ids: Optional[set] = None,
     pygame.draw.rect(screen, BOARD_BG, arena, border_radius=16)
     pygame.draw.rect(screen, BOARD_BORDER, arena, 2, border_radius=16)
 
-    # Hero plates (enemy + you)
-    draw_hero_plate(hot["face_enemy"], g.players[1], friendly=False)
-    draw_hero_plate(hot["face_me"],    g.players[0], friendly=True)
+    hidden = ANIMS.peek_hidden_ids()
+    # before draw_hero_plate(...)
+    if "hero:1" not in hidden:
+        draw_hero_plate(hot["face_enemy"], g.players[1], friendly=False)
+    if "hero:0" not in hidden:
+        draw_hero_plate(hot["face_me"],    g.players[0], friendly=True)
 
     # after drawing hero plates:
     if g.hero_can_attack(0):
@@ -1791,6 +1739,28 @@ class AnimStep:
     def done(self) -> bool: 
         return self.raw_progress() >= 1.0
 
+def push_play_move_anim(src_rect: pygame.Rect, dst_rect: pygame.Rect, cid: str, pid: int, *, label: str = "", spawned_mid: int | None = None, color=None):
+    if color is None:
+        color = CARD_BG_EN if pid == 1 else CARD_BG_HAND
+    try:
+        eff = GLOBAL_GAME.get_effective_cost(pid, cid)
+    except Exception:
+        eff = None
+
+    data = {
+        "src": src_rect,
+        "dst": dst_rect,
+        "label": label,
+        "color": color,
+        "cid": cid,
+        "pid": pid,
+        "eff_cost": eff,    
+    }
+    if spawned_mid is not None:
+        data["spawn_mid"] = spawned_mid
+    ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS, data))
+
+
 class AnimQueue:
     """
     New model:
@@ -1819,6 +1789,24 @@ class AnimQueue:
         # Ambient effects don't lock input (feels snappier).
         return len(self.blocking) > 0
 
+    def _draw_impact_hold(self, step: AnimStep):
+        # Draw a provided sprite at a fixed center with a little scale pop
+        sprite = step.data.get("sprite")
+        center = step.data.get("center")
+        base_size = step.data.get("base_size", (CARD_W, CARD_H))
+        t = step.raw_progress()  # raw here feels snappier for the pop
+        # ease-in pop up to +10% then settle to +4%
+        pop = 0.10 * smoothstep01(1.0 - abs(t*2 - 1)) + 0.04
+        if sprite is None:
+            w, h = int(base_size[0] * (1.0 + pop)), int(base_size[1] * (1.0 + pop))
+            rr = pygame.Rect(0, 0, w, h); rr.center = center
+            pygame.draw.rect(screen, (255,255,255), rr, border_radius=10)
+            return
+        surf = pygame.transform.smoothscale(sprite,
+                                            (int(sprite.get_width() * (1.0 + pop)),
+                                            int(sprite.get_height()* (1.0 + pop))))
+        screen.blit(surf, surf.get_rect(center=center).topleft)
+
     def peek_hidden_ids(self) -> set:
         hidden = set()
         if self.blocking:
@@ -1827,114 +1815,200 @@ class AnimQueue:
                 hidden.add(step.data["spawn_mid"])
         return hidden
 
+    def _draw_summon_materialize(self, step: AnimStep):
+        # Try rect first; if missing, try to resolve from a minion id
+        rect = step.data.get("rect")
+        if rect is None:
+            mid = step.data.get("minion") or step.data.get("mid")
+            if mid is not None:
+                post = layout_board(GLOBAL_GAME)
+                for coll in ("my_minions", "enemy_minions"):
+                    for mmid, rr in post[coll]:
+                        if mmid == mid:
+                            rect = rr
+                            # cache for subsequent frames
+                            step.data["rect"] = rect
+                            break
+                    if rect is not None:
+                        break
+
+        if rect is None:
+            # Nothing to draw this frame; keep the step alive until it times out
+            return
+
+        t = step.raw_progress()  # 0..1
+
+        # radial glow
+        alpha_glow = int(180 * (1.0 - t))
+        glow_rad = int(max(rect.w, rect.h) * (0.6 + 0.5 * t))
+        glow = pygame.Surface((glow_rad*2, glow_rad*2), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (255, 255, 255, alpha_glow), (glow_rad, glow_rad), glow_rad)
+        screen.blit(glow, (rect.centerx - glow_rad, rect.centery - glow_rad))
+
+        # golden ring
+        ring_rad = int(max(rect.w, rect.h) * (0.35 + 0.55 * t))
+        ring = pygame.Surface((ring_rad*2, ring_rad*2), pygame.SRCALPHA)
+        pygame.draw.circle(ring, (230, 200, 90, int(200 * (1.0 - t))), (ring_rad, ring_rad), ring_rad, width=4)
+        screen.blit(ring, (rect.centerx - ring_rad, rect.centery - ring_rad))
+
+        # veil over the card
+        veil = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        veil.fill((255, 255, 255, int(120 * (1.0 - t))))
+        screen.blit(veil, (rect.x, rect.y))
+
+
     def _draw_hero_attack(self, step: AnimStep):
         src: pygame.Rect = step.data["src"]
         dst: pygame.Rect = step.data["dst"]
 
-        # Use precomputed hero sprite if provided; otherwise snapshot from 'src' once.
-        if "sprite" not in step.data:
-            snap_rect = step.data.get("snapshot_rect", src)
+        # Build/keep a dedicated hero sprite once (never tied to card sizes)
+        if "sprite" not in step.data or step.data["sprite"] is None:
+            # Prefer a clean offscreen render of the hero plate to avoid capturing overlaps
+            base = pygame.Surface((src.w, src.h), pygame.SRCALPHA)
             try:
-                step.data["sprite"] = screen.subsurface(snap_rect).copy()
+                # Render the hero plate into `base` so it's stable during the whole anim
+                # We just mirror what's on screen: same face_rect size/coloring.
+                draw_hero_plate(src.copy(), GLOBAL_GAME.players[0] if src == layout_board(GLOBAL_GAME)["face_me"] else GLOBAL_GAME.players[1], friendly=(src == layout_board(GLOBAL_GAME)["face_me"]))
+                # Fallback to snapshot if rendering fails (shouldn't)
+                step.data["sprite"] = base.subsurface(pygame.Rect(0,0,src.w,src.h)).copy()
             except Exception:
-                step.data["sprite"] = None
+                try:
+                    step.data["sprite"] = screen.subsurface(src).copy()
+                except Exception:
+                    step.data["sprite"] = None
 
-        t = step.eased()
+        t_raw = step.raw_progress()   # for alpha/shadow timing
+        t = step.eased()              # for motion/scale
+
+        # Parabolic path (gentle lift)
         x = lerp(src.centerx, dst.centerx, t)
-        y = lerp(src.centery, dst.centery, t) - 24 * 4 * (t - t*t)
+        y = lerp(src.centery, dst.centery, t) - 28 * 4 * (t - t*t)
 
-        scale = 1.0 + 0.12 * smoothstep01(1.0 - abs(t*2 - 1))
+        # Uniform scale only (no width squash)
+        scale = 1.0 + 0.10 * smoothstep01(1.0 - abs(t*2 - 1))
         if t > 0.9:
-            scale *= 1.0 - 0.07 * smoothstep01((t - 0.9)/0.1)
+            scale *= 1.0 - 0.06 * smoothstep01((t - 0.9)/0.1)
 
-        # Optional dim: by default we dim 'src'; allow override/disable via step.data
+        # Tiny tilt that switches sign mid-flight (adds energy, never distorts)
+        # Peak ~8 degrees at mid-flight
+        tilt = (1.0 - abs(t*2 - 1)) * 8.0
+        # Nudge the sign so outbound leans forward, return leans backward
+        if dst.centerx < src.centerx:
+            tilt = -tilt
+
+        # Subtle ground shadow (ellipse) under hero while airborne
+        ground_y = lerp(src.centery, dst.centery, t)
+        shadow_w = int(src.w * 0.95)
+        shadow_h = max(6, int(src.h * 0.25 * (1.0 - (y - ground_y) / max(1, src.h))))
+        sh_alpha = int(120 * (1.0 - abs(t*2 - 1)))
+        if shadow_w > 0 and shadow_h > 0 and sh_alpha > 0:
+            sh = pygame.Surface((shadow_w, shadow_h), pygame.SRCALPHA)
+            pygame.draw.ellipse(sh, (0, 0, 0, sh_alpha), sh.get_rect())
+            screen.blit(sh, sh.get_rect(center=(int(x), int(ground_y + src.h*0.35))).topleft)
+
+        # Optional dimming of the origin/landing plate (already supported by your data flags)
         dim_allowed = step.data.get("dim", True)
         dim_rect = step.data.get("dim_rect", src) if dim_allowed else None
         if dim_rect is not None:
-            alpha = max(0, min(255, int(150 * (1.0 - abs(t*2 - 1)))))
+            alpha = max(0, min(255, int(140 * (1.0 - abs(t*2 - 1)))))
             shade = pygame.Surface((dim_rect.w, dim_rect.h), pygame.SRCALPHA, 32)
             shade.fill((0, 0, 0))
             shade.set_alpha(alpha)
             screen.blit(shade, (dim_rect.x, dim_rect.y))
 
-        # Draw sprite
-        if step.data["sprite"] is None:
+        sprite = step.data["sprite"]
+        if sprite is None:
+            # Draw a neutral hero plate proxy (keeps aspect)
             w, h = int(src.w * scale), int(src.h * scale)
             rr = pygame.Rect(0, 0, w, h); rr.center = (int(x), int(y))
             pygame.draw.rect(screen, PLATE_BG, rr, border_radius=12)
             pygame.draw.rect(screen, PLATE_RIM, rr, 2, border_radius=12)
             return
 
-        surf = pygame.transform.smoothscale(step.data["sprite"], (int(src.w * scale), int(src.h * scale)))
+        # Rotate + uniform scale without ever using CARD_W/H
+        surf = pygame.transform.rotozoom(sprite, tilt, scale)
         r = surf.get_rect(center=(int(x), int(y)))
         screen.blit(surf, r.topleft)
 
 
-    def _draw_play_move(self, step: AnimStep):
-        src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
-        color = step.data.get("color", CARD_BG_HAND)
-        label = step.data.get("label", "")
 
-        # shapely timing: accelerate then float → then settle
+    def _draw_play_move(self, step: AnimStep):
+        src: pygame.Rect = step.data["src"]
+        dst: pygame.Rect = step.data["dst"]
+
+        # progress + path shape (unchanged)
         t = step.eased()
         x, y = arc_lerp(src, dst, t, height_px=60)
 
-        # scale up a touch mid-flight, then down a bit on land (squash)
-        s = 1.0 + 0.06 * smoothstep01(1.0 - abs(t*2 - 1))  # 1.06 at mid-air
+        # scale up a touch mid-flight, then tiny settle near the end
+        s = 1.0 + 0.06 * smoothstep01(1.0 - abs(t*2 - 1))
         if t > 0.92:
-            s *= 1.0 - 0.08 * smoothstep01((t - 0.92)/0.08)  # tiny settle
+            s *= 1.0 - 0.08 * smoothstep01((t - 0.92)/0.08)
 
         w, h = int(CARD_W * s), int(CARD_H * s)
         r = pygame.Rect(0, 0, w, h); r.center = (x, y)
 
-        # soft shadow under the card
-        sh = pygame.Surface((w+26, h+26), pygame.SRCALPHA)
-        pygame.draw.ellipse(sh, (0,0,0,120), sh.get_rect())
-        screen.blit(sh, (r.x-13, r.bottom-14))
+        # --- NEW: draw the actual card instead of a subsurface snapshot ---
+        cid = step.data.get("cid")
+        pid = step.data.get("pid", 0)
+        if cid:
+            try:
+                cobj = GLOBAL_GAME.cards_db[cid]
+                eff = step.data.get("eff_cost")
+                if eff is None:
+                    try:
+                        eff = GLOBAL_GAME.get_effective_cost(pid, cid)
+                    except Exception:
+                        eff = getattr(cobj, "cost", 0)
 
+                # Render onto an offscreen surface AT NATIVE SIZE, then scale
+                base = pygame.Surface((CARD_W, CARD_H), pygame.SRCALPHA)
+                draw_card_frame(
+                    pygame.Rect(0, 0, CARD_W, CARD_H),
+                    CARD_BG_HAND,
+                    card_obj=cobj,
+                    in_hand=True,
+                    override_cost=eff,
+                    surface=base,          # <— IMPORTANT
+                )
+                surf = pygame.transform.smoothscale(base, (w, h)) if (w, h) != (CARD_W, CARD_H) else base
+                screen.blit(surf, r.topleft)
+                return
+            except Exception:
+                pass
+
+        # --- Fallback (old behavior) ---
+        color = step.data.get("color", CARD_BG_HAND)
         pygame.draw.rect(screen, color, r, border_radius=10)
+        label = step.data.get("label", "")
         if label:
-            screen.blit(FONT.render(label, True, WHITE), (r.x+8, r.y+8))
-
-        # subtle motion trail (two faint ghosts)
-        ghost_t = max(0.0, t - 0.15)
-        gx, gy = arc_lerp(src, dst, ghost_t, height_px=60)
-        gr = pygame.Rect(0, 0, int(w*0.98), int(h*0.98)); gr.center = (gx, gy)
-        gsurf = pygame.Surface((gr.w, gr.h), pygame.SRCALPHA)
-        pygame.draw.rect(gsurf, (*color, 120), gsurf.get_rect(), border_radius=10)
-        screen.blit(gsurf, gr.topleft)
-
-        ghost_t2 = max(0.0, t - 0.30)
-        gx2, gy2 = arc_lerp(src, dst, ghost_t2, height_px=60)
-        gr2 = pygame.Rect(0, 0, int(w*0.96), int(h*0.96)); gr2.center = (gx2, gy2)
-        gsurf2 = pygame.Surface((gr2.w, gr2.h), pygame.SRCALPHA)
-        pygame.draw.rect(gsurf2, (*color, 70), gsurf2.get_rect(), border_radius=10)
-        screen.blit(gsurf2, gr2.topleft)
-
-        # hide spawned unit while animating (handled in peek_hidden_ids)
+            screen.blit(FONT.render(label, True, WHITE), (r.x + 8, r.y + 8))
 
     def _draw_attack_dash(self, step: AnimStep):
-        src: pygame.Rect = step.data["src"]; dst: pygame.Rect = step.data["dst"]
+        src: pygame.Rect = step.data["src"]
+        dst: pygame.Rect = step.data["dst"]
         color = step.data.get("color", CARD_BG_MY)
+        sprite = step.data.get("sprite")
 
-        # fast start, back-out finish for a nice impact feel
         t = step.eased()
-        x = lerp(src.x, dst.x, t)
-        y = lerp(src.y, dst.y, t)
+        x = lerp(src.centerx, dst.centerx, t)
+        y = lerp(src.centery, dst.centery, t)
 
-        # squash/stretch: more stretch mid-dash, squash on arrival
-        stretch = 1.0 + 0.15 * smoothstep01(1.0 - abs(t*2 - 1))  # 1.15 mid way
-        squash  = 1.0 - 0.10 * smoothstep01(max(0.0, t - 0.85)/0.15)  # 0.9 at very end
-        sx, sy = stretch, squash
-        w, h = int(CARD_W * sx), int(CARD_H * sy)
-        r = pygame.Rect(0, 0, w, h); r.center = (int(x + 0.5), int(y + 0.5))
+        # Use provided base size if present; else default to card size
+        base_w, base_h = step.data.get("base_size", (CARD_W, CARD_H))
 
-        # shadow smear
-        sh = pygame.Surface((w+30, 22), pygame.SRCALPHA)
-        pygame.draw.ellipse(sh, (0,0,0,110), sh.get_rect())
-        screen.blit(sh, (r.x-15, r.bottom-12))
+        stretch = 1.0 + 0.15 * smoothstep01(1.0 - abs(t*2 - 1))
+        squash  = 1.0 - 0.10 * smoothstep01(max(0.0, t - 0.85)/0.15)
+        w, h = int(base_w * stretch), int(base_h * squash)
 
-        pygame.draw.rect(screen, color, r, border_radius=10)
+        if sprite is not None:
+            surf = pygame.transform.smoothscale(sprite, (w, h))
+            rr = surf.get_rect(center=(int(x + 0.5), int(y + 0.5)))
+            screen.blit(surf, rr.topleft)
+        else:
+            rr = pygame.Rect(0, 0, w, h); rr.center = (int(x + 0.5), int(y + 0.5))
+            pygame.draw.rect(screen, color, rr, border_radius=10)
+
 
     def _draw_flash(self, step: AnimStep):
         target: pygame.Rect = step.data["rect"]
@@ -2003,6 +2077,7 @@ class AnimQueue:
             elif k == "start_game":    self._draw_start_game(step)
             elif k == "banner":        self._draw_banner(step)
             elif k == "hero_attack":   self._draw_hero_attack(step)
+            elif k == "summon_materialize": self._draw_summon_materialize(step)
             # finish?
             if step.done():
                 self.blocking.pop(0)
@@ -2028,6 +2103,7 @@ class AnimQueue:
                 elif k == "think_pause": pass
                 elif k == "attack_dash": self._draw_attack_dash(s)
                 elif k == "play_move":   self._draw_play_move(s)
+                elif k == "summon_materialize": self._draw_summon_materialize(s)
                 if s.done():
                     to_remove.append(s)
                     if s.on_finish:
@@ -2108,24 +2184,55 @@ def enqueue_attack_anim(hot, attacker_mid: int, target_rect: pygame.Rect, enemy:
     src = None
     for mid, r in hot[coll]:
         if mid == attacker_mid:
-            src = r; break
-    if src is None: return
-    def after_forward(attacker_mid=attacker_mid, coll=coll, target_rect=target_rect):
-        try: on_hit()
-        except Exception as e: print("on_hit error:", repr(e))
+            src = r
+            break
+    if src is None:
+        return
+
+    # NEW: snapshot the on-screen card (includes buffs, silenced overlay, frozen, etc.)
+    try:
+        sprite = screen.subsurface(src).copy()
+    except Exception:
+        sprite = None  # fallback
+
+    def after_forward(attacker_mid=attacker_mid, coll=coll, target_rect=target_rect, sprite=sprite):
+        try:
+            on_hit()
+        except Exception as e:
+            print("on_hit error:", repr(e))
         post = layout_board(GLOBAL_GAME)
         if any(mid == attacker_mid for mid, _ in post[coll]):
             back_dst = None
             for mid, rr in post[coll]:
-                if mid == attacker_mid: back_dst = rr; break
+                if mid == attacker_mid:
+                    back_dst = rr
+                    break
             if back_dst:
-                ANIMS.push(AnimStep("attack_dash", ANIM_RETURN_MS,
-                                    {"src": target_rect, "dst": back_dst,
-                                     "color": CARD_BG_EN if enemy else CARD_BG_MY}))
-    ANIMS.push(AnimStep("attack_dash", ANIM_ATTACK_MS,
-                        {"src": src, "dst": target_rect,
-                         "color": CARD_BG_EN if enemy else CARD_BG_MY},
-                        on_finish=after_forward))
+                ANIMS.push(AnimStep(
+                    "attack_dash",
+                    ANIM_RETURN_MS,
+                    {
+                        "src": target_rect,
+                        "dst": back_dst,
+                        "color": CARD_BG_EN if enemy else CARD_BG_MY,
+                        "sprite": sprite,
+                        "base_size": (src.w, src.h)
+                    }
+                ))
+
+    ANIMS.push(AnimStep(
+        "attack_dash",
+        ANIM_ATTACK_MS,
+        {
+            "src": src,
+            "dst": target_rect,
+            "color": CARD_BG_EN if enemy else CARD_BG_MY,
+            "sprite": sprite,  # <-- forward leg uses snapshot too
+            "base_size": (src.w, src.h)
+        },
+        on_finish=after_forward
+    ))
+
 
 def enqueue_play_anim(pre_hot, post_hot, from_rect: pygame.Rect, spawned_mid: Optional[int], label: str, is_enemy: bool):
     if spawned_mid:
@@ -2134,6 +2241,7 @@ def enqueue_play_anim(pre_hot, post_hot, from_rect: pygame.Rect, spawned_mid: Op
         for mid, r in post_hot[coll]:
             if mid == spawned_mid: dst = r; break
         if dst:
+
             ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
                                 {"src": from_rect, "dst": dst, "label": label,
                                  "spawn_mid": spawned_mid,
@@ -2141,54 +2249,65 @@ def enqueue_play_anim(pre_hot, post_hot, from_rect: pygame.Rect, spawned_mid: Op
 
 def enqueue_flash(rect: pygame.Rect):
     ANIMS.push(AnimStep("flash", ANIM_FLASH_MS, {"rect": rect}))
-
 def enqueue_hero_attack_anim(hot, pid: int, target_rect: pygame.Rect, on_hit):
     face_rect = hot["face_me"] if pid == 0 else hot["face_enemy"]
 
-    # Snapshot hero plate once and reuse
     try:
         hero_sprite = screen.subsurface(face_rect).copy()
     except Exception:
         hero_sprite = None
 
     def after_forward(pid=pid, tgt=target_rect):
-        try:
-            on_hit()
-        except Exception as e:
-            print("on_hit error:", repr(e))
-        post = layout_board(GLOBAL_GAME)
-        back_dst = post["face_me"] if pid == 0 else post["face_enemy"]
+        hold_ms = 0
 
-        # Return leg: reuse SAME sprite; don't dim the target, optionally dim the landing plate
+        def after_hold():
+            # apply hit
+            try:
+                on_hit()
+            except Exception as e:
+                print("on_hit error:", repr(e))
+            post = layout_board(GLOBAL_GAME)
+            back_dst = post["face_me"] if pid == 0 else post["face_enemy"]
+            ANIMS.push(AnimStep(
+                "hero_attack",
+                ANIM_RETURN_MS,
+                {
+                    "src": tgt,
+                    "dst": back_dst,
+                    "sprite": hero_sprite,
+                    "dim": False,
+                    "ease": "back",
+                    "hide_id": f"hero:{pid}",  # see note below
+                }
+            ))
+
         ANIMS.push(AnimStep(
-            "hero_attack",
-            ANIM_RETURN_MS,
+            "impact_hold",
+            hold_ms,
             {
-                "src": tgt,
-                "dst": back_dst,
+                "center": target_rect.center,
                 "sprite": hero_sprite,
-                "dim": False,          # no dim during takeoff from target
-                # or: "dim": True, "dim_rect": back_dst  # to dim landing plate instead
-                "non_blocking": False,
-                "ease": "back",
-            }
+                "base_size": (face_rect.w, face_rect.h),
+                "hide_id": f"hero:{pid}",
+            },
+            on_finish=after_hold
         ))
 
-    # Outbound leg: use hero sprite, dim the original plate while lifting
     ANIMS.push(AnimStep(
         "hero_attack",
         ANIM_HERO_MS,
         {
             "src": face_rect,
             "dst": target_rect,
-            "sprite": hero_sprite,     # <- critical: same sprite
+            "sprite": hero_sprite,
             "dim": True,
             "dim_rect": face_rect,
-            "non_blocking": False,
             "ease": "back",
+            "hide_id": f"hero:{pid}",
         },
         on_finish=after_forward
     ))
+
 def has_spell_hit(ev_list) -> bool:
     return any(getattr(e, "kind", "") == "SpellHit" for e in (ev_list or []))
 
@@ -2223,7 +2342,7 @@ def queue_spell_projectiles_from_events(caster_pid: int, ev_list):
         def on_arrive(r=dest_rect):
             enqueue_flash(r)
 
-        ANIMS.push(AnimStep("spell_orbs", ANIM_SPELL_MS, {"src": src, "dst": dst, "count": 5, "radius": 7, "non_blocking": True}, on_finish=on_arrive))
+        #ANIMS.push(AnimStep("spell_orbs", ANIM_SPELL_MS, {"src": src, "dst": dst, "count": 5, "radius": 7, "non_blocking": True}, on_finish=on_arrive))
 
 def enemy_face_rect(hot): return hot["face_enemy"]
 def my_face_rect(hot):    return hot["face_me"]
@@ -2402,7 +2521,7 @@ def main():
                                 log_events(ev2, g)
                             except IllegalAction:
                                 pass
-                            schedule_if_ai_turn()
+                            #schedule_if_ai_turn()
 
                         enqueue_hero_attack_anim(before, pid=1, target_rect=tr, on_hit=on_hit)
                         queued_any = True
@@ -2466,14 +2585,10 @@ def main():
 
                                 dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ENEMY, CARD_W, CARD_H)
                                 ANIMS.push(AnimStep("think_pause", AI_THINK_MS, {}))
-                                ANIMS.push(
-                                    AnimStep(
-                                        "play_move",
-                                        ANIM_PLAY_MS,
-                                        {"src": src, "dst": dst, "label": db[cid].name, "color": CARD_BG_EN},
-                                        on_finish=do_on_finish,
-                                    )
-                                )
+
+                                push_play_move_anim(src, dst, cid, pid=1, label=db[cid].name)
+                                ANIMS.blocking[-1].on_finish = do_on_finish
+
                                 queued_any = True
 
                             elif kind == 'attack':
@@ -2501,7 +2616,7 @@ def main():
                                             if mid == tmm:
                                                 enqueue_flash(r)
                                                 break
-                                    schedule_if_ai_turn()
+                                    #schedule_if_ai_turn()
 
                                 enqueue_attack_anim(before, attacker_mid=aid, target_rect=tr, enemy=True, on_hit=on_hit)
                                 queued_any = True
@@ -2718,10 +2833,9 @@ def main():
                                     flash_from_events(g, ev)
                                 except IllegalAction:
                                     pass
-
-                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                                on_finish=on_finish))
+                            
+                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                            ANIMS.blocking[-1].on_finish = on_finish
 
                         # enemy face?
                         if enemy_face_ok and enemy_face_rect(hot).collidepoint(mx, my):
@@ -2822,9 +2936,8 @@ def main():
                                     #enqueue_flash(enemy_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                                on_finish=on_finish))
+                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                            ANIMS.blocking[-1].on_finish = on_finish
                             waiting_target_for_play = None
                             selected_attacker = None     # <-- add
                             selected_hero = False        # <-- add
@@ -2845,9 +2958,8 @@ def main():
                                     #enqueue_flash(my_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                            ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                                on_finish=on_finish))
+                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                            ANIMS.blocking[-1].on_finish = on_finish
                             waiting_target_for_play = None
                             selected_attacker = None     # <-- add
                             selected_hero = False        # <-- add
@@ -2867,9 +2979,9 @@ def main():
                                         animate_from_events(g, ev)
                                         #enqueue_flash(r)
                                     except IllegalAction: pass
-                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                    {"src": src_rect, "dst": r, "label": db[cid].name},
-                                                    on_finish=on_finish))
+
+                                push_play_move_anim(src_rect, r, cid, pid=0, label=db[cid].name)
+                                ANIMS.blocking[-1].on_finish = on_finish
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
@@ -2888,9 +3000,8 @@ def main():
                                         animate_from_events(g, ev)
                                         #enqueue_flash(r)
                                     except IllegalAction: pass
-                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                    {"src": src_rect, "dst": r, "label": db[cid].name},
-                                                    on_finish=on_finish))
+                                push_play_move_anim(src_rect, r, cid, pid=0, label=db[cid].name)
+                                ANIMS.blocking[-1].on_finish = on_finish
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
@@ -3130,11 +3241,8 @@ def main():
                                     except IllegalAction:
                                         pass
 
-                                ANIMS.push(AnimStep(
-                                    "play_move", ANIM_PLAY_MS,
-                                    {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                    on_finish=on_finish
-                                ))
+                                push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                                ANIMS.blocking[-1].on_finish = on_finish
                                 hover_slot_index = None
                                 continue
                             else:
@@ -3163,9 +3271,8 @@ def main():
                                         except IllegalAction:
                                             pass
 
-                                    ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                        {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                                        on_finish=on_finish))
+                                    push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                                    ANIMS.blocking[-1].on_finish = on_finish
                                     hover_slot_index = None
                                     continue
 
@@ -3192,11 +3299,8 @@ def main():
                                     except IllegalAction:
                                         pass
 
-                                ANIMS.push(AnimStep(
-                                    "play_move", ANIM_PLAY_MS,
-                                    {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                    on_finish=on_finish
-                                ))
+                                push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                                ANIMS.blocking[-1].on_finish = on_finish
                             else:
                                 # dropped outside the board → cancel (do nothing)
                                 pass
@@ -3229,11 +3333,8 @@ def main():
                                 except IllegalAction:
                                     pass
 
-                            ANIMS.push(AnimStep(
-                                "play_move", ANIM_PLAY_MS,
-                                {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                on_finish=on_finish
-                            ))
+                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                            ANIMS.blocking[-1].on_finish = on_finish
                             selected_attacker = None    # <-- add
                             selected_hero = False       # <-- add
                             hover_slot_index = None
@@ -3264,9 +3365,8 @@ def main():
                                     except IllegalAction:
                                         pass
 
-                                ANIMS.push(AnimStep("play_move", ANIM_PLAY_MS,
-                                                    {"src": src_rect, "dst": dst, "label": db[cid].name},
-                                                    on_finish=on_finish))
+                                push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
+                                ANIMS.blocking[-1].on_finish = on_finish
                                 selected_attacker = None    # <-- add
                                 selected_hero = False       # <-- add
                                 hover_slot_index = None
