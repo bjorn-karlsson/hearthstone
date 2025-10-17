@@ -388,7 +388,7 @@ def best_heal_target(g: Game, pid: int, heal_amount: int) -> Tuple[Optional[int]
     best_tp, best_tm, best_score = None, None, -1
 
     # Face
-    missing_face = max(0, 30 - p.health)
+    missing_face = max(0, p.max_health - p.health)
     if missing_face > 0:
         eff = min(heal_amount, missing_face)
         score = eff * 8 + (10 if p.health <= 15 else 0)
@@ -410,7 +410,52 @@ def best_heal_target(g: Game, pid: int, heal_amount: int) -> Tuple[Optional[int]
 
     return best_tp, best_tm, best_score
 
+def _best_faceless_target(g: Game, pid: int, allow_enemy: bool) -> Optional[int]:
+    # Prefer copying our own biggest/current best body; fall back to enemy if allowed and better.
+    allies = [m for m in g.players[pid].board if m.is_alive()]
+    enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
+    cand = []
+    if allies:
+        cand.append(max(allies, key=_minion_value_generic))
+    if allow_enemy and enemies:
+        cand.append(max(enemies, key=_minion_value_generic))
+    return max(cand, key=_minion_value_generic).id if cand else None
 
+def _pick_shadowflame_sacrifice(g: Game, pid: int) -> Optional[int]:
+    """Pick our friendly minion to sack that maximizes (enemy threat removed - our value lost)."""
+    me = g.players[pid]; opp = g.players[1 - pid]
+    best_mid, best_gain = None, 0
+    for m in me.board:
+        if not m.is_alive(): continue
+        dmg = max(0, m.attack)
+        if dmg <= 0: continue
+        # Value removed on enemy board
+        removed = 0
+        for e in opp.board:
+            if not e.is_alive(): continue
+            if e.health <= dmg: removed += threat_score_enemy_minion(e)
+            else:
+                # partial chip: small benefit
+                removed += min(dmg, e.health) * 4
+        loss = _minion_value_generic(m)
+        gain = removed - loss
+        # prefer sacking 'dead weight' like Ancient Watcher (can't attack)
+        if getattr(m, "cant_attack", False): gain += 40
+        if gain > best_gain:
+            best_gain, best_mid = gain, m.id
+    return best_mid
+
+def _estimate_drake_extra_hp(g: Game, pid: int) -> int:
+    # After playing Drake, hand size decreases by 1; battlecry adds +HP equal to cards in hand then.
+    # So bonus ≈ len(hand) - 1 (clamped >= 0)
+    return max(0, len(g.players[pid].hand) - 1)
+
+
+def _friendly_watcher_to_silence(g: Game, pid: int) -> Optional[int]:
+    for m in _ally_minions(g, pid):
+        if getattr(m, "cant_attack", False) and m.attack >= 4:
+            return m.id
+    return None
 
 # ----------------- Play gating (do nothing if useless) -----------------
 
@@ -450,6 +495,26 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
     if has("random_pings"):
         cnt = get_first("random_pings", "count", 0)
         return "random_dmg", {"count": cnt}
+    
+    # --- Hard destroy (e.g., Siphon Soul)
+    if has("destroy"):
+        return "hard_remove", {"targeting": raw.get("targeting", "").lower()}
+
+    # --- Shadowflame: destroy *friendly* target, AOE = its current Attack
+    if has("shadowflame"):
+        return "shadowflame", {}
+
+    # --- Jaraxxus / hero replacement
+    if has("replace_hero"):
+        return "hero_replace", {}
+
+    # --- Faceless Manipulator (copy self as target minion)
+    if has("copy_self_as_target_minion"):
+        return "copy_minion", {"targeting": raw.get("targeting", "").lower()}
+
+    # --- Twilight Drake hint: gains health from hand size
+    if has("add_self_health_from_hand"):
+        return "drake_like", {}
 
     # Single-target damage (e.g., Slam/Arcane Shot/Fireball)
     if has("deal_damage"):
@@ -577,6 +642,59 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
     kind, info = classify_card(g, cid)
 
+        # ---- Hero replacement (Jaraxxus)
+    if kind == "hero_replace":
+        # Prefer when low life or floating late-game mana
+        low = g.players[pid].health <= 14
+        late = g.players[pid].mana >= 9
+        sc = 200 + (120 if low else 0) + (40 if late else 0)
+        return idx, None, None, sc
+
+    # ---- Hard remove (Siphon Soul-like)
+    if kind == "hard_remove":
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
+        if not enemies:
+            return None
+        # take the biggest threat
+        tgt = max(enemies, key=threat_score_enemy_minion)
+        return idx, None, tgt.id, 260 + threat_score_enemy_minion(tgt)
+
+    # ---- Shadowflame
+    if kind == "shadowflame":
+        # Need a friendly body to sack and enemies to hit
+        if not g.players[1 - pid].board:
+            return None
+        sac = _pick_shadowflame_sacrifice(g, pid)
+        if sac is None:
+            return None
+        # Score from net gain (helper baked it). Add urgency if behind.
+        urgency = 50 if opponent_has_ready_threats(g, pid) else 0
+        return idx, None, sac, 220 + urgency
+
+    # ---- Faceless Manipulator
+    if kind == "copy_minion":
+        # Default Faceless is friendly_minion; allow enemy if DB says any_minion
+        t = info.get("targeting", "")
+        allow_enemy = t in ("any_minion",)
+        tm = _best_faceless_target(g, pid, allow_enemy)
+        if tm is None:
+            return None
+        base = 180 + _minion_value_generic(g.find_minion(tm)[2]) // 3
+        return idx, None, tm, base
+
+    # ---- Twilight Drake valuation bump
+    if kind == "drake_like":
+        # Treat like a chunky midgame minion with bonus health ≈ hand size - 1
+        bonus_hp = _estimate_drake_extra_hp(g, pid)
+        stat_val  = (card.attack) * 3 + (card.health + bonus_hp) * 2
+        curve_val = min(card.cost, p.mana) * 8
+        sc = 60 + stat_val + curve_val + (10 if bonus_hp >= 4 else 0)
+        # Needs board space
+        if len(p.board) >= 7:
+            return None
+        return idx, None, None, sc
+
+
     # ---- Set-health debuff (Hunter's Mark style)
     if kind == "set_health_debuff":
         enemies = [m for m in g.players[1 - pid].board if m.is_alive() and m.health > int(info.get("amount", 1))]
@@ -610,6 +728,10 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
 
     # ---- Disables (silence/transform)
     if kind == "disable":
+        tm_self = _friendly_watcher_to_silence(g, pid)
+        if tm_self is not None:
+            return idx, None, tm_self, 160 + g.find_minion(tm_self)[2].attack * 10
+        
         tm = best_enemy_to_silence_or_poly(g, pid)
         if tm is None:
             return None
@@ -716,10 +838,11 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
         if can_go_face_now and info.get("target","").endswith("character"):
             hero = g.players[pid].hero.id.upper()
             opp_hp = g.players[opp].health
+            opp_max = g.players[opp].max_health 
             racey_class = (hero == "HUNTER")
             pressure = (opp_hp <= 12) or racey_class
             if pressure:
-                chip_score = 120 + amt * 40 + int((30 - min(opp_hp, 30)) * 3)
+                chip_score = 120 + amt * 40 + int((opp_max - min(opp_hp, opp_max)) * 3)
                 return idx, opp, None, chip_score
 
         return None
@@ -1198,8 +1321,8 @@ def eval_state(g: Game, pid: int) -> int:
         return s
 
     # Health & armor are slow-moving tempos; weight lower than board presence.
-    my_hp  = min(30, me.health + me.armor)
-    op_hp  = min(30, opp.health + opp.armor)
+    my_hp  = min(me.max_health, me.health + me.armor)
+    op_hp  = min(opp.max_health, opp.health + opp.armor)
     hand_bonus = min(len(me.hand), 10) * 6 - min(len(opp.hand), 10) * 6
 
     return (

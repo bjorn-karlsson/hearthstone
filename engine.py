@@ -132,6 +132,7 @@ class PlayerState:
     dead_minions: List[Minion] = field(default_factory=list)
     active_secrets: List[dict] = field(default_factory=list)
     health: int = 30
+    max_health: int = 30
     armor: int = 0
     max_mana: int = 0
     mana: int = 0
@@ -445,7 +446,7 @@ class Game:
         # --- NEW: intrinsic hand-size based cost mechanics (from cards.json raw fields)
         raw_map = self.cards_db.get("_RAW", {})
         raw = raw_map.get(cid, {}) if isinstance(raw_map, dict) else {}
-        
+
         # Mountain Giant style: costs (N) less per OTHER card in your hand
         per_other_in_hand = int(raw.get("cost_less_per_other_card_in_hand", 0))
         if per_other_in_hand:
@@ -459,7 +460,7 @@ class Game:
         per_damage_taken = int(raw.get("cost_less_per_damage_taken", 0))
         if per_damage_taken:
             # Armor does not count; only missing health from 30
-            damage_taken = max(0, 30 - self.players[pid].health)
+            damage_taken = max(0, self.players[pid].max_health - self.players[pid].health)
             delta -= per_damage_taken * damage_taken
 
         for m in self.players[pid].board:
@@ -1675,6 +1676,66 @@ def _minion_owner_matches(source_pid: int, target_pid: int, scope: str) -> bool:
 
 # ---- Effect factories ----
 
+def _fx_replace_hero(params):
+    """
+    Replace the source owner's hero. Also sets BOTH current and maximum hero health.
+    Removes the summoning minion if this effect was run from a battlecry.
+    JSON params:
+      {
+        "hero_id": "WARLOCK_JARAXXUS",
+        "hero_name": "Lord Jaraxxus",
+        "set_health_to": 15,
+        "power": { ... }
+      }
+    """
+    hero_id   = str(params.get("hero_id", "HERO")).upper()
+    hero_name = params.get("hero_name", "New Hero")
+    set_to    = int(params.get("set_health_to", 30))
+    pwr_spec  = params.get("power", {}) or {}
+
+    def _mk_power(spec):
+        return HeroPower(
+            name=spec.get("name", "Hero Power"),
+            text=spec.get("text", ""),
+            cost=int(spec.get("cost", 2)),
+            targeting=str(spec.get("targeting", "none")).lower(),
+            effects_spec=list(spec.get("effects", [])),
+            counts_as_spell=bool(spec.get("counts_as_spell", False)),
+        )
+
+    def run(g, source_obj, target):
+        pid = getattr(source_obj, "owner", g.active_player)
+        p   = g.players[pid]
+
+        # 1) Replace hero + set max & current health (armor unchanged)
+        new_power = _mk_power(pwr_spec)
+        p.hero = Hero(id=hero_id, name=hero_name, power=new_power)
+
+        before_h  = p.health
+        before_mh = p.max_health
+        p.max_health = max(1, set_to)
+        p.health     = max(0, min(p.max_health, set_to))
+
+        ev = [
+            Event("HeroReplaced", {"player": pid, "hero": hero_id, "name": hero_name}),
+            Event("PlayerMaxHealthSet", {"player": pid, "from": before_mh, "to": p.max_health}),
+            Event("HeroHealthSet", {"player": pid, "from": before_h, "to": p.health})
+        ]
+
+        # 2) If this came from a battlecry, remove the summoning minion
+        mid = getattr(g, "current_battlecry_minion_id", None)
+        if mid is not None:
+            loc = g.find_minion(mid)
+            if loc:
+                _, _, mm = loc
+                mm.deathrattle = None
+                ev += g.destroy_minion(mm, reason="HeroReplaced")
+
+        return ev
+
+    return run
+
+
 def _fx_shadowflame(params):
     """
     Destroy a *friendly* tagged minion, then deal damage equal to its current Attack
@@ -2093,7 +2154,7 @@ def _fx_heal(params):
         if kind == "player":
             p = g.players[obj]
             before = p.health
-            p.health = min(30, p.health + n)
+            p.health = min(p.max_health, p.health + n)
             return [Event("PlayerHealed", {"player": obj, "amount": p.health - before, "source": name})]
 
         # 2) Param-based hero targets (useful for triggers like Truesilver)
@@ -2107,7 +2168,7 @@ def _fx_heal(params):
                 return []
             p = g.players[pid]
             before = p.health
-            p.health = min(30, p.health + n)
+            p.health = min(p.max_health, p.health + n)
             return [Event("PlayerHealed", {"player": pid, "amount": p.health - before, "source": name})]
 
         return []
@@ -2400,6 +2461,8 @@ def _fx_silence(params):
         m.taunt = m.charge = m.rush = m.divine_shield = False
         m.deathrattle = None
         m.silenced = True
+        m.cant_attack = False
+        
         ev.append(Event("Silenced", {"minion": m.id}))
         ev += g._update_enrage(m)
         return ev
@@ -3018,6 +3081,7 @@ def _effect_factory(name, params, json_tokens):
         "destroy":                          _fx_destroy,
         "copy_self_as_target_minion":       _fx_copy_self_as_target_minion,
         "add_self_health_from_hand":        _fx_add_self_health_from_hand,
+        "replace_hero":                     _fx_replace_hero,
         
     }
     if name not in table:

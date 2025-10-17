@@ -215,6 +215,29 @@
                     "attack": 1
                 }
             ]
+        },
+        "INFERNAL_6_6": {
+            "id": "INFERNAL_6_6",
+            "name": "Infernal",
+            "type": "MINION",
+            "cost": 0,
+            "attack": 6,
+            "health": 6,
+            "rarity": "Common",
+            "minion_type": "Demon",
+            "keywords": [],
+            "text": ""
+        },
+        "BLOOD_FURY_WEAPON": {
+            "id": "BLOOD_FURY_WEAPON",
+            "name": "Blood Fury",
+            "type": "WEAPON",
+            "cost": 0,
+            "attack": 3,
+            "health": 8,
+            "rarity": "Common",
+            "keywords": [],
+            "text": ""
         }
     },
     "cards": [
@@ -637,7 +660,7 @@
             "id": "SHADOWFLAME",
             "name": "Shadowflame",
             "type": "SPELL",
-            "cost": 1,
+            "cost": 4,
             "text": "Destroy a friendly minion. Deal its Attack to all enemy minions.",
             "targeting": "friendly_minion",
             "on_cast": [
@@ -2425,6 +2448,50 @@
                 }
             ],
             "targeting": "none"
+        },
+        {
+            "id": "LORD_JARAXXUS",
+            "name": "Lord Jaraxxus",
+            "type": "MINION",
+            "cost": 9,
+            "attack": 3,
+            "health": 15,
+            "rarity": "Legendary",
+            "minion_type": "Demon",
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Destroy your hero and replace it with Lord Jaraxxus.",
+            "targeting": "none",
+            "battlecry": [
+                {
+                    "effect": "replace_hero",
+                    "hero_id": "WARLOCK_JARAXXUS",
+                    "hero_name": "Lord Jaraxxus",
+                    "set_health_to": 15,
+                    "power": {
+                        "name": "INFERNO!",
+                        "text": "Summon a 6/6 Infernal.",
+                        "cost": 2,
+                        "targeting": "none",
+                        "counts_as_spell": false,
+                        "effects": [
+                            {
+                                "effect": "summon",
+                                "card_id": "INFERNAL_6_6",
+                                "count": 1,
+                                "owner": "player"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "effect": "equip_weapon",
+                    "name": "Blood Fury",
+                    "attack": 3,
+                    "durability": 8
+                }
+            ]
         }
     ]
 }
