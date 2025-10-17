@@ -27,7 +27,7 @@
         "ARATHI_WEAPONSMITH": "none",
         "WOLFRIDER": "none",
         "SHIELD_BEARER": "none",
-        "EARTHEN_RING": "any_character",
+        "EARTHEN_RING_FARSEER": "any_character",
         "VOODOO_DOCTOR": "any_character",
         "STORMPIKE_COMMANDO": "enemy_face",
         "KOBOLD_PING": "enemy_character",
@@ -398,6 +398,27 @@
             "targeting": "friendly_tribe:beast"
         },
         {
+            "id": "SACRIFICIAL_PACT",
+            "name": "Sacrificial Pact",
+            "type": "SPELL",
+            "cost": 0,
+            "rarity": "Common",
+            "text": "Destroy a Demon. Restore 5 Health to your hero.",
+            "keywords": [],
+            "targeting": "any_tribe:demon",
+            "on_cast": [
+                {
+                    "effect": "set_health",
+                    "amount": 0
+                },
+                {
+                    "effect": "heal",
+                    "amount": 5,
+                    "target": "friendly_face"
+                }
+            ]
+        },
+        {
             "id": "ANIMAL_COMPANION",
             "name": "Animal Companion",
             "type": "SPELL",
@@ -613,6 +634,19 @@
             "targeting": "none"
         },
         {
+            "id": "SHADOWFLAME",
+            "name": "Shadowflame",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Destroy a friendly minion. Deal its Attack to all enemy minions.",
+            "targeting": "friendly_minion",
+            "on_cast": [
+                {
+                    "effect": "shadowflame"
+                }
+            ]
+        },
+        {
             "id": "TIMBER_WOLF",
             "name": "Timber Wolf",
             "type": "MINION",
@@ -666,6 +700,21 @@
                     "delta": -1,
                     "floor": 0
                 }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "ANCIENT_WATCHER",
+            "name": "Ancient Watcher",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "None",
+            "cost": 2,
+            "attack": 4,
+            "health": 5,
+            "text": "Can't attack.",
+            "keywords": [
+                "Can't Attack"
             ],
             "targeting": "none"
         },
@@ -792,6 +841,26 @@
             "targeting": "any_character"
         },
         {
+            "id": "SIPHON_SOUL",
+            "name": "Siphon Soul",
+            "type": "SPELL",
+            "cost": 6,
+            "text": "Destroy a minion. Restore 3 Health to your hero.",
+            "on_cast": [
+                {
+                    "effect": "set_health",
+                    "amount": 0
+                },
+                {
+                    "effect": "heal",
+                    "target": "friendly_face",
+                    "amount": 3
+                }
+            ],
+            "rarity": "Rare",
+            "targeting": "any_minion"
+        },
+        {
             "id": "GIVE_CHARGE",
             "name": "Battle Drums",
             "type": "SPELL",
@@ -844,6 +913,24 @@
             "cost": 4,
             "attack": 4,
             "health": 3,
+            "rarity": "Common",
+            "keywords": [],
+            "text": "Battlecry: Silence a minion.",
+            "targeting": "any_minion",
+            "battlecry": [
+                {
+                    "effect": "silence"
+                }
+            ]
+        },
+        {
+            "id": "IRONBEAK_OWL",
+            "name": "Ironbeak Owl",
+            "type": "MINION",
+            "minion_type": "Beast",
+            "cost": 2,
+            "attack": 2,
+            "health": 1,
             "rarity": "Common",
             "keywords": [],
             "text": "Battlecry: Silence a minion.",
@@ -927,7 +1014,7 @@
             "targeting": "none"
         },
         {
-            "id": "EARTHEN_RING",
+            "id": "EARTHEN_RING_FARSEER",
             "name": "Earthen Ring Farseer",
             "type": "MINION",
             "rarity": "Rare",
@@ -1218,6 +1305,116 @@
                     "effect": "deal_damage",
                     "amount": 2,
                     "target": "enemy_face"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "BIG_GAME_HUNTER",
+            "name": "Big Game Hunter",
+            "type": "MINION",
+            "cost": 3,
+            "attack": 4,
+            "health": 2,
+            "rarity": "Epic",
+            "text": "Battlecry: Destroy a minion with 7 or more Attack.",
+            "targeting": "any_minion",
+            "battlecry": [
+                {
+                    "effect": "if_target_attack_at_least",
+                    "amount": 7,
+                    "then": [
+                        {
+                            "effect": "destroy",
+                            "reason": "BigGameHunter"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "MOUNTAIN_GIANT",
+            "name": "Mountain Giant",
+            "type": "MINION",
+            "cost": 12,
+            "attack": 8,
+            "health": 8,
+            "rarity": "Epic",
+            "text": "Costs (1) less for each other card in your hand.",
+            "minion_type": "Elemental",
+            "keywords": [],
+            "battlecry": [],
+            "on_cast": [],
+            "targeting": "none",
+            "cost_less_per_other_card_in_hand": 1
+        },
+        {
+            "id": "MOLTEN_GIANT",
+            "name": "Molten Giant",
+            "type": "MINION",
+            "cost": 20,
+            "attack": 8,
+            "health": 8,
+            "rarity": "Epic",
+            "minion_type": "Elemental",
+            "text": "Costs (1) less for each damage your hero has taken.",
+            "keywords": [],
+            "targeting": "none",
+            "cost_less_per_damage_taken": 1
+        },
+        {
+            "id": "TWILIGHT_DRAKE",
+            "name": "Twilight Drake",
+            "type": "MINION",
+            "cost": 4,
+            "attack": 4,
+            "health": 1,
+            "rarity": "Rare",
+            "minion_type": "Dragon",
+            "text": "Battlecry: Gain +1 Health for each card in your hand.",
+            "battlecry": [
+                {
+                    "effect": "add_self_health_from_hand"
+                }
+            ]
+        },
+        {
+            "id": "FACELESS_MANIPULATOR",
+            "name": "Faceless Manipulator",
+            "type": "MINION",
+            "cost": 5,
+            "attack": 3,
+            "health": 3,
+            "rarity": "Epic",
+            "text": "Battlecry: Choose a minion and become a copy of it.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "targeting": "any_minion",
+            "battlecry": [
+                {
+                    "effect": "copy_self_as_target_minion"
+                }
+            ]
+        },
+        {
+            "id": "ABOMINATION",
+            "name": "Abomination",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "Undead",
+            "cost": 5,
+            "attack": 4,
+            "health": 4,
+            "text": "Deathrattle: Deal 2 damage to ALL characters.",
+            "keywords": [
+                "Taunt"
+            ],
+            "deathrattle": [
+                {
+                    "effect": "aoe_damage",
+                    "amount": 2,
+                    "target": "all"
                 }
             ],
             "targeting": "none"
@@ -1670,13 +1867,35 @@
             "attack": 2,
             "health": 2,
             "rarity": "Common",
-            "keywords": [],
+            "keywords": [
+                "Battlecry"
+            ],
             "text": "Battlecry: Give a friendly minion Divine Shield.",
             "targeting": "friendly_minion",
             "battlecry": [
                 {
                     "effect": "add_keyword",
                     "keyword": "Divine Shield"
+                }
+            ]
+        },
+        {
+            "id": "SUNFURY_PROTECTOR",
+            "name": "Sunfury Protector",
+            "type": "MINION",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "rarity": "Common",
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Give adjacent minions Taunt.",
+            "targeting": "none",
+            "battlecry": [
+                {
+                    "effect": "adjacent_buff",
+                    "taunt": true
                 }
             ]
         },
@@ -1767,7 +1986,7 @@
             "name": "Soulfire",
             "type": "SPELL",
             "rarity": "Common",
-            "cost": 1,
+            "cost": 0,
             "text": "Deal 4 damage. Discard a random card.",
             "on_cast": [
                 {

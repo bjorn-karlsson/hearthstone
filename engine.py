@@ -442,6 +442,26 @@ class Game:
         delta = 0
         floor = 0  # per-auras may request a different min floor, but 0 is the default
 
+        # --- NEW: intrinsic hand-size based cost mechanics (from cards.json raw fields)
+        raw_map = self.cards_db.get("_RAW", {})
+        raw = raw_map.get(cid, {}) if isinstance(raw_map, dict) else {}
+        
+        # Mountain Giant style: costs (N) less per OTHER card in your hand
+        per_other_in_hand = int(raw.get("cost_less_per_other_card_in_hand", 0))
+        if per_other_in_hand:
+            hand_size = len(self.players[pid].hand)
+            # “other” cards -> subtract this card itself if it’s in hand during evaluation
+            # (When checking a card in hand, that’s always true.)
+            other = max(0, hand_size - 1)
+            delta -= per_other_in_hand * other
+
+        # --- NEW: Molten Giant style: costs (N) less per damage your hero has taken
+        per_damage_taken = int(raw.get("cost_less_per_damage_taken", 0))
+        if per_damage_taken:
+            # Armor does not count; only missing health from 30
+            damage_taken = max(0, 30 - self.players[pid].health)
+            delta -= per_damage_taken * damage_taken
+
         for m in self.players[pid].board:
             if not m.is_alive() or m.silenced:
                 continue
@@ -675,11 +695,15 @@ class Game:
         # Give Coin to the player going second (if present in DB)
         if "THE_COIN" in self.cards_db:
             self.players[second].hand.append("THE_COIN")
+            ev.append(Event("CardCreated", {"player": second, "card": "THE_COIN"}))
 
         ev.append(Event("GameStart", {"active_player": self.active_player}))
-        ev += self.start_turn(self.active_player)
+        #ev += self.start_turn(self.active_player)
         self.history += ev
         return ev
+
+    def start_first_turn(self) -> List[Event]:
+        return self.start_turn(self.active_player)
 
     def start_turn(self, pid:int) -> List[Event]:
         p = self.players[pid]
@@ -1650,6 +1674,38 @@ def _minion_owner_matches(source_pid: int, target_pid: int, scope: str) -> bool:
     return True  # "any"
 
 # ---- Effect factories ----
+
+def _fx_shadowflame(params):
+    """
+    Destroy a *friendly* tagged minion, then deal damage equal to its current Attack
+    to all enemy minions. (No Spell Damage scaling.)
+    """
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        name  = getattr(source_obj, "name", "Shadowflame")
+
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        if obj.owner != owner:  # must be friendly
+            return []
+
+        amount = max(0, obj.attack)  # capture *before* destroy
+        ev: list[Event] = []
+
+        # Destroy the chosen minion (deathrattle should trigger as normal)
+        ev += g.destroy_minion(obj, reason="Shadowflame")
+
+        # Deal its attack to all enemy minions (no spell dmg bonus)
+        opp = g.other(owner)
+        for m in list(g.players[opp].board):
+            if m.is_alive():
+                ev += g.deal_damage_to_minion(m, amount, source=name)
+
+        g.history += ev
+        return ev
+    return run
+
 
 def _fx_counterspell(params):
     """
@@ -2760,6 +2816,158 @@ def _fx_add_card_to_hand(params):
 
     return run
 
+def _fx_if_target_attack_at_least(params, json_db_tokens):
+    """
+    Run 'then' effects only if the tagged MINION target's current Attack >= amount.
+    JSON:
+      {
+        "effect": "if_target_attack_at_least",
+        "amount": 7,
+        "then": [ ... ]
+      }
+    """
+    need = int(params.get("amount", 0))
+    then_spec = params.get("then", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        if obj.attack >= need:
+            return then_fn(g, source_obj, target)
+        return []
+    return run
+
+def _fx_destroy(params):
+    """
+    Destroy the tagged minion outright.
+    Optional: {"reason": "BigGameHunter"} for log clarity.
+    """
+    reason = str(params.get("reason", "Effect"))
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        return g.destroy_minion(obj, reason=reason)
+    return run
+
+
+def _fx_copy_self_as_target_minion(params):
+    """
+    Faceless Manipulator:
+    On battlecry, the just-summoned minion (self) becomes a copy of the tagged minion's
+    *current* state (stats/keywords/silence/spell damage/minion type/aura specs/etc.).
+    Keeps same id/owner. Re-enables copied auras and refreshes adjacency for the side.
+    """
+    def run(g, source_obj, target):
+        # Find the self minion created by play_card (battlecry context)
+        sid = getattr(g, "current_battlecry_minion_id", None)
+        if sid is None:
+            return []
+        loc_self = g.find_minion(sid)
+        if not loc_self:
+            return []
+        _, _, me = loc_self
+
+        kind, tgt = _resolve_tagged_target(g, target)
+        if kind != "minion" or tgt is None:
+            return []
+
+        ev: list[Event] = []
+        # Drop any active aura from current self before morphing
+        ev += g._disable_aura(me)
+
+        # Copy live state from target (current stats + relevant flags)
+        me.name           = tgt.name
+        me.card_id        = tgt.card_id
+        me.attack         = max(0, tgt.attack)
+        me.max_health     = max(1, tgt.max_health)
+        me.health         = max(0, min(me.max_health, tgt.health))
+
+        me.taunt          = bool(tgt.taunt)
+        me.divine_shield  = bool(tgt.divine_shield)
+        me.charge         = bool(tgt.charge)
+        me.rush           = bool(tgt.rush)
+        me.frozen         = bool(tgt.frozen)          # copies current freeze state
+        me.silenced       = bool(tgt.silenced)
+        me.cant_attack    = bool(tgt.cant_attack)
+
+        me.spell_damage   = int(getattr(tgt, "spell_damage", 0))
+        me.minion_type    = getattr(tgt, "minion_type", "None")
+        me.base_minion_type = getattr(tgt, "base_minion_type", me.minion_type)
+
+        # Copy base/card identity traits (affects silences, reveals, etc.)
+        me.cost           = int(getattr(tgt, "cost", 0))
+        me.rarity         = getattr(tgt, "rarity", "")
+        me.base_attack    = int(getattr(tgt, "base_attack", me.attack))
+        me.base_health    = int(getattr(tgt, "base_health", me.max_health))
+        me.base_text      = getattr(tgt, "base_text", "")
+        me.base_keywords  = list(getattr(tgt, "base_keywords", []))
+
+        # Copy auras / triggers / enrage
+        me.aura_spec      = getattr(tgt, "aura_spec", None)
+        me.auras          = list(getattr(tgt, "auras", []))
+        me.cost_aura_spec = getattr(tgt, "cost_aura_spec", None)
+        me.triggers_map   = dict(getattr(tgt, "triggers_map", {}))
+        me.enrage_spec    = getattr(tgt, "enrage_spec", None)
+        me.enrage_active  = bool(getattr(tgt, "enrage_active", False))
+
+        # Clear temporary stacks from the old self (those shouldn’t carry over)
+        me.temp_stats.clear()
+        me.temp_keywords.clear()
+
+        # Re-enable any copied aura(s) and refresh adjacency on our side
+        ev += g._enable_aura(me)
+        ev += g._refresh_stat_auras(me.owner)
+
+        # Recompute enrage / attack-ready flag
+        ev += g._update_enrage(me)
+        me.can_attack = me.charge or (not me.exhausted)
+
+        # Log a friendly event for UX
+        ev.append(Event("MinionTransformed", {
+            "minion": me.id,
+            "name": me.name,
+            "reason": "FacelessManipulator",
+            "copied_from": tgt.id
+        }))
+        g.history += ev
+        return ev
+    return run
+
+def _fx_add_self_health_from_hand(params):
+    """
+    Add +1 Health (and Max Health) to THIS minion for each card in its owner's hand.
+    Used by Twilight Drake.
+    JSON:
+      { "effect": "add_self_health_from_hand" }
+    """
+    def run(g, source_obj, context):
+        # Find the minion that just resolved its battlecry
+        sid = getattr(g, "current_battlecry_minion_id", None) or getattr(source_obj, "id", None)
+        owner = getattr(g, "current_battlecry_owner", getattr(source_obj, "owner", g.active_player))
+        if sid is None:
+            return []
+        loc = g.find_minion(sid)
+        if not loc:
+            return []
+        _, _, me = loc
+
+        # Count current cards in hand (Twilight Drake does NOT count itself)
+        amount = len(g.players[owner].hand)
+        if amount <= 0:
+            return []
+
+        before = me.health
+        me.max_health += amount
+        me.health += amount
+
+        ev = [Event("Buff", {"minion": me.id, "attack_delta": 0, "health_delta": me.health - before})]
+        ev += g._update_enrage(me)
+        return ev
+    return run
+
 
 
 # Registry maps effect name -> factory
@@ -2785,6 +2993,7 @@ def _effect_factory(name, params, json_tokens):
         "if_target_died_then":              lambda p: _fx_if_target_died_then(p, json_tokens),
         "if_target_survived_then":          lambda p: _fx_if_target_survived_then(p, json_tokens),
         "if_summoned_has_keyword":          lambda p: _fx_if_summoned_has_keyword(p, json_tokens),
+        "if_target_attack_at_least":        lambda p: _fx_if_target_attack_at_least(p, json_tokens),
         "add_self_stats":                   _fx_add_self_stats,
         "destroy_weapon":                   _fx_destroy_weapon,
         "gain_armor":                       _fx_gain_armor,
@@ -2805,6 +3014,10 @@ def _effect_factory(name, params, json_tokens):
         "add_card_to_hand":                 _fx_add_card_to_hand,
         "mirror_played_minion":             _fx_mirror_played_minion,
         "counterspell":                     _fx_counterspell,
+        "shadowflame":                      _fx_shadowflame,
+        "destroy":                          _fx_destroy,
+        "copy_self_as_target_minion":       _fx_copy_self_as_target_minion,
+        "add_self_health_from_hand":        _fx_add_self_health_from_hand,
         
     }
     if name not in table:

@@ -8,7 +8,7 @@ from pathlib import Path
 import math
 
 
-from engine import Game, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, IllegalAction
+from engine import Game, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, _has_tribe, IllegalAction
 from ai import pick_best_action
 
 # --- Debug / dev toggles ---
@@ -334,7 +334,7 @@ def make_starter_deck(db, seed=None):
         "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
         "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
     ]
-    desired = [ "ANIMAL_COMPANION", "RAID_LEADER", "LEOKK" ] * 15
+    desired = [ "LEPER_GNOME", "SIPHON_SOUL", "FACELESS_MANIPULATOR", "MOUNTAIN_GIANT", "MOLTEN_GIANT"] * 10
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -391,7 +391,7 @@ playable_decks = [
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=random.choice(playable_decks))
 
-#player_deck = None
+player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -757,31 +757,76 @@ def card_is_non_target_cast(g: Game, pid: int, cid: str) -> bool:
     return False
 
 
+# ----------- FILTERS and Exists
+def _exists_minion_attack_7plus(g: Game, pid: int) -> bool:
+    return any(m.is_alive() and m.attack >= 7 for m in g.players[0].board) \
+        or any(m.is_alive() and m.attack >= 7 for m in g.players[1].board)
+
 def _exists_damaged_enemy_minion(g, pid: int) -> bool:
     opp = 1 - pid
     return any(m.is_alive() and m.health < m.max_health for m in g.players[opp].board)
+
+def _exists_friendly_minion(g: Game, pid: int) -> bool:
+    return any(m.is_alive() for m in g.players[pid].board)
+
+def _exists_armor_for_shield_slam(g, pid: int) -> bool:
+    return getattr(g.players[pid], "armor", 0) > 0
+
+def _exists_any_minion(g: Game, pid: int) -> bool:
+    return any(m.is_alive() for m in g.players[0].board) or any(m.is_alive() for m in g.players[1].board)
+
+def _exists_any_demon_minion(g: Game, pid: int) -> bool:
+    for side in (pid, g.other(pid)):
+        for m in g.players[side].board:
+            if m.is_alive() and _has_tribe(m, "demon"):
+                return True
+    return False
 
 def _filter_damaged_enemy_minions(g, pid: int, m) -> bool:
     # Only allow enemy + damaged
     return (m.owner != pid) and m.is_alive() and (m.health < m.max_health)
 
-# (Examples for future cards)
-def _exists_armor_for_shield_slam(g, pid: int) -> bool:
-    return getattr(g.players[pid], "armor", 0) > 0
+def _filter_any_demon_minions(g: Game, pid: int, m) -> set[int]:
+    ids = set()
+    for side in (pid, g.other(pid)):
+        for m in g.players[side].board:
+            if m.is_alive() and _has_tribe(m, "demon"):
+                ids.add(m.id)
+    return ids
+
+def _filter_friendly_minions(g: Game, pid: int, m) -> set[int]:
+    return {m.id for m in g.players[pid].board if m.is_alive()}
 
 def _filter_any_enemy_minion(g, pid: int, m) -> bool:
     return (m.owner != pid) and m.is_alive()
 
+def _filter_any_minions(g: Game, pid: int, m) -> set[int]:
+    s = {m.id for m in g.players[0].board if m.is_alive()}
+    s |= {m.id for m in g.players[1].board if m.is_alive()}
+    return s
+
+def _filter_minions_attack_7plus(g: Game, pid: int, m) -> set[int]:
+    ids = {m.id for m in g.players[0].board if m.is_alive() and m.attack >= 7}
+    ids |= {m.id for m in g.players[1].board if m.is_alive() and m.attack >= 7}
+    return ids
+
 # Registry: simple, extend as needed
 PLAY_REQUIREMENTS: dict[str, callable] = {
     "EXECUTE": _exists_damaged_enemy_minion,
-    "SHIELD_SLAM": _exists_armor_for_shield_slam, 
+    "SHIELD_SLAM": _exists_armor_for_shield_slam,
+    "SACRIFICIAL_PACT" : _exists_any_demon_minion,
+    "SHADOWFLAME": _exists_friendly_minion,
+    #"BIG_GAME_HUNTER": _exists_minion_attack_7plus
 }
 
 TARGET_FILTERS: dict[str, callable] = {
     "EXECUTE": _filter_damaged_enemy_minions,
+    "SACRIFICIAL_PACT": _filter_any_demon_minions,
+    "SHADOWFLAME" : _filter_friendly_minions,
+    "BIG_GAME_HUNTER": _filter_minions_attack_7plus
 }
 
+# --- helpers -
 def centered_text(text: str, y: int, font=BIG, color=WHITE):
     surf = font.render(text, True, color)
     screen.blit(surf, surf.get_rect(center=(W//2, y)))
@@ -978,6 +1023,65 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         draw_silence_overlay(r, surface=surface)
     if getattr(minion_obj, "frozen", False):
         draw_frozen_overlay(r, surface=surface)
+LAST_HAND_COUNT = {0: 0, 1: 0}
+def _retro_animate_missing_draws(g: Game, ev_list):
+    """
+    If the hand grew but we saw fewer CardDrawn events than the growth,
+    enqueue 'play_move' animations for the missing draws.
+    """
+    if ev_list is None:
+        ev_list = []
+
+    # how many explicit CardDrawn we saw per player
+    explicit = {0: 0, 1: 0}
+    for e in ev_list:
+        if getattr(e, "kind", "") == "CardDrawn":
+            explicit[e.payload.get("player", 0)] += 1
+
+    for pid in (0, 1):
+        prev = LAST_HAND_COUNT.get(pid, 0)
+        cur  = len(g.players[pid].hand)
+        inc  = max(0, cur - prev)       # actual growth
+        miss = max(0, inc - explicit.get(pid, 0))  # silent draws we must animate
+
+        if miss <= 0:
+            continue
+
+        # Animate the last `miss` slots (rightmost new cards)
+        src_rect = _deck_source_rect_for_pid(pid)
+        hide_set = HIDDEN_HAND_INDICES_ME if pid == 0 else HIDDEN_HAND_INDICES_EN
+
+        for k in range(miss):
+            idx = cur - miss + k  # indices of the new cards at the end
+            dst_rect = _hand_slot_rect_for(pid, idx, g)
+            if dst_rect is None:
+                continue
+
+            # hide until the animation finishes
+            hide_set.add(idx)
+            def _unhide(i=idx, hs=hide_set):
+                try: hs.remove(i)
+                except KeyError: pass
+
+            this_cid = g.players[pid].hand[idx] if pid == 0 else None
+
+            ANIMS.push(AnimStep(
+                "play_move",
+                ANIM_DRAW_MS,
+                {
+                    "src": src_rect.copy(),
+                    "dst": dst_rect.copy(),
+                    "pid": pid,
+                    "cid": this_cid,  # show true card for you; hidden back for enemy
+                    "color": CARD_BG_HAND if pid == 0 else CARD_BG_EN,
+                    "ease": "quart",
+                },
+                on_finish=_unhide
+            ))
+
+        # Update our record so we don’t re-animate
+        LAST_HAND_COUNT[pid] = cur
+
 
 def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool):
     if taunt: pygame.draw.rect(screen, GREY, r, 3, border_radius=10)
@@ -990,6 +1094,7 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
     Queue small ambient animations based on events. Uses LAST_MINION_RECTS for
     things that disappear (death, discard, burn).
     """
+    _retro_animate_missing_draws(g, ev_list)
     if not ev_list:
         return
 
@@ -1032,43 +1137,65 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
             post = layout_board(g)
 
             # where the deck will be: right edge, near the appropriate row
-            arena = battle_area_rect()
             if who == 0:
                 src_y = ROW_Y_HAND + CARD_H // 4
                 src_rect = pygame.Rect(W - CARD_W - 20, src_y, CARD_W, CARD_H)
-                # fly to the newest hand slot (rightmost in the stacked fan)
-                if post["hand"]:
-                    _, maybe_cid, dst = post["hand"][-1]
-                else:
+
+                # find the *actual* destination slot index = last card in that player's hand
+                last_idx = max(0, len(g.players[who].hand) - 1)
+
+                # look up the rect for that index
+                dst = None
+                maybe_cid = None
+                for i, cid, r in post["hand"]:
+                    if i == last_idx:
+                        dst = r
+                        maybe_cid = cid
+                        break
+                if dst is None:
                     # Fallback if we somehow don't have a hand slot yet
                     dst = pygame.Rect(W//2, ROW_Y_HAND, CARD_W, CARD_H)
-                    maybe_cid = None
-                # Animate: show the actual card if we can (nice polish)
+
+                # --- NEW: hide that hand slot until the animation completes ---
+                hide_set = HIDDEN_HAND_INDICES_ME if who == 0 else HIDDEN_HAND_INDICES_EN
+                hide_set.add(last_idx)
+
+                def _unhide(i=last_idx, hs=hide_set):
+                    try: hs.remove(i)
+                    except KeyError: pass
+
+                # Animate: show the actual card as it flies in
                 data = {
                     "src": src_rect,
                     "dst": dst,
                     "pid": 0,
-                    "cid": maybe_cid,            # will render the true card if available
+                    "cid": maybe_cid,
                     "color": CARD_BG_HAND,
                     "ease": "quart",
                 }
-                ANIMS.push(AnimStep("play_move", ANIM_DRAW_MS, data, on_finish=None))
+                ANIMS.push(AnimStep("play_move", ANIM_DRAW_MS, data, on_finish=_unhide))
 
             else:
                 # Enemy: use a generic back moving toward their hand area (top)
                 src_y = ROW_Y_ENEMY - 30
                 src_rect = pygame.Rect(W - CARD_W - 20, src_y, CARD_W, CARD_H)
 
-                # Aim roughly where the enemy "hand" lives visually
-                # (you don't render it by default; this just sells the motion)
+                # (Optional) keep symmetry: hide their last slot in case you enable enemy-hand UI
+                last_idx = max(0, len(g.players[who].hand) - 1)
+                HIDDEN_HAND_INDICES_EN.add(last_idx)
+                def _unhide_en(i=last_idx):
+                    try: HIDDEN_HAND_INDICES_EN.remove(i)
+                    except KeyError: pass
+
                 dst = pygame.Rect(W - (CARD_W + 40), ROW_Y_ENEMY - 30, CARD_W, CARD_H)
 
                 ANIMS.push(AnimStep(
                     "play_move",
                     ANIM_DRAW_MS,
                     {"src": src_rect, "dst": dst, "pid": 1, "color": CARD_BG_EN, "ease": "quart"},
-                    on_finish=None
+                    on_finish=_unhide_en
                 ))
+
         
         elif k == "CardDiscarded":
             who = p.get("player", 0)
@@ -1117,6 +1244,50 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
             # you already call queue_spell_projectiles_from_events elsewhere,
             # but if you want to ensure it here:
             pass  # handled by queue_spell_projectiles_from_events
+
+    # keep hand sizes up to date (idempotent)
+    LAST_HAND_COUNT[0] = len(g.players[0].hand)
+    LAST_HAND_COUNT[1] = len(g.players[1].hand)
+
+def _animate_coin_entry_if_present(g: Game):
+    """
+    After mulligans, if a player has 'The Coin' (or similar bonus start card)
+    already in hand, animate it flying in from the deck position so it doesn't just appear.
+    """
+    def _looks_like_coin(cid: str) -> bool:
+        c = g.cards_db.get(cid)
+        if not c: return False
+        nm = (getattr(c, "name", "") or "").strip().lower()
+        return cid.upper() == "THE_COIN" or nm == "the coin"
+
+    for pid in (0, 1):
+        hand = g.players[pid].hand
+        for idx, cid in enumerate(hand):
+            if _looks_like_coin(cid):
+                src_rect = _deck_source_rect_for_pid(pid)
+                dst_rect = _hand_slot_rect_for(pid, idx, g)
+                if dst_rect is None:
+                    continue
+                hide_set = HIDDEN_HAND_INDICES_ME if pid == 0 else HIDDEN_HAND_INDICES_EN
+                hide_set.add(idx)
+                def _unhide(i=idx, hs=hide_set):
+                    try: hs.remove(i)
+                    except KeyError: pass
+
+                ANIMS.push(AnimStep(
+                    "play_move",
+                    ANIM_DRAW_MS,
+                    {
+                        "src": src_rect.copy(),
+                        "dst": dst_rect.copy(),
+                        "pid": pid,
+                        "cid": (cid if pid == 0 else None),
+                        "color": CARD_BG_HAND if pid == 0 else CARD_BG_EN,
+                        "ease": "quart",
+                    },
+                    on_finish=_unhide
+                ))
+                break  # only do one coin per player
 
 
 def flash_from_events(g: Game, ev_list: List[Any]):
@@ -2686,6 +2857,7 @@ def start_game() -> Game:
     g = Game(db, STARTER_DECK_PLAYER.copy(), STARTER_DECK_AI.copy(),
              heroes=(HERO_PLAYER, HERO_AI))
     ev = g.start_game()
+    
     apply_post_summon_hooks(g, ev)
     log_events(ev, g)
     return g
@@ -2711,6 +2883,17 @@ def main():
     run_player_mulligan(g)
     run_ai_mulligan(g)
 
+    
+    # Initialize hand counters now that starting hands are settled
+    LAST_HAND_COUNT[0] = len(g.players[0].hand)
+    LAST_HAND_COUNT[1] = len(g.players[1].hand)
+
+    # If The Coin (or similar) is already in hand, make it fly in once
+    _animate_coin_entry_if_present(g)
+    ev = g.start_first_turn()
+    animate_from_events(g, ev)
+    
+    
     # small banner for feedback
     ANIMS.push(AnimStep("banner", 800, {"text": "Mulligan complete"}))
 
