@@ -385,7 +385,7 @@ playable_decks = [
     "Classic Hunter Deck (Midrange / Face Hybrid)", 
     "Classic Paladin Deck (Midrange / Control)",
     "Classic Mage Deck (Spell Control / Burst)",
-    "Big Big Mage"
+    "Big Big Mage",
     "Classic Warlock Deck (Zoo Aggro)",
     "Handlock",
     "Classic Warrior Deck (Control)",
