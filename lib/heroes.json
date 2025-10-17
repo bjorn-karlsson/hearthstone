@@ -89,6 +89,86 @@
                     }
                 ]
             }
+        },
+        {
+            "id": "SHAMAN",
+            "name": "Shaman",
+            "power": {
+                "name": "Totemic Call",
+                "text": "Summon a random basic Totem.",
+                "cost": 2,
+                "targeting": "none",
+                "effects": [
+                    {
+                        "effect": "summon_from_pool",
+                        "owner": "friendly",
+                        "count": 1,
+                        "pool": [
+                            "SEARING_TOTEM",
+                            "STONECLAW_TOTEM",
+                            "HEALING_TOTEM",
+                            "WRATH_OF_AIR_TOTEM"
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "id": "ROGUE",
+            "name": "Rogue",
+            "power": {
+                "name": "Dagger Mastery",
+                "text": "Equip a 1/2 Dagger.",
+                "cost": 2,
+                "targeting": "none",
+                "effects": [
+                    {
+                        "effect": "equip_weapon",
+                        "name": "Wicked Knife",
+                        "attack": 1,
+                        "durability": 2
+                    }
+                ]
+            }
+        },
+        {
+            "id": "PRIEST",
+            "name": "Priest",
+            "power": {
+                "name": "Lesser Heal",
+                "text": "Restore 2 Health.",
+                "cost": 2,
+                "targeting": "any_character",
+                "effects": [
+                    {
+                        "effect": "heal",
+                        "amount": 2
+                    }
+                ]
+            }
+        },
+        {
+            "id": "DRUID",
+            "name": "Druid",
+            "power": {
+                "name": "Shapeshift",
+                "text": "+1 Attack this turn. +1 Armor.",
+                "cost": 2,
+                "targeting": "none",
+                "effects": [
+                    {
+                        "effect": "equip_weapon",
+                        "name": "Claws (Hero Power)",
+                        "attack": 1,
+                        "durability": 1
+                    },
+                    {
+                        "effect": "gain_armor",
+                        "amount": 1,
+                        "target": "self_face"
+                    }
+                ]
+            }
         }
     ]
 }

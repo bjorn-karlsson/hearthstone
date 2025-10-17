@@ -696,7 +696,7 @@ class Game:
         # Give Coin to the player going second (if present in DB)
         if "THE_COIN" in self.cards_db:
             self.players[second].hand.append("THE_COIN")
-            ev.append(Event("CardCreated", {"player": second, "card": "THE_COIN"}))
+            #ev.append(Event("CardCreated", {"player": second, "card": "THE_COIN"}))
 
         ev.append(Event("GameStart", {"active_player": self.active_player}))
         #ev += self.start_turn(self.active_player)
@@ -2403,6 +2403,99 @@ def _fx_aoe_damage_minions(params):
         return ev
     return run
 
+def _fx_aoe_heal(params):
+    """
+    Restore N Health to:
+      - default: friendly hero + friendly minions (matches typical heal AOE default)
+      - target: "friendly" | "enemy" | "all" (aka both, all_characters)
+    Produces PlayerHealed/MinionHealed events (with amount actually healed), and
+    updates Enrage on affected minions.
+    """
+    n = int(params["amount"])
+    scope = str(params.get("target", "friendly")).lower()
+
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        if scope in ("all", "both", "all_characters"):
+            sides = [owner, g.other(owner)]
+        elif scope in ("friendly", "ally", "self", "friendly_characters"):
+            sides = [owner]
+        else:  # "enemy", "opponent"
+            sides = [g.other(owner)]
+
+        ev: list[Event] = []
+        for pid in sides:
+            # --- heal hero
+            p = g.players[pid]
+            if n > 0 and p.health < p.max_health:
+                before = p.health
+                p.health = min(p.max_health, p.health + n)
+                healed = p.health - before
+                if healed > 0:
+                    ev.append(Event("PlayerHealed", {
+                        "player": pid, "amount": healed, "source": name, "aoe": True
+                    }))
+
+            # --- heal minions (snapshot board)
+            for m in list(g.players[pid].board):
+                if not m.is_alive():
+                    continue
+                if n > 0 and m.health < m.max_health:
+                    before = m.health
+                    m.health = min(m.max_health, m.health + n)
+                    healed = m.health - before
+                    if healed > 0:
+                        ev.append(Event("MinionHealed", {
+                            "minion": m.id, "amount": healed, "source": name, "aoe": True
+                        }))
+                        ev += g._update_enrage(m)
+        return ev
+
+    return run
+
+
+def _fx_aoe_heal_minions(params):
+    """
+    Restore N Health to minions only.
+      - default scope: friendly minions
+      - target: "friendly_minions" | "enemy_minions" | "all_minions"
+                Also accepts "friendly"/"enemy"/"all" for convenience.
+    """
+    n = int(params["amount"])
+    scope = str(params.get("target", "friendly_minions")).lower()
+
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        if scope in ("all", "both", "all_minions"):
+            sides = [owner, g.other(owner)]
+        elif scope in ("friendly", "ally", "self", "friendly_minions"):
+            sides = [owner]
+        else:  # "enemy", "enemies", "opponent", "enemy_minions"
+            sides = [g.other(owner)]
+
+        ev: list[Event] = []
+        for pid in sides:
+            for m in list(g.players[pid].board):
+                if not m.is_alive():
+                    continue
+                if n > 0 and m.health < m.max_health:
+                    before = m.health
+                    m.health = min(m.max_health, m.health + n)
+                    healed = m.health - before
+                    if healed > 0:
+                        ev.append(Event("MinionHealed", {
+                            "minion": m.id, "amount": healed, "source": name, "aoe": True
+                        }))
+                        ev += g._update_enrage(m)
+        return ev
+
+    return run
+
+
 def _fx_add_attack(params):
     n = int(params["amount"])
     def run(g, source_obj, target):
@@ -3040,13 +3133,16 @@ def _effect_factory(name, params, json_tokens):
         "heal":                             _fx_heal,
         "draw":                             _fx_draw,
         "gain_temp_mana":                   _fx_gain_temp_mana,
-        "random_pings":                     _fx_random_pings,
         "aoe_damage":                       _fx_aoe_damage,
         "aoe_damage_minions":               _fx_aoe_damage_minions,
+        "aoe_heal":                         _fx_aoe_heal,
+        "aoe_heal_minions":                 _fx_aoe_heal_minions,
+        "add_keyword":                      _fx_add_keyword,
         "add_attack":                       _fx_add_attack,
         "add_stats":                        _fx_add_stats,
+        "add_self_stats":                   _fx_add_self_stats,
         "silence":                          _fx_silence,
-        "add_keyword":                      _fx_add_keyword,
+        "freeze":                           _fx_freeze,
         "summon":                           lambda p: _fx_summon(p, json_tokens),
         "summon_from_pool":                 lambda p: _fx_summon_from_pool(p, json_tokens),
         "transform":                        lambda p: _fx_transform(p, json_tokens),
@@ -3057,7 +3153,6 @@ def _effect_factory(name, params, json_tokens):
         "if_target_survived_then":          lambda p: _fx_if_target_survived_then(p, json_tokens),
         "if_summoned_has_keyword":          lambda p: _fx_if_summoned_has_keyword(p, json_tokens),
         "if_target_attack_at_least":        lambda p: _fx_if_target_attack_at_least(p, json_tokens),
-        "add_self_stats":                   _fx_add_self_stats,
         "destroy_weapon":                   _fx_destroy_weapon,
         "gain_armor":                       _fx_gain_armor,
         "adjacent_buff":                    _fx_adjacent_buff,
@@ -3065,11 +3160,11 @@ def _effect_factory(name, params, json_tokens):
         "set_attack":                       _fx_set_attack,
         "multiply_attack":                  _fx_multiply_attack,
         "weapon_durability_delta":          _fx_weapon_durability_delta,
-        "freeze":                           _fx_freeze,
         "discover_equal_remaining_mana":    _fx_discover_equal_remaining_mana,
         "temp_modify":                      _fx_temp_modify,
         "temp_cost":                        _fx_temp_cost,
         "discard_random":                   _fx_discard_random,
+        "random_pings":                     _fx_random_pings,
         "random_enemy_damage":              _fx_random_enemy_damage,
         "deal_damage_equal_armor":          _fx_deal_damage_equal_armor,
         "execute":                          _fx_execute,

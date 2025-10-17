@@ -238,6 +238,69 @@
             "rarity": "Common",
             "keywords": [],
             "text": ""
+        },
+        "SEARING_TOTEM": {
+            "id": "SEARING_TOTEM",
+            "name": "Searing Totem",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "rarity": "Common",
+            "minion_type": "Totem",
+            "keywords": [],
+            "text": ""
+        },
+        "STONECLAW_TOTEM": {
+            "id": "STONECLAW_TOTEM",
+            "name": "Stoneclaw Totem",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 0,
+            "health": 2,
+            "rarity": "Common",
+            "minion_type": "Totem",
+            "keywords": [
+                "Taunt"
+            ],
+            "text": "Taunt"
+        },
+        "HEALING_TOTEM": {
+            "id": "HEALING_TOTEM",
+            "name": "Healing Totem",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 0,
+            "health": 2,
+            "rarity": "Common",
+            "minion_type": "Totem",
+            "keywords": [],
+            "text": "At the end of your turn, restore 1 Health to all friendly minions.",
+            "triggers": [
+                {
+                    "on": "end_of_your_turn",
+                    "effects": [
+                        {
+                            "effect": "aoe_heal_minions",
+                            "amount": 1,
+                            "target": "friendly_minions"
+                        }
+                    ]
+                }
+            ]
+        },
+        "WRATH_OF_AIR_TOTEM": {
+            "id": "WRATH_OF_AIR_TOTEM",
+            "name": "Wrath of Air Totem",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 0,
+            "health": 2,
+            "rarity": "Common",
+            "minion_type": "Totem",
+            "spell_damage": 1,
+            "keywords": [],
+            "text": "Spell Damage +1"
         }
     },
     "cards": [

@@ -24,11 +24,11 @@
 # ------- Unordered General stuff ----------
 # [x] Add weapon mechanic, drawing, logic, ai, etc
 # [] Add choose mechanic, drawing, logic, ai, etc
-# [] Add Class Druid
-# [] Add Class Priest
+# [x] Add Class Druid
+# [x] Add Class Priest
 # [] Add class Shaman
-# [] Add class Rougue
-# [] Add heroCards like Jarraxuss.
+# [x] Add class Rougue
+# [x] Add heroCards like Jarraxuss.
 # [] Draw diffrent mechanics on cards, Aura, triggers, Deathrattle, etc.
 # [x] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
 # [] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
@@ -69,6 +69,6 @@
 # [x] AI doesnt use Shield Slam or Slam
 # [] Show Spell Damage increase for cards.
 # [x] Fix so that Secrets are actually spells
-# 
+# [] Show mana delta change (-) green and (+) is red
 #
 #

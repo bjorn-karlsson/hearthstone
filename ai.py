@@ -225,43 +225,58 @@ def _lowest_removal_alt_cost(g: Game, pid: int) -> int:
 def can_use_hero_power_ai(g: Game, pid: int) -> bool:
     """Copy of the UI gating but engine-only; avoids importing UI code."""
     p = g.players[pid]
+    if p.hero is None:
+        return False
     cost = getattr(p.hero.power, "cost", 2)
     if p.mana < cost or p.hero_power_used_this_turn:
         return False
-    # Example: Paladin still needs board space
-    if p.hero.id.upper() == "PALADIN" and len(p.board) >= 7:
+
+    hid = p.hero.id.upper()
+
+    # Paladin / Shaman: need board space
+    if hid in ("PALADIN", "SHAMAN") and len(p.board) >= 7:
         return False
+
+    # Priest: needs *some* damaged friendly character (face or minion) to make sense
+    if hid == "PRIEST":
+        if p.health < p.max_health:
+            return True
+        if any(m.is_alive() and m.health < m.max_health for m in p.board):
+            return True
+        return False
+
+    # Others: generic gating is fine
     return True
 
 def maybe_use_hero_power(g: Game, pid: int):
     """
     Use hero power late in turn, conservatively:
-      - Use for lethal or key tactical picks (e.g., Mage ping 1-HP Taunt).
-      - Otherwise, only if we'd float >= cost mana and we have no clearly-better play.
-      - NEVER uses Coin here (this function doesn't simulate mana).
+      - Tactical/emergency cases first.
+      - Otherwise only if we'd float >= cost mana and no clearly-better play.
     """
     if g.active_player != pid:
         return []
 
     p = g.players[pid]
-    cost = getattr(p.hero.power, "cost", 2)
+    hero = p.hero
+    if hero is None:
+        return []
+    cost = getattr(hero.power, "cost", 2)
     if p.mana < cost or p.hero_power_used_this_turn:
         return []
 
-    hero_id = g.players[pid].hero.id.upper()
+    hero_id = hero.id.upper()
     me  = g.players[pid]
     opp = g.players[1 - pid]
 
-    # --- Emergencies / tactical high value ---
-    # Lethal face: (Hunter/Mage)
+    # --- Tactical high-value uses ---
     if hero_id == "HUNTER":
         if opp.health <= 2:
             return g.use_hero_power(pid)
+
     if hero_id == "MAGE":
-        # lethal ping to face
         if opp.health <= 1:
             return g.use_hero_power(pid, target_player=1 - pid)
-        # remove 1-HP Taunt or 1-HP minion
         taunt_1hp = [m for m in opp.board if m.is_alive() and m.taunt and m.health <= 1]
         if taunt_1hp:
             return g.use_hero_power(pid, target_minion=taunt_1hp[0].id)
@@ -270,31 +285,46 @@ def maybe_use_hero_power(g: Game, pid: int):
             return g.use_hero_power(pid, target_minion=ones[0].id)
 
     if hero_id == "WARRIOR":
-        # Armor up only when low, or if we're floating and nothing good to do
         if me.health <= 12:
             return g.use_hero_power(pid)
 
     if hero_id == "WARLOCK":
-        # life tap only when safe, and hand not full
-        if len(me.hand) < 9 and me.health > 12:
-            # Keep it tactical: still gated by "no better play" below
-            pass
-        else:
+        if not (len(me.hand) < 9 and me.health > 12):
             return []
+        # (continue down to the "float mana" check before actually tapping)
+
+    if hero_id == "PRIEST":
+        # Heal highest-value friendly damage (face or minion)
+        tp, tm, sc = best_heal_target(g, pid, 2)  # default Priest heal = 2
+        if tp is not None or tm is not None:
+            return g.use_hero_power(pid, target_player=tp, target_minion=tm)
 
     if hero_id == "PALADIN":
-        # Only if board has space and it's otherwise floating mana
         if len(me.board) >= 7:
             return []
 
+    if hero_id == "SHAMAN":
+        # Totemic Call only if space and we’re otherwise floating
+        if len(me.board) >= 7:
+            return []
+
+    if hero_id == "ROGUE":
+        # Dagger Up if unarmed (or weapon is basically spent) and we’re floating
+        w = me.weapon
+        if (w is None) or (w.attack <= 1 and w.durability <= 1):
+            # fall through to float check
+
+            pass
+        else:
+            # keeping a good weapon; skip unless floating later
+            pass
+
     # --- Only if we'd otherwise float the mana AND there's no clearly-better play ---
-    best_play = pick_best_play(g, pid)   # (('play', idx, tp, tm), score) or None
+    best_play = pick_best_play(g, pid)
     if best_play is not None:
-        # we have a good play; don't hero power first
         return []
 
-    # If we reached here: no good play this frame.
-    # Spend leftover mana on the power, by class:
+    # Spend on power by class defaults
     if hero_id == "HUNTER":
         return g.use_hero_power(pid)
     if hero_id == "MAGE":
@@ -309,6 +339,19 @@ def maybe_use_hero_power(g: Game, pid: int):
         return []
     if hero_id == "WARRIOR":
         return g.use_hero_power(pid)
+    if hero_id == "PRIEST":
+        tp, tm, _ = best_heal_target(g, pid, 2)
+        if tp is not None or tm is not None:
+            return g.use_hero_power(pid, target_player=tp, target_minion=tm)
+        return []
+    if hero_id == "ROGUE":
+        return g.use_hero_power(pid)
+    if hero_id == "DRUID":
+        return g.use_hero_power(pid)
+    if hero_id == "SHAMAN":
+        if len(me.board) < 7:
+            return g.use_hero_power(pid)
+        return []
 
     return []
 
@@ -1331,7 +1374,6 @@ def eval_state(g: Game, pid: int) -> int:
         + hand_bonus
         + (10 if can_face(g, pid) else 0)
     )
-
 def enumerate_actions(g: Game, pid: int) -> List[Action]:
     acts: List[Action] = []
 
@@ -1346,7 +1388,7 @@ def enumerate_actions(g: Game, pid: int) -> List[Action]:
         if not taunts and _face_allowed_for_attacker(g, pid, a):
             acts.append(('attack', a.id, 1 - pid, None))
 
-    # Spells / minions (try every useful play you already gate)
+    # Plays
     p = g.players[pid]
     for i, cid in enumerate(p.hand):
         usable = has_useful_play_for_card(g, pid, cid)
@@ -1354,22 +1396,30 @@ def enumerate_actions(g: Game, pid: int) -> List[Action]:
         idx, tp, tm, _ = usable
         acts.append(('play', idx, tp, tm))
 
-    # Hero power if allowed
+    # Hero power (expanded targets for Mage & Priest)
     if can_use_hero_power_ai(g, pid):
-        # try a couple of common targets; your use_hero_power validates legality
-        hero = g.players[pid].hero.id.upper()
-        if hero in ("MAGE",):
-            # try face and any 1-HP enemy
+        hero = g.players[pid].hero
+        hid = hero.id.upper()
+        if hid == "MAGE":
             acts.append(('power', pid, 1 - pid, None))
             for m in _enemy_minions(g, pid):
                 if m.health <= 1:
                     acts.append(('power', pid, None, m.id))
+        elif hid == "PRIEST":
+            # Heal damaged face
+            if p.health < p.max_health:
+                acts.append(('power', pid, pid, None))
+            # Heal any damaged friendly minion
+            for m in _ally_minions(g, pid):
+                if m.health < m.max_health:
+                    acts.append(('power', pid, None, m.id))
         else:
+            # No-target powers (Hunter/Warrior/Warlock/Paladin/Druid/Rogue/Shaman)
             acts.append(('power', pid, None, None))
 
-    # End
     acts.append(('end',))
     return acts
+
 
 def simulate_apply(g: Game, action: Action) -> None:
     kind = action[0]

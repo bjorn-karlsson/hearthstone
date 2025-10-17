@@ -84,6 +84,10 @@ HERO_COLORS = {
     "PALADIN": (210, 175, 60),
     "MAGE":    (60, 120, 230),
     "HUNTER":  (35, 155, 75),
+    "SHAMAN":  (25, 105, 185),  # deep cyan/blue
+    "ROGUE":   (80, 80, 80),    # charcoal/steel
+    "PRIEST":  (230, 230, 230), # light/holy white
+    "DRUID":   (165, 110, 30),  # warm amber/bark
 }
 
 # Hide specific hand indices while an animation is flying toward them
@@ -124,8 +128,8 @@ ANIM_PLAY_MS    = 550
 ANIM_ATTACK_MS  = 420
 ANIM_RETURN_MS  = 320
 ANIM_FLASH_MS   = 220
-ANIM_DRAW_MS    = 420
-AI_THINK_MS     = 750
+ANIM_DRAW_MS    = 750
+AI_THINK_MS     = 450
 ANIM_SPELL_MS   = 420   # spell projectile travel
 ANIM_HERO_MS    = 460   # hero lift + dash
 START_GAME      = 1500
@@ -387,10 +391,13 @@ playable_decks = [
     "Classic Warrior Deck (Control)",
 ]
 
+def get_random_deck(playable_decks: list):
+    return random.choice(playable_decks)
+
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Handlock")
-ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name="Handlock")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
+ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 
 #player_deck = None
 if not player_deck:
@@ -408,8 +415,8 @@ def _pick_hero(hint, default):
     return default
 
 
-HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
-#HERO_PLAYER = hero_db.get("WARRIOR")
+#HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
+HERO_PLAYER = hero_db.get("SHAMAN")
 HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
 STARTER_DECK_PLAYER = player_deck
