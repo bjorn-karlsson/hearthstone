@@ -404,6 +404,28 @@ class Game:
             ev.append(Event("Buff", {"minion": m.id, "attack_delta": -bonus, "health_delta": 0}))
         return ev
 
+
+    def _remove_all_stat_auras(self, owner: int) -> List[Event]:
+        ev: List[Event] = []
+        for src in list(self.players[owner].board):
+            if not src.is_alive() or src.silenced:
+                continue
+            # has any stats aura?
+            has_stats = any(True for _ in self._iter_stat_auras(src))
+            if has_stats:
+                ev += self._disable_aura(src)
+        return ev
+
+    def _apply_all_stat_auras(self, owner: int) -> List[Event]:
+        ev: List[Event] = []
+        for src in list(self.players[owner].board):
+            if not src.is_alive() or src.silenced:
+                continue
+            has_stats = any(True for _ in self._iter_stat_auras(src))
+            if has_stats:
+                ev += self._enable_aura(src)
+        return ev
+
     # ---------- Aura helpers ----------
     def _aura_targets(self, owner: int, source_id: int, spec: Dict[str, Any]):
         """
@@ -1321,7 +1343,7 @@ class Game:
         for _ in range(count):
             if len(self.players[owner].board) >= 7:
                 break
-
+                
             kws = card_spec.get("keywords", []) or []
 
             m = Minion(
@@ -2415,20 +2437,22 @@ def _fx_silence(params):
         if kind != "minion":
             return []
         m = obj
+        m.silenced = True
         ev = []
         ev += g._disable_aura(m)     # remove active aura first
+        ev += g._update_enrage(m)
         m.taunt = m.charge = m.rush = m.divine_shield = False
-        m.deathrattle = None
-        m.silenced = True
-        m.cant_attack = False
-        m.health = m.base_health
-        m.attack = m.base_attack
         m.temp_stats.clear()
         m.triggers_map.clear()
+        m.deathrattle = None
+        m.cant_attack = False
+        m.health = m.health if m.health <= m.base_health else m.base_health
+        m.attack = m.base_attack
+        m.max_health = m.base_health
         
         
         ev.append(Event("Silenced", {"minion": m.id}))
-        ev += g._update_enrage(m)
+        
         return ev
     return run
 
@@ -2529,9 +2553,11 @@ def _fx_transform(params, json_db_tokens):
         if not raw:
             return []
 
+        
         # Before morphing, disable any aura the current minion provides
         ev: list[Event] = []
-        ev += g._disable_aura(m)
+        ev += g._remove_all_stat_auras(pid)
+        #ev += g._disable_aura(m)
 
         # --- Reset runtime flags that transforms typically clear
         m.silenced = False
@@ -2543,6 +2569,7 @@ def _fx_transform(params, json_db_tokens):
         # Preserve attack usage/exhaustion state for the turn (no extra attacks granted)
         # Keep: m.exhausted, m.has_attacked_this_turn, m.summoned_this_turn
 
+        
         # --- Apply token identity & base stats/keywords
         m.name            = raw.get("name", "Token")
         m.card_id         = raw.get("id", token_id)
@@ -2586,9 +2613,9 @@ def _fx_transform(params, json_db_tokens):
         m.triggers_map      = dict(raw.get("triggers_map", {}))
 
         # Re-enable any auras the *new* form provides, and refresh adjacency on this side
-        ev += g._enable_aura(m)
-        ev += g._refresh_stat_auras(pid)
-
+        #ev += g._enable_aura(m)
+        #ev += g._refresh_stat_auras(pid)
+        ev += g._apply_all_stat_auras(pid)
         # Keep Enrage accurate after stat reset
         ev += g._update_enrage(m)
 
@@ -3020,7 +3047,7 @@ def _fx_add_self_health_from_hand(params):
         amount = len(g.players[owner].hand)
         if amount <= 0:
             return []
-
+        
         before = me.health
         me.max_health += amount
         me.health += amount

@@ -194,7 +194,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    desired = [ "POLYMORPH", "IRONBEAK_OWL", "BLESSING_OF_MIGHT", "KNIFE_JUGGLER" ]
+    desired = ["GROMMASH_HELLSCREAM", "IRONBEAK_OWL", "TWILIGHT_DRAKE"]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
