@@ -6,147 +6,15 @@ from collections import deque
 import json
 from pathlib import Path
 import math
+import json
 
 
-from engine import Game, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, _has_tribe, IllegalAction
+from engine import Game, hero_name, load_cards_from_json, load_heros_from_json, load_decks_from_json, choose_loaded_deck, _has_tribe, IllegalAction
 from ai import pick_best_action
-
-# --- Debug / dev toggles ---
-SHOW_ENEMY_HAND = False
-DEBUG_BTN_RECT = None
-
-DEBUG = False
-
-pygame.init()
-# Fullscreen @ desktop resolution
-screen = pygame.display.set_mode((0, 0))
-W, H = screen.get_size()
-pygame.display.set_caption("Python Card Battler (Animated-Locked + Targets)")
-
-FONT = pygame.font.SysFont(None, 22)
-BIG  = pygame.font.SysFont(None, 26)
-RULE_FONT = pygame.font.SysFont(None, 20)  # smaller for rules text
+from consts import *
+from models import Card
 
 
-
-
-# Colors
-BG = (20, 25, 30)
-WHITE = (230, 230, 230)
-GREY = (150, 150, 150)
-GREEN = (60, 200, 90)        # ready glow
-RED   = (210, 70, 70)        # rush outline + target highlight
-BLUE  = (80, 140, 240)       # buttons
-YELLOW = (230, 200, 90)
-CARD_BG_HAND = (45, 75, 110)
-CARD_BG_MY   = (60, 100, 70)
-CARD_BG_EN   = (70, 70, 100)
-COST_BADGE   = (0, 50, 102)
-
-ATTK_COLOR   = (230, 170, 60)  # orange-yellow for attack
-HP_OK        = WHITE
-HP_HURT      = (230, 80, 80)   # red when damaged
-
-# --- Hero plate + battlefield ---
-BOARD_BG       = (26, 32, 40)   # battleground panel fill
-BOARD_BORDER   = (60, 90, 130)  # battleground border
-
-HEALTH_BADGE   = (210, 70, 70)
-ARMOR_BADGE    = (130, 130, 130)
-MANA_BADGE     = (60, 120, 230)
-PLATE_BG       = (30, 36, 46)   # hero plate background
-PLATE_RIM      = (42, 50, 60)   # hero plate outline
-
-# Hero plate sizing + crystal width
-FACE_W = 220
-FACE_H = 64
-CRYSTAL_W = 54
-CRYSTAL_PAD = 10
-
-LOG_MAX_LINES = 40
-LOG_PANEL_W   = 320
-LOG_BG        = (18, 22, 26)
-LOG_TEXT      = (215, 215, 215)
-LOG_ACCENT    = (140, 170, 255)
-
-ACTION_LOG = deque(maxlen=LOG_MAX_LINES)
-
-RARITY_COLORS = {
-    "COMMON":     (235, 235, 235),  # white
-    "RARE":       (80, 140, 240),   # blue
-    "EPIC":       (165, 95, 210),   # purple
-    "LEGENDARY":  (255, 140, 20),   # orange
-}
-
-HERO_COLORS = {
-    "WARRIOR": (185, 35, 35),
-    "WARLOCK": (115, 35, 160),
-    "PALADIN": (210, 175, 60),
-    "MAGE":    (60, 120, 230),
-    "HUNTER":  (35, 155, 75),
-    "SHAMAN":  (25, 105, 185),  # deep cyan/blue
-    "ROGUE":   (80, 80, 80),    # charcoal/steel
-    "PRIEST":  (230, 230, 230), # light/holy white
-    "DRUID":   (165, 110, 30),  # warm amber/bark
-}
-
-# Hide specific hand indices while an animation is flying toward them
-HIDDEN_HAND_INDICES_ME: set[int] = set()
-HIDDEN_HAND_INDICES_EN: set[int] = set()
-
-def _deck_source_rect_for_pid(pid: int) -> pygame.Rect:
-    """Where cards 'come from' visually."""
-    if pid == 0:
-        return pygame.Rect(W - CARD_W - 20, ROW_Y_HAND + CARD_H // 4, CARD_W, CARD_H)
-    else:
-        return pygame.Rect(W - CARD_W - 20, ROW_Y_ENEMY - 30, CARD_W, CARD_H)
-
-# Track where minions were on the previous frame (for deaths, etc.)
-LAST_MINION_RECTS: dict[int, pygame.Rect] = {}
-
-def hero_name(h) -> str:
-    if isinstance(h, str):
-        return h.capitalize()
-    if hasattr(h, "name"):
-        return h.name
-    return str(h)
-
-# Layout
-CARD_W, CARD_H = 125, 200   # bigger cards so text fits
-MARGIN = 15                 # gap between cards
-ROW_Y_ENEMY = 110              # a bit higher
-ROW_Y_ME    = 325               # a bit higher
-ROW_Y_HAND  = H - CARD_H - 30  # lock hand to bottom with padding
-
-# Hand fan/hover
-HAND_OVERLAP = 0.42      # 0..1 (how much each card overlaps the previous)
-HOVER_SCALE  = 1.35      # how big the zoom is on hover
-HOVER_LIFT   = 44        # how much it rises while hovered
-
-# Timing (ms)
-ANIM_PLAY_MS    = 550
-ANIM_ATTACK_MS  = 420
-ANIM_RETURN_MS  = 320
-ANIM_FLASH_MS   = 220
-ANIM_DRAW_MS    = 750
-AI_THINK_MS     = 450
-ANIM_SPELL_MS   = 420   # spell projectile travel
-ANIM_HERO_MS    = 460   # hero lift + dash
-START_GAME      = 1500
-
-
-KEYWORD_HELP = {
-    "Battlecry": "Triggers when played from hand (on summon).",
-    "Deathrattle": "After this dies, do its effect.",
-    "Taunt": "Enemies must attack this first.",
-    "Rush": "Can attack minions immediately.",
-    "Charge": "Can attack heroes and minions immediately.",
-    "Silence": "Remove text and keywords from a minion.",
-    "Spell Damage": "Your spells deal +N damage.",
-    "Enrage": "While damaged: gain the listed bonus.",
-    "Divine Shield": "Prevents the first damage this minion would take. The hit is fully absorbed, then the shield is removed.",
-    "Freeze": "Frozen characters can't attack during their next turn. It wears off after that turn ends.",
-}
 
 # -------- LOGGING -------------
 
@@ -172,8 +40,11 @@ def format_event(e, g, skip=False) -> str:
     k = getattr(e, "kind", "")
     p = getattr(e, "payload", {})
 
-    if DEBUG and not skip:
-        return f"{k}: {format_event(e, g, True)}"
+    if not skip:
+        if DEBUG:
+            print(f"{k}: {format_event(e, g, True)} RAW: {p}")
+        else:
+            print(f"{k}: {format_event(e, g, True)}")
 
     if k == "CardDiscarded":
         who = "You" if p.get("player") == 0 else "AI"
@@ -246,10 +117,15 @@ def format_event(e, g, skip=False) -> str:
         name = card_name_from_db(g.cards_db, cid) if cid else "a card"
         return f"{who} burned {name} (hand full)."
     if k == "CardPlayed":
+        return ""
         who = "You" if p["player"] == 0 else "AI"
         cid = p.get("card", "")
         name = card_name_from_db(g.cards_db, cid) if cid else "a card"
         return f"{who} played {name}."
+    if k == "MinionTransformed":
+        who = "You" if p["player"] == 0 else "AI"
+
+        return f"{who} transformed {p.get('old_name')} into a {p.get('new_name')}"
     if k == "MinionSummoned":
         who = "You" if p["player"] == 0 else "AI"
         return f"{who} summoned {p.get('name','a minion')}."
@@ -318,27 +194,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    # What you'd *like* to include:
-    desired = [
-        # 1-cost
-        "LEPER_GNOME", "CHARGING_BOAR", "SHIELD_BEARER", "BLESSING_OF_MIGHT", "GIVE_TAUNT", "SCRAPPY_SCAVENGER",
-        "VOODOO_DOCTOR", "TIMBER_WOLF",
-        # 2-cost
-        "RIVER_CROCOLISK", "KOBOLD_PING", "RUSHER", "NERUBIAN_EGG", "HOLY_LIGHT", "NOVICE_ENGINEER", 
-        "KOBOLD_GEOMANCER", "AMANI_BERSERKER", "ACIDIC_SWAMP_OOZE",
-        # 3-cost
-        "IRONFUR_GRIZZLY", "WOLFRIDER", "EARTHEN_RING", "HARVEST_GOLEM", "ARCANE_MISSILES",
-        "CHARGE_RUSH_2_2", "SHATTERED_SUN_CLERIC", "RAID_LEADER", "KOBOLD_BLASTER",
-        # 4-cost
-        "CHILLWIND_YETI", "FIREBALL", "BLESSING_OF_KINGS",
-        "POLYMORPH", "ARCANE_INTELLECT",
-        "SPELLBREAKER", "SHIELDMASTA", "DEFENDER_OF_ARGUS", "ARATHI_WEAPONSMITH",
-        # 5+ cost
-        "SILVER_HAND_KNIGHT", "CONSECRATION", "BOULDERFIST_OGRE", "FLAMESTRIKE", "RAISE_WISPS", "FERAL_SPIRIT",
-        "MUSTER_FOR_BATTLE", "SILENCE", "GIVE_CHARGE", "GIVE_RUSH", "LEGENDARY_LEEROY_JENKINS",
-        "STORMPIKE_COMMANDO", "CORE_HOUND", "WAR_GOLEM", "STORMWIND_CHAMPION",
-    ]
-    desired = [ "LEPER_GNOME", "SIPHON_SOUL", "FACELESS_MANIPULATOR", "MOUNTAIN_GIANT", "MOLTEN_GIANT", "LORD_JARAXXUS"] * 10
+    desired = [ "POLYMORPH", "IRONBEAK_OWL", "BLESSING_OF_MIGHT", "KNIFE_JUGGLER" ]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -351,13 +207,6 @@ def make_starter_deck(db, seed=None):
     if missing:
         print("[DeckBuilder] Missing from JSON (will be skipped):", ", ".join(missing))
 
-    # If pool too small, pad with *any* valid IDs from JSON
-    if len(pool) < 15:
-        extras = [cid for cid in valid_ids if cid not in pool]
-        rng.shuffle(extras)
-        pool.extend(extras[: max(0, 25 - len(pool))])
-
-    # Allow up to 2 copies of each, shuffle, and take 30
     dupes = [cid for cid in pool for _ in range(2)]
     rng.shuffle(dupes)
 
@@ -374,6 +223,10 @@ def make_starter_deck(db, seed=None):
 db      = load_cards_from_json("lib/cards.json")
 hero_db = load_heros_from_json("lib/heroes.json")
 
+if DEBUG:
+    for k, c in db.items():
+        if isinstance(c, Card):
+            c.cost = 0
 # Try to load preconfigured decks
 try:
     loaded_decks = load_decks_from_json("lib/decks.json", db)
@@ -399,7 +252,8 @@ def get_random_deck(playable_decks: list):
 player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 
-#player_deck = None
+if DEBUG:
+    player_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -415,8 +269,8 @@ def _pick_hero(hint, default):
     return default
 
 
-#HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
-HERO_PLAYER = hero_db.get("SHAMAN")
+HERO_PLAYER = _pick_hero(player_hero_hint, random.choice(list(hero_db.values())))
+#HERO_PLAYER = hero_db.get("SHAMAN")
 HERO_AI     = _pick_hero(ai_hero_hint,     random.choice(list(hero_db.values())))
 
 STARTER_DECK_PLAYER = player_deck
@@ -429,11 +283,7 @@ for name, d in loaded_decks.items():
         for msg in d["errors"]:
             print("  -", msg)
 
-#HERO_PLAYER = select_random_hero(hero_db)
-#HERO_AI     = select_random_hero(hero_db)
 
-#STARTER_DECK_PLAYER = make_starter_deck(db, random.randint(1, 5000000))
-#STARTER_DECK_AI     = make_starter_deck(db, random.randint(1, 50000))
 
 
 # ---------- Drawing helpers (reworked cards) ----------
@@ -683,7 +533,6 @@ def _active_secret_ids(pstate) -> list[str]:
         pass
 
     return ids
-
 
 def _badge_rect_from_center(cx: int, cy: int, r: int = 14) -> pygame.Rect:
     d = r * 2
@@ -1031,7 +880,14 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         draw_silence_overlay(r, surface=surface)
     if getattr(minion_obj, "frozen", False):
         draw_frozen_overlay(r, surface=surface)
-LAST_HAND_COUNT = {0: 0, 1: 0}
+
+
+def _deck_source_rect_for_pid(pid: int) -> pygame.Rect:
+    """Where cards 'come from' visually."""
+    if pid == 0:
+        return pygame.Rect(W - CARD_W - 20, ROW_Y_HAND + CARD_H // 4, CARD_W, CARD_H)
+    else:
+        return pygame.Rect(W - CARD_W - 20, ROW_Y_ENEMY - 30, CARD_W, CARD_H)
 def _retro_animate_missing_draws(g: Game, ev_list):
     """
     If the hand grew but we saw fewer CardDrawn events than the growth,
