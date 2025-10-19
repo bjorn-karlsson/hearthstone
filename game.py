@@ -1,6 +1,6 @@
 import pygame
 import sys
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Callable, Optional, Tuple, List, Dict, Any
 import random
 from collections import deque
 import json
@@ -194,7 +194,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    desired = ["GROMMASH_HELLSCREAM", "IRONBEAK_OWL", "TWILIGHT_DRAKE"]
+    desired = ["ARCANE_INTELLECT"]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -254,6 +254,7 @@ ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=
 
 if DEBUG:
     player_deck = None
+    ai_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -614,6 +615,7 @@ def card_is_non_target_cast(g: Game, pid: int, cid: str) -> bool:
     return False
 
 
+
 # ----------- FILTERS and Exists
 def _exists_minion_attack_7plus(g: Game, pid: int) -> bool:
     return any(m.is_alive() and m.attack >= 7 for m in g.players[0].board) \
@@ -639,6 +641,14 @@ def _exists_any_demon_minion(g: Game, pid: int) -> bool:
                 return True
     return False
 
+def _exists_enemy_minion_attack_leq3(g, pid: int) -> bool:
+    opp = 1 - pid
+    return any(m.is_alive() and m.attack <= 3 for m in g.players[opp].board)
+
+def _exists_enemy_minion_attack_geq5(g, pid: int) -> bool:
+    opp = 1 - pid
+    return any(m.is_alive() and m.attack >= 5 for m in g.players[opp].board)
+
 def _filter_damaged_enemy_minions(g, pid: int, m) -> bool:
     # Only allow enemy + damaged
     return (m.owner != pid) and m.is_alive() and (m.health < m.max_health)
@@ -662,10 +672,17 @@ def _filter_any_minions(g: Game, pid: int, m) -> set[int]:
     s |= {m.id for m in g.players[1].board if m.is_alive()}
     return s
 
+
 def _filter_minions_attack_7plus(g: Game, pid: int, m) -> set[int]:
     ids = {m.id for m in g.players[0].board if m.is_alive() and m.attack >= 7}
     ids |= {m.id for m in g.players[1].board if m.is_alive() and m.attack >= 7}
     return ids
+
+def _filter_enemy_attack_leq3(g, pid: int, m) -> bool:
+    return (m.owner != pid) and m.is_alive() and (m.attack <= 3)
+
+def _filter_enemy_attack_geq5(g, pid: int, m) -> bool:
+    return (m.owner != pid) and m.is_alive() and (m.attack >= 5)
 
 # Registry: simple, extend as needed
 PLAY_REQUIREMENTS: dict[str, callable] = {
@@ -673,14 +690,21 @@ PLAY_REQUIREMENTS: dict[str, callable] = {
     "SHIELD_SLAM": _exists_armor_for_shield_slam,
     "SACRIFICIAL_PACT" : _exists_any_demon_minion,
     "SHADOWFLAME": _exists_friendly_minion,
+
+    "SHADOW_WORD_PAIN":  _exists_enemy_minion_attack_leq3,
+    "SHADOW_WORD_DEATH": _exists_enemy_minion_attack_geq5,
     #"BIG_GAME_HUNTER": _exists_minion_attack_7plus
 }
 
 TARGET_FILTERS: dict[str, callable] = {
-    "EXECUTE": _filter_damaged_enemy_minions,
+    "EXECUTE": _filter_damaged_enemy_minions,   
     "SACRIFICIAL_PACT": _filter_any_demon_minions,
     "SHADOWFLAME" : _filter_friendly_minions,
-    "BIG_GAME_HUNTER": _filter_minions_attack_7plus
+    "SHADOW_WORD_PAIN":  _filter_enemy_attack_leq3,
+    "SHADOW_WORD_DEATH": _filter_enemy_attack_geq5,
+
+    "BIG_GAME_HUNTER": _filter_minions_attack_7plus,
+    
 }
 
 # --- helpers -
@@ -952,6 +976,37 @@ def draw_layered_borders(r: pygame.Rect, *, taunt: bool, rush: bool, ready: bool
     if rush:  pygame.draw.rect(screen, RED,  r.inflate(4, 4), 3, border_radius=12)
     if ready: pygame.draw.rect(screen, GREEN,r.inflate(10,10), 3, border_radius=16)
 
+def _board_right_showcase_rect(who: int) -> pygame.Rect:
+    """
+    A neutral reveal spot on the board's right edge.
+    Y is aligned to the corresponding player's row so it's obvious who burned it.
+    """
+    arena = battle_area_rect()
+    x = arena.right - CARD_W - 16
+    y = (ROW_Y_HAND if who == 0 else (ROW_Y_ENEMY - 30))
+    return pygame.Rect(x, y, CARD_W, CARD_H)
+
+def _animate_hand_card_play(i: int, cid: str, src_rect: pygame.Rect, dst_rect: pygame.Rect,
+                            pid: int, label: str, on_finish: Callable | None):
+    """
+    Hide the hand slot (so the card doesn't appear twice), fly it out, then unhide and run on_finish.
+    """
+    hide_set = HIDDEN_HAND_INDICES_ME if pid == 0 else HIDDEN_HAND_INDICES_EN
+    hide_set.add(i)
+
+    def _cleanup_and_finish():
+        # unhide regardless of success/failure
+        try:
+            hide_set.remove(i)
+        except KeyError:
+            pass
+        if on_finish:
+            on_finish()
+
+    push_play_move_anim(src_rect, dst_rect, cid, pid=pid, label=label)
+    # redirect the animation's on_finish to our wrapper
+    ANIMS.blocking[-1].on_finish = _cleanup_and_finish
+
 
 def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
     """
@@ -963,6 +1018,14 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
         return
 
     post = layout_board(g)  # for rectangles that exist after the event
+
+
+    # --- NEW: compute per-player draw windows for this batch ---
+    total_draws = {0: 0, 1: 0}
+    seen_draws  = {0: 0, 1: 0}
+    for e in ev_list:
+        if getattr(e, "kind", "") == "CardDrawn":
+            total_draws[e.payload.get("player", 0)] += 1
 
     # Useful targets
     arena = battle_area_rect()
@@ -998,67 +1061,45 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
                 ANIMS.push(AnimStep("fade_rect", 420, {"rect": r, "non_blocking": True, "layer": 1}))
         elif k == "CardDrawn":
             who = p.get("player", 0)
-            post = layout_board(g)
 
-            # where the deck will be: right edge, near the appropriate row
-            if who == 0:
-                src_y = ROW_Y_HAND + CARD_H // 4
-                src_rect = pygame.Rect(W - CARD_W - 20, src_y, CARD_W, CARD_H)
+            # --- NEW: compute the exact slot this draw should land in ---
+            # final hand size already includes all draws; back up by remaining
+            final_size = len(g.players[who].hand)
+            base = final_size - total_draws[who]        # index of the first new card
+            dst_idx = base + seen_draws[who]           # index for THIS draw
+            seen_draws[who] += 1
 
-                # find the *actual* destination slot index = last card in that player's hand
-                last_idx = max(0, len(g.players[who].hand) - 1)
+            # Build/lookup source & destination rects
+            src_rect = _deck_source_rect_for_pid(who)
 
-                # look up the rect for that index
-                dst = None
-                maybe_cid = None
-                for i, cid, r in post["hand"]:
-                    if i == last_idx:
-                        dst = r
-                        maybe_cid = cid
-                        break
-                if dst is None:
-                    # Fallback if we somehow don't have a hand slot yet
-                    dst = pygame.Rect(W//2, ROW_Y_HAND, CARD_W, CARD_H)
+            # Destination: real slot for me; virtual top row for enemy
+            dst = _hand_slot_rect_for(who, dst_idx, g)
+            if dst is None:
+                # Fallback so we don’t crash if layout changed mid-frame
+                dst = pygame.Rect((W - CARD_W)//2, ROW_Y_HAND if who == 0 else ROW_Y_ENEMY - 30, CARD_W, CARD_H)
 
-                # --- NEW: hide that hand slot until the animation completes ---
-                hide_set = HIDDEN_HAND_INDICES_ME if who == 0 else HIDDEN_HAND_INDICES_EN
-                hide_set.add(last_idx)
+            # Hide that hand slot until animation completes
+            hide_set = HIDDEN_HAND_INDICES_ME if who == 0 else HIDDEN_HAND_INDICES_EN
+            hide_set.add(dst_idx)
+            def _unhide(i=dst_idx, hs=hide_set):
+                try: hs.remove(i)
+                except KeyError: pass
 
-                def _unhide(i=last_idx, hs=hide_set):
-                    try: hs.remove(i)
-                    except KeyError: pass
-
-                # Animate: show the actual card as it flies in
-                data = {
+            # Show the actual card for the player; back-of-card for enemy
+            maybe_cid = g.players[who].hand[dst_idx] if (who == 0 and 0 <= dst_idx < len(g.players[who].hand)) else None
+            ANIMS.push(AnimStep(
+                "play_move",
+                ANIM_DRAW_MS,
+                {
                     "src": src_rect,
                     "dst": dst,
-                    "pid": 0,
+                    "pid": who,
                     "cid": maybe_cid,
-                    "color": CARD_BG_HAND,
+                    "color": CARD_BG_HAND if who == 0 else CARD_BG_EN,
                     "ease": "quart",
-                }
-                ANIMS.push(AnimStep("play_move", ANIM_DRAW_MS, data, on_finish=_unhide))
-
-            else:
-                # Enemy: use a generic back moving toward their hand area (top)
-                src_y = ROW_Y_ENEMY - 30
-                src_rect = pygame.Rect(W - CARD_W - 20, src_y, CARD_W, CARD_H)
-
-                # (Optional) keep symmetry: hide their last slot in case you enable enemy-hand UI
-                last_idx = max(0, len(g.players[who].hand) - 1)
-                HIDDEN_HAND_INDICES_EN.add(last_idx)
-                def _unhide_en(i=last_idx):
-                    try: HIDDEN_HAND_INDICES_EN.remove(i)
-                    except KeyError: pass
-
-                dst = pygame.Rect(W - (CARD_W + 40), ROW_Y_ENEMY - 30, CARD_W, CARD_H)
-
-                ANIMS.push(AnimStep(
-                    "play_move",
-                    ANIM_DRAW_MS,
-                    {"src": src_rect, "dst": dst, "pid": 1, "color": CARD_BG_EN, "ease": "quart"},
-                    on_finish=_unhide_en
-                ))
+                },
+                on_finish=_unhide
+            ))
 
         
         elif k == "CardDiscarded":
@@ -1072,10 +1113,46 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
 
         elif k == "CardBurned":
             who = p.get("player", 0)
-            y = ROW_Y_HAND if who == 0 else ROW_Y_ENEMY - 30
-            x = (W//2) + 120
-            src = pygame.Rect(x - CARD_W//2, y, CARD_W, CARD_H)
-            ANIMS.push(AnimStep("to_abyss", 520, {"src": src, "dst": abyss_pt, "non_blocking": True}))
+
+            # 1) Source: the deck on that side
+            src_rect = _deck_source_rect_for_pid(who)
+
+            # 2) Destination: board-right reveal spot
+            dst_rect = _board_right_showcase_rect(who)
+
+            # 3) Burned card id – show the ACTUAL card face (both sides)
+            burned_cid = p.get("card") or p.get("card_id") or p.get("cid")
+            if burned_cid is not None:
+                burned_cid = str(burned_cid)
+
+            # Fly deck → board-right, then ignite there
+            def _ignite_at_dst(dst=dst_rect, cid=burned_cid, pid=who):
+                ANIMS.push(AnimStep(
+                    "burn_card",
+                    900,  # total burn time; tweak to taste
+                    {
+                        "rect": dst.copy(),
+                        "cid": cid,   # draw real face
+                        "pid": pid,   # for eff. cost coloring if needed
+                        "non_blocking": True,
+                        "layer": 1
+                    }
+                ))
+
+            ANIMS.push(AnimStep(
+                "play_move",
+                ANIM_DRAW_MS,
+                {
+                    "src": src_rect,
+                    "dst": dst_rect,
+                    "pid": who,
+                    "cid": burned_cid,  # show the real card while flying in
+                    "color": CARD_BG_HAND if who == 0 else CARD_BG_EN,
+                    "ease": "quart",
+                },
+                on_finish=_ignite_at_dst
+            ))
+
 
         elif k == "MinionSummoned":
             mid = p.get("minion")
@@ -1881,6 +1958,82 @@ class AnimQueue:
         # Ambient effects don't lock input (feels snappier).
         return len(self.blocking) > 0
 
+    def _draw_burn_card(self, step: AnimStep):
+        """
+        Show the card face at a fixed rect, then burn it away:
+        - brief glow-in
+        - subtle jitter/tilt
+        - ember/smoke fade out
+        - shrink & alpha to 0
+        """
+        rect: pygame.Rect = step.data["rect"]
+        cid = step.data.get("cid")
+        pid = int(step.data.get("pid", 0))
+        t = step.raw_progress()  # 0..1 linear works well for burn timing
+
+        # Lazy-build a cached face surface once (so the look stays stable)
+        if "face_surf" not in step.data or step.data["face_surf"] is None:
+            base = pygame.Surface((CARD_W, CARD_H), pygame.SRCALPHA)
+            try:
+                cobj = GLOBAL_GAME.cards_db.get(cid)
+                eff = None
+                try:
+                    eff = GLOBAL_GAME.get_effective_cost(pid, cid) if cid else None
+                except Exception:
+                    eff = getattr(cobj, "cost", 0) if cobj else 0
+                draw_card_frame(
+                    pygame.Rect(0, 0, CARD_W, CARD_H),
+                    CARD_BG_HAND if pid == 0 else CARD_BG_EN,
+                    card_obj=cobj,
+                    in_hand=True,
+                    override_cost=eff,
+                    surface=base,
+                )
+            except Exception:
+                pygame.draw.rect(base, (220, 120, 90), base.get_rect(), border_radius=12)
+            step.data["face_surf"] = base
+
+        surf = step.data["face_surf"]
+
+        # Effects over time
+        # Fade/scale
+        alpha = int(255 * (1.0 - t))
+        scale = 1.0 - 0.15 * t
+
+        # Jitter/tilt (tiny, for heat shimmer)
+        jitter_x = int(2 * math.sin(10 * t * math.pi))
+        jitter_y = int(1 * math.sin(13 * t * math.pi))
+        tilt_deg = 4.0 * math.sin(2 * math.pi * t)
+
+        # Glow halo early, smoke late
+        # Glow strength peaks ~t=0.2 then fades
+        glow_strength = max(0.0, 1.0 - abs((t - 0.2) / 0.2))
+        if glow_strength > 0.01:
+            rad = int(max(rect.w, rect.h) * (0.6 + 0.1 * glow_strength))
+            halo = pygame.Surface((rad*2, rad*2), pygame.SRCALPHA)
+            pygame.draw.circle(halo, (255, 180, 60, int(160 * glow_strength)), (rad, rad), rad)
+            screen.blit(halo, (rect.centerx - rad, rect.centery - rad))
+
+        # Smoke wisps near the end
+        if t > 0.45:
+            wisp_alpha = int(140 * (t - 0.45) / 0.55)
+            for i in range(3):
+                ox = int((i - 1) * 12 + 6 * math.sin((t*3 + i) * 3.1))
+                oy = int(-24 - 18 * i - 26 * (t - 0.45) * (1 + i * 0.3))
+                r = pygame.Rect(0, 0, 22, 10)
+                r.center = (rect.centerx + ox, rect.centery + oy)
+                s = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+                pygame.draw.ellipse(s, (80, 80, 80, max(0, 180 - wisp_alpha)), s.get_rect())
+                screen.blit(s, r)
+
+        # Render face with scale/tilt/alpha
+        w, h = int(surf.get_width() * scale), int(surf.get_height() * scale)
+        face = pygame.transform.rotozoom(surf, tilt_deg, scale)
+        face.set_alpha(alpha)
+        rr = face.get_rect(center=(rect.centerx + jitter_x, rect.centery + jitter_y))
+        screen.blit(face, rr.topleft)
+
+
     def _draw_impact_hold(self, step: AnimStep):
         # Draw a provided sprite at a fixed center with a little scale pop
         sprite = step.data.get("sprite")
@@ -1901,10 +2054,23 @@ class AnimQueue:
 
     def peek_hidden_ids(self) -> set:
         hidden = set()
+
+        # Keep existing special case: hide the freshly spawned minion during play-in
         if self.blocking:
             step = self.blocking[0]
             if step.kind == "play_move" and step.data.get("spawn_mid"):
                 hidden.add(step.data["spawn_mid"])
+            # NEW: honor generic hide_id for any blocking step (hero/minion attacks etc.)
+            hid = step.data.get("hide_id")
+            if hid is not None:
+                hidden.add(hid)
+
+        # NEW: honor hide_id on ambient steps too (if any)
+        for s in self.ambient:
+            hid = s.data.get("hide_id")
+            if hid is not None:
+                hidden.add(hid)
+
         return hidden
 
     def _draw_summon_materialize(self, step: AnimStep):
@@ -2170,6 +2336,7 @@ class AnimQueue:
             elif k == "banner":        self._draw_banner(step)
             elif k == "hero_attack":   self._draw_hero_attack(step)
             elif k == "summon_materialize": self._draw_summon_materialize(step)
+            elif k == "burn_card":    self._draw_burn_card(step)
             # finish?
             if step.done():
                 self.blocking.pop(0)
@@ -2196,6 +2363,7 @@ class AnimQueue:
                 elif k == "attack_dash": self._draw_attack_dash(s)
                 elif k == "play_move":   self._draw_play_move(s)
                 elif k == "summon_materialize": self._draw_summon_materialize(s)
+                elif k == "burn_card":    self._draw_burn_card(s)
                 if s.done():
                     to_remove.append(s)
                     if s.on_finish:
@@ -2308,7 +2476,8 @@ def enqueue_attack_anim(hot, attacker_mid: int, target_rect: pygame.Rect, enemy:
                         "dst": back_dst,
                         "color": CARD_BG_EN if enemy else CARD_BG_MY,
                         "sprite": sprite,
-                        "base_size": (src.w, src.h)
+                        "base_size": (src.w, src.h),
+                        "hide_id": attacker_mid,
                     }
                 ))
 
@@ -2320,7 +2489,8 @@ def enqueue_attack_anim(hot, attacker_mid: int, target_rect: pygame.Rect, enemy:
             "dst": target_rect,
             "color": CARD_BG_EN if enemy else CARD_BG_MY,
             "sprite": sprite,  # <-- forward leg uses snapshot too
-            "base_size": (src.w, src.h)
+            "base_size": (src.w, src.h),
+            "hide_id": attacker_mid,
         },
         on_finish=after_forward
     ))
@@ -3200,8 +3370,7 @@ def main():
                                 except IllegalAction:
                                     pass
                             
-                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                            ANIMS.blocking[-1].on_finish = on_finish
+                            _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
 
                         # enemy face?
                         if enemy_face_ok and enemy_face_rect(hot).collidepoint(mx, my):
@@ -3302,8 +3471,7 @@ def main():
                                     #enqueue_flash(enemy_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                            ANIMS.blocking[-1].on_finish = on_finish
+                            _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                             waiting_target_for_play = None
                             selected_attacker = None     # <-- add
                             selected_hero = False        # <-- add
@@ -3324,8 +3492,7 @@ def main():
                                     #enqueue_flash(my_face_rect(layout_board(g)))
                                 except IllegalAction: pass
                             dst = pygame.Rect(W - (CARD_W + MARGIN), ROW_Y_ME, CARD_W, CARD_H)
-                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                            ANIMS.blocking[-1].on_finish = on_finish
+                            _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                             waiting_target_for_play = None
                             selected_attacker = None     # <-- add
                             selected_hero = False        # <-- add
@@ -3346,8 +3513,8 @@ def main():
                                         #enqueue_flash(r)
                                     except IllegalAction: pass
 
-                                push_play_move_anim(src_rect, r, cid, pid=0, label=db[cid].name)
-                                ANIMS.blocking[-1].on_finish = on_finish
+                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
+
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
@@ -3366,8 +3533,8 @@ def main():
                                         animate_from_events(g, ev)
                                         #enqueue_flash(r)
                                     except IllegalAction: pass
-                                push_play_move_anim(src_rect, r, cid, pid=0, label=db[cid].name)
-                                ANIMS.blocking[-1].on_finish = on_finish
+                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
+
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
                                 hilite_enemy_face = False; hilite_my_face = False
@@ -3607,8 +3774,7 @@ def main():
                                     except IllegalAction:
                                         pass
 
-                                push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                                ANIMS.blocking[-1].on_finish = on_finish
+                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                                 hover_slot_index = None
                                 continue
                             else:
@@ -3637,8 +3803,7 @@ def main():
                                         except IllegalAction:
                                             pass
 
-                                    push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                                    ANIMS.blocking[-1].on_finish = on_finish
+                                    _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                                     hover_slot_index = None
                                     continue
 
@@ -3665,8 +3830,7 @@ def main():
                                     except IllegalAction:
                                         pass
 
-                                push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                                ANIMS.blocking[-1].on_finish = on_finish
+                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                             else:
                                 # dropped outside the board → cancel (do nothing)
                                 pass
@@ -3699,8 +3863,7 @@ def main():
                                 except IllegalAction:
                                     pass
 
-                            push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                            ANIMS.blocking[-1].on_finish = on_finish
+                            _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                             selected_attacker = None    # <-- add
                             selected_hero = False       # <-- add
                             hover_slot_index = None
@@ -3731,8 +3894,7 @@ def main():
                                     except IllegalAction:
                                         pass
 
-                                push_play_move_anim(src_rect, dst, cid, pid=0, label=db[cid].name)
-                                ANIMS.blocking[-1].on_finish = on_finish
+                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
                                 selected_attacker = None    # <-- add
                                 selected_hero = False       # <-- add
                                 hover_slot_index = None

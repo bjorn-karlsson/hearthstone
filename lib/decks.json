@@ -158,6 +158,27 @@
                 "RAGNAROS_THE_FIRELORD": 1,
                 "CROWD_FAVORITE": 2
             }
+        },
+        {
+            "name": "Classic Priest Deck (Control / Value)",
+            "hero": "PRIEST",
+            "cards": {
+                "NORTHSHIRE_CLERIC": 2,
+                "POWER_WORD_SHIELD": 2,
+                "SHADOW_WORD_PAIN": 2,
+                "SHADOW_WORD_DEATH": 2,
+                "DIVINE_SPIRIT": 2,
+                "HOLY_SMITE": 2,
+                "ACOLYTE_OF_PAIN": 2,
+                "DARK_CULTIST": 2,
+                "SHATTERED_SUN_CLERIC": 2,
+                "CHILLWIND_YETI": 2,
+                "HOLY_NOVA": 2,
+                "MIND_CONTROL": 2,
+                "HOLY_FIRE": 2,
+                "SENJIN_SHIELDMASTA": 2,
+                "STORMWIND_CHAMPION": 2
+            }
         }
     ]
 }

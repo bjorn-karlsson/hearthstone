@@ -594,7 +594,7 @@
                     "keyword": "Taunt"
                 }
             ],
-            "targeting": "friendly_minion"
+            "targeting": "any_minion"
         },
         {
             "id": "SHATTERED_SUN_CLERIC",
@@ -959,7 +959,7 @@
                     "keyword": "Charge"
                 }
             ],
-            "targeting": "friendly_minion"
+            "targeting": "any_minion"
         },
         {
             "id": "GIVE_RUSH",
@@ -974,7 +974,7 @@
                     "keyword": "Rush"
                 }
             ],
-            "targeting": "friendly_minion"
+            "targeting": "any_minion"
         },
         {
             "id": "THE_COIN",
@@ -1394,6 +1394,68 @@
                 }
             ],
             "targeting": "none"
+        },
+        {
+            "id": "DARK_CULTIST",
+            "name": "Dark Cultist",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "None",
+            "cost": 3,
+            "attack": 3,
+            "health": 4,
+            "keywords": [
+                "Deathrattle"
+            ],
+            "text": "Deathrattle: Give a random friendly minion +3 Health",
+            "deathrattle": [
+                {
+                    "effect": "random_add_stat",
+                    "health": 3,
+                    "target": "friendly_minions"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "SHADOW_WORD_PAIN",
+            "name": "Shadow Word: Pain",
+            "type": "SPELL",
+            "cost": 2,
+            "text": "Destroy a minion with 3 or less Attack.",
+            "targeting": "enemy_minion",
+            "on_cast": [
+                {
+                    "effect": "if_target_attack_at_most",
+                    "amount": 3,
+                    "then": [
+                        {
+                            "effect": "destroy",
+                            "reason": "ShadowWordPain"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "SHADOW_WORD_DEATH",
+            "name": "Shadow Word: Death",
+            "type": "SPELL",
+            "cost": 3,
+            "text": "Destroy a minion with 5 or more Attack.",
+            "targeting": "enemy_minion",
+            "on_cast": [
+                {
+                    "effect": "if_target_attack_at_least",
+                    "amount": 5,
+                    "then": [
+                        {
+                            "effect": "destroy",
+                            "reason": "ShadowWordDeath"
+                        }
+                    ]
+                }
+            ]
         },
         {
             "id": "BIG_GAME_HUNTER",
@@ -1927,6 +1989,29 @@
             "targeting": "none"
         },
         {
+            "id": "NORTHSHIRE_CLERIC",
+            "name": "Northshire Cleric",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 3,
+            "rarity": "Common",
+            "text": "Whenever a minion is healed, draw a card.",
+            "triggers": [
+                {
+                    "on": "minion_healed",
+                    "effects": [
+                        {
+                            "effect": "draw",
+                            "count": 1,
+                            "owner": "source_owner"
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "HAMMER_OF_WRATH",
             "name": "Hammer of Wrath",
             "type": "SPELL",
@@ -1944,6 +2029,47 @@
                 }
             ],
             "targeting": "enemy_character"
+        },
+        {
+            "id": "HOLY_FIRE",
+            "name": "Holy Fire",
+            "type": "SPELL",
+            "rarity": "Rare",
+            "cost": 6,
+            "text": "Deal 5 damage. Restore 5 Health to your hero.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 5
+                },
+                {
+                    "effect": "heal",
+                    "amount": 5,
+                    "target": "friendly_face"
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
+            "id": "HOLY_NOVA",
+            "name": "Holy Nova",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 3,
+            "text": "Deal 2 damage to all enemy minions. Restore 2 Health to all friendly characters.",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage",
+                    "amount": 2,
+                    "target": "enemy"
+                },
+                {
+                    "effect": "aoe_heal",
+                    "amount": 2,
+                    "target": "friendly"
+                }
+            ],
+            "targeting": "none"
         },
         {
             "id": "ARGENT_PROTECTOR",
@@ -2068,6 +2194,21 @@
             ]
         },
         {
+            "id": "DIVINE_SPIRIT",
+            "name": "Divine Spirit",
+            "type": "SPELL",
+            "cost": 2,
+            "rarity": "Common",
+            "text": "Double a minion's Health.",
+            "targeting": "any_minion",
+            "on_cast": [
+                {
+                    "effect": "multiply_health",
+                    "factor": 2
+                }
+            ]
+        },
+        {
             "id": "SOULFIRE",
             "name": "Soulfire",
             "type": "SPELL",
@@ -2082,6 +2223,21 @@
                 {
                     "effect": "discard_random",
                     "count": 1
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
+            "id": "HOLY_SMITE",
+            "name": "Holy Smite",
+            "type": "SPELL",
+            "rarity": "Common",
+            "cost": 1,
+            "text": "Deal 2 damage.",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 2
                 }
             ],
             "targeting": "any_character"
@@ -2190,7 +2346,26 @@
                     "amount": 3
                 }
             ],
-            "targeting": "friendly_minion"
+            "targeting": "any_minion"
+        },
+        {
+            "id": "POWER_WORD_SHIELD",
+            "name": "Power Word Shield",
+            "rarity": "Common",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Give a minion +2 Health. Draw a card.",
+            "on_cast": [
+                {
+                    "effect": "add_stats",
+                    "health": 2
+                },
+                {
+                    "effect": "draw",
+                    "count": 1
+                }
+            ],
+            "targeting": "any_minion"
         },
         {
             "id": "BLESSING_OF_KINGS",
@@ -2206,7 +2381,7 @@
                     "health": 4
                 }
             ],
-            "targeting": "friendly_minion"
+            "targeting": "any_minion"
         },
         {
             "id": "SILENCE",

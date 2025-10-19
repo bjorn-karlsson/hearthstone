@@ -1204,6 +1204,25 @@ class Game:
             ev += fn(self, src, context)
         return ev
 
+    def _fire_minion_healed(self, healed_minion_owner: int, minion_id: int, amount: int, source: str) -> List[Event]:
+        """
+        Notify ALL minions on BOTH sides that some minion was healed.
+        Context includes the healed minion id, how much, and the source name.
+        """
+        ev: List[Event] = []
+        for pid in (0, 1):
+            for m in list(self.players[pid].board):
+                if m.silenced:
+                    continue
+                runs = m.triggers_map.get("minion_healed", [])
+                if not runs:
+                    continue
+                src = SimpleNamespace(owner=m.owner, name=m.name, id=m.id)
+                ctx = {"minion": minion_id, "amount": amount, "source": source, "owner": healed_minion_owner}
+                for run in runs:
+                    ev += run(self, src, ctx)
+        return ev
+
     def _fire_friendly_minion_damaged(self, owner: int, damaged_minion_id: int, amount: int, source: str) -> List[Event]:
         """
         Notify all minions on OWNER's board (including the damaged one) that a friendly
@@ -2034,11 +2053,15 @@ def _fx_heal(params):
             ev = []
             before = obj.health
             obj.health = min(obj.max_health, obj.health + n)
-            ev.append(Event("MinionHealed", {
-                "minion": obj.id,
-                "amount": obj.health - before,
-                "source": name
-            }))
+            healed = obj.health - before
+            if healed > 0:
+                ev.append(Event("MinionHealed", {
+                    "minion": obj.id,
+                    "amount": healed,
+                    "source": name
+                }))
+                ev += g._fire_minion_healed(obj.owner, obj.id, healed, name)
+
             ev += g._update_enrage(obj)
             return ev
         if kind == "player":
@@ -2202,34 +2225,228 @@ def _fx_random_pings(params):
         return ev
     return run
 
+
+# ---------- Random target helpers ----------
+
+def _build_random_target_pool(g:'Game', owner:int, scope:str, *, only_injured:bool=False):
+    """
+    Returns a list of ("player", pid) and ("minion", mid) pairs according to scope.
+    Supported scopes (case-insensitive):
+      - "enemy_characters"  (default for damage)
+      - "friendly_characters"
+      - "all_characters"
+      - "enemy_minions"
+      - "friendly_minions"
+      - "all_minions"
+      - "enemy_face" / "friendly_face"
+    When only_injured=True, players/minions that are at full health are excluded.
+    """
+    s = (scope or "").lower().strip()
+    opp = g.other(owner)
+
+    def _maybe_add_player(pid, out):
+        if only_injured:
+            p = g.players[pid]
+            if p.health >= p.max_health:
+                return
+        out.append(("player", pid))
+
+    def _maybe_add_minions(pid, out):
+        for m in list(g.players[pid].board):
+            if not m.is_alive():
+                continue
+            if only_injured and m.health >= m.max_health:
+                continue
+            out.append(("minion", m.id))
+
+    pool = []
+
+    if s in ("", "enemy_characters", "enemy_character"):
+        _maybe_add_player(opp, pool)
+        _maybe_add_minions(opp, pool)
+        return pool
+
+    if s in ("friendly_characters","friendly_character"):
+        _maybe_add_player(owner, pool)
+        _maybe_add_minions(owner, pool)
+        return pool
+
+    if s in ("all_characters","both_characters","all"):
+        _maybe_add_player(owner, pool)
+        _maybe_add_player(opp, pool)
+        _maybe_add_minions(owner, pool)
+        _maybe_add_minions(opp, pool)
+        return pool
+
+    if s in ("enemy_minions","enemies","enemy"):
+        _maybe_add_minions(opp, pool); return pool
+    if s in ("friendly_minions","friendlies","friendly"):
+        _maybe_add_minions(owner, pool); return pool
+    if s in ("all_minions","both_minions"):
+        _maybe_add_minions(owner, pool); _maybe_add_minions(opp, pool); return pool
+
+    if s in ("enemy_face","enemy_hero","opponent_face"):
+        _maybe_add_player(opp, pool); return pool
+    if s in ("friendly_face","friendly_hero","self_face"):
+        _maybe_add_player(owner, pool); return pool
+
+    # Fallback to enemy characters
+    _maybe_add_player(opp, pool)
+    _maybe_add_minions(opp, pool)
+    return pool
+
 def _fx_random_enemy_damage(params):
+    """
+    Deal N damage to a single random target chosen from a scope.
+    JSON:
+      { "effect":"random_enemy_damage", "amount":3, "target":"enemy_characters" }
+    target (optional): see _build_random_target_pool docs. Default: "enemy_characters".
+    Spell Damage applies to the damage amount (not the selection).
+    """
     n = int(params.get("amount", 1))
+    scope = str(params.get("target", "enemy_characters"))
 
     def run(g, source_obj, target):
         name  = getattr(source_obj, "name", "Effect")
         owner = getattr(source_obj, "owner", g.active_player)
-        opp   = g.other(owner)
+        dmg   = _with_spell_bonus(n, g, owner, source_obj)
 
-        # pool = enemy face + all living enemy minions
-        pool: list[tuple[str, int]] = [("player", opp)]
-        pool += [("minion", m.id) for m in g.players[opp].board if m.is_alive()]
+        pool = _build_random_target_pool(g, owner, scope, only_injured=False)
         if not pool:
             return []
 
         kind, val = g.rng.choice(pool)
         ev: List[Event] = []
         if kind == "player":
-            ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": opp}))
-            ev += g.deal_damage_to_player(opp, n, source=name)
+            pid = val
+            ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": pid}))
+            ev += g.deal_damage_to_player(pid, dmg, source=name)
         else:
             loc = g.find_minion(val)
             if loc:
                 _, _, mm = loc
                 ev.append(Event("SpellHit", {"source": name, "target_type": "minion", "minion": mm.id, "player": mm.owner}))
-                ev += g.deal_damage_to_minion(mm, n, source=name)
+                ev += g.deal_damage_to_minion(mm, dmg, source=name)
         g.history += ev
         return ev
     return run
+
+def _fx_random_heal(params):
+    """
+    Restore N Health to a single random *injured* target from a scope.
+    JSON:
+      { "effect":"random_heal", "amount":2, "target":"friendly_characters" }
+    target: same values as damage variant. Default: "friendly_characters".
+    Notes:
+      - Only selects injured characters/minions (otherwise does nothing).
+      - Fires MinionHealed/PlayerHealed events. If your engine has
+        g._fire_minion_healed(owner, minion_id, amount, source) it will be called.
+    """
+    n = int(params.get("amount", 1))
+    scope = str(params.get("target", "friendly_characters"))
+
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        pool = _build_random_target_pool(g, owner, scope, only_injured=True)
+        if not pool:
+            return []
+
+        kind, val = g.rng.choice(pool)
+        ev: List[Event] = []
+
+        if kind == "player":
+            pid = val
+            p = g.players[pid]
+            before = p.health
+            p.health = min(p.max_health, p.health + n)
+            healed = p.health - before
+            if healed > 0:
+                ev.append(Event("PlayerHealed", {"player": pid, "amount": healed, "source": name}))
+            return ev
+
+        # minion
+        loc = g.find_minion(val)
+        if not loc:
+            return []
+        _, _, m = loc
+        before = m.health
+        m.health = min(m.max_health, m.health + n)
+        healed = m.health - before
+        if healed > 0:
+            ev.append(Event("MinionHealed", {"minion": m.id, "amount": healed, "source": name}))
+            # If you added the global broadcaster, notify it (safe if missing)
+            if hasattr(g, "_fire_minion_healed"):
+                ev += g._fire_minion_healed(m.owner, m.id, healed, name)
+            ev += g._update_enrage(m)
+        return ev
+    return run
+
+
+def _fx_random_add_stat(params):
+    """
+    Give +attack/+health to ONE random minion from a scope.
+    JSON:
+      {
+        "effect": "random_add_stat",
+        "attack": 0,
+        "health": 3,
+        "target": "friendly_minions",   # "enemy_minions" | "all_minions"
+        "exclude_self": false           # if true, won't select the source minion
+      }
+    Notes:
+      - Health buff increases both max_health and current health (like typical +Health buffs).
+      - Minion-only (characters/heroes are ignored even if passed via target).
+    """
+    a = int(params.get("attack", 0))
+    h = int(params.get("health", 0))
+    scope = str(params.get("target", "friendly_minions"))
+    exclude_self = bool(params.get("exclude_self", False))
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        self_id = getattr(source_obj, "id", None)
+
+        # Build pool and keep only live minions
+        pairs = _build_random_target_pool(g, owner, scope, only_injured=False)
+        mids = []
+        for kind, val in pairs:
+            if kind != "minion":
+                continue
+            loc = g.find_minion(val)
+            if not loc:
+                continue
+            _, _, mm = loc
+            if not mm.is_alive():
+                continue
+            if exclude_self and self_id is not None and mm.id == self_id:
+                continue
+            mids.append(mm)
+
+        if not mids or (a == 0 and h == 0):
+            return []
+
+        m = g.rng.choice(mids)
+        before_a = m.attack
+        before_h = m.health
+        # Apply stat buffs (permanent)
+        if a:
+            m.attack = max(0, m.attack + a)
+        if h:
+            m.max_health = max(1, m.max_health + h)
+            m.health = m.health + h  # lift current by same delta
+
+        ev = [Event("Buff", {
+            "minion": m.id,
+            "attack_delta": m.attack - before_a,
+            "health_delta": m.health - before_h
+        })]
+        ev += g._update_enrage(m)
+        return ev
+
+    return run
+
 
 def _fx_aoe_damage(params):
     """
@@ -2340,6 +2557,7 @@ def _fx_aoe_heal(params):
                         ev.append(Event("MinionHealed", {
                             "minion": m.id, "amount": healed, "source": name, "aoe": True
                         }))
+                        ev += g._fire_minion_healed(m.owner, m.id, healed, name)
                         ev += g._update_enrage(m)
         return ev
 
@@ -2379,6 +2597,7 @@ def _fx_aoe_heal_minions(params):
                         ev.append(Event("MinionHealed", {
                             "minion": m.id, "amount": healed, "source": name, "aoe": True
                         }))
+                        ev += g._fire_minion_healed(m.owner, m.id, healed, name)
                         ev += g._update_enrage(m)
         return ev
 
@@ -2416,6 +2635,47 @@ def _fx_multiply_attack(params):
             "health_delta": 0
         })]
     return run
+
+def _fx_multiply_health(params):
+    """
+    Multiply a minion's Health pool.
+    - Multiplies max_health by 'factor' (rounded to int, min 1).
+    - Increases current health by the same delta to keep damage amount constant.
+    JSON:
+      { "effect": "multiply_health", "factor": 2 }
+    """
+    factor = float(params.get("factor", 2))
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+
+        before_max = obj.max_health
+        before_hp  = obj.health
+
+        # compute new max; clamp to at least 1; keep integers
+        new_max = max(1, int(round(before_max * factor)))
+        delta_max = new_max - before_max
+
+        if delta_max == 0:
+            return []
+
+        obj.max_health = new_max
+        # increase current health by the same delta, clamped to new max
+        before = obj.health
+        obj.health = max(0, min(new_max, obj.health + delta_max))
+
+        ev = [Event("Buff", {
+            "minion": obj.id,
+            "attack_delta": 0,
+            "health_delta": obj.health - before
+        })]
+        ev += g._update_enrage(obj)
+        return ev
+
+    return run
+
 
 def _fx_add_stats(params):
     a = int(params.get("attack", 0))
@@ -2906,6 +3166,30 @@ def _fx_add_card_to_hand(params):
 
     return run
 
+def _fx_if_target_attack_at_most(params, json_db_tokens):
+    """
+    Run 'then' effects only if the tagged MINION target's current Attack <= amount.
+    JSON:
+      {
+        "effect": "if_target_attack_at_most",
+        "amount": 3,
+        "then": [ ... ]
+      }
+    """
+    need = int(params.get("amount", 0))
+    then_spec = params.get("then", []) or []
+    then_fn = _compile_effects(then_spec, json_db_tokens)
+
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+        if obj.attack <= need:
+            return then_fn(g, source_obj, target)
+        return []
+    return run
+
+
 def _fx_if_target_attack_at_least(params, json_db_tokens):
     """
     Run 'then' effects only if the tagged MINION target's current Attack >= amount.
@@ -3072,6 +3356,7 @@ def _effect_factory(name, params, json_tokens):
         "add_attack":                       _fx_add_attack,
         "add_stats":                        _fx_add_stats,
         "add_self_stats":                   _fx_add_self_stats,
+        "random_add_stat":                  _fx_random_add_stat,
         "silence":                          _fx_silence,
         "freeze":                           _fx_freeze,
         "summon":                           lambda p: _fx_summon(p, json_tokens),
@@ -3084,12 +3369,14 @@ def _effect_factory(name, params, json_tokens):
         "if_target_survived_then":          lambda p: _fx_if_target_survived_then(p, json_tokens),
         "if_summoned_has_keyword":          lambda p: _fx_if_summoned_has_keyword(p, json_tokens),
         "if_target_attack_at_least":        lambda p: _fx_if_target_attack_at_least(p, json_tokens),
+        "if_target_attack_at_most":         lambda p: _fx_if_target_attack_at_most(p, json_tokens),
         "destroy_weapon":                   _fx_destroy_weapon,
         "gain_armor":                       _fx_gain_armor,
         "adjacent_buff":                    _fx_adjacent_buff,
         "set_health":                       _fx_set_health,
         "set_attack":                       _fx_set_attack,
         "multiply_attack":                  _fx_multiply_attack,
+        "multiply_health":                  _fx_multiply_health,
         "weapon_durability_delta":          _fx_weapon_durability_delta,
         "discover_equal_remaining_mana":    _fx_discover_equal_remaining_mana,
         "temp_modify":                      _fx_temp_modify,
@@ -3097,6 +3384,7 @@ def _effect_factory(name, params, json_tokens):
         "discard_random":                   _fx_discard_random,
         "random_pings":                     _fx_random_pings,
         "random_enemy_damage":              _fx_random_enemy_damage,
+        "random_heal":                      _fx_random_heal,
         "deal_damage_equal_armor":          _fx_deal_damage_equal_armor,
         "execute":                          _fx_execute,
         "brawl":                            _fx_brawl,

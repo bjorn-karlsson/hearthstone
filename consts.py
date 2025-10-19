@@ -10,7 +10,7 @@ from engine import Game
 SHOW_ENEMY_HAND = False
 DEBUG_BTN_RECT = None
 
-DEBUG = True
+DEBUG = False
 
 # --- Pygame ---
 pygame.init()
