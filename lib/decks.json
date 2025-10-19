@@ -201,6 +201,28 @@
                 "ALAKIR_THE_WINDLORD": 1,
                 "DOOMHAMMER": 1
             }
+        },
+        {
+            "name": "Classic Shaman Deck (Aggro / Burst)",
+            "hero": "SHAMAN",
+            "cards": {
+                "ROCKBITER_WEAPON": 2,
+                "LIGHTNING_BOLT": 2,
+                "STORMFORGED_AXE": 2,
+                "FLAMETONGUE_TOTEM": 2,
+                "LEPER_GNOME": 2,
+                "WOLFRIDER": 2,
+                "LAVA_BURST": 2,
+                "FERAL_SPIRIT": 2,
+                "UNBOUND_ELEMENTAL": 2,
+                "DUST_DEVIL": 2,
+                "CHILLWIND_YETI": 2,
+                "FIRE_ELEMENTAL": 2,
+                "DOOMHAMMER": 1,
+                "ALAKIR_THE_WINDLORD": 1,
+                "BLOODLUST": 2,
+                "ARGENT_SQUIRE": 2
+            }
         }
     ]
 }

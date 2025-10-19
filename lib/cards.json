@@ -872,6 +872,52 @@
             "targeting": "none"
         },
         {
+            "id": "UNBOUND_ELEMENTAL",
+            "name": "Unbound Elemental",
+            "type": "MINION",
+            "class": "SHAMAN",
+            "rarity": "Rare",
+            "cost": 3,
+            "attack": 2,
+            "health": 4,
+            "minion_type": "Elemental",
+            "text": "Whenever you play a card with Overload, gain +1/+1.",
+            "triggers": [
+                {
+                    "on": "friendly_overload",
+                    "effects": [
+                        {
+                            "effect": "add_self_stats",
+                            "attack": 1,
+                            "health": 1
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "DUST_DEVIL",
+            "name": "Dust Devil",
+            "type": "MINION",
+            "rarity": "Common",
+            "class": "SHAMAN",
+            "minion_type": "Elemental",
+            "cost": 1,
+            "attack": 3,
+            "health": 1,
+            "battlecry": [
+                {
+                    "effect": "add_overload",
+                    "amount": 2
+                }
+            ],
+            "keywords": [
+                "Windfury"
+            ],
+            "text": "Windfury. Overload: (2).",
+            "targeting": "none"
+        },
+        {
             "id": "SENJIN_SHIELDMASTA",
             "name": "Sen’jin Shieldmasta",
             "type": "MINION",
@@ -1450,13 +1496,33 @@
             "targeting": "none"
         },
         {
+            "id": "LAVA_BURST",
+            "name": "Lava Burst",
+            "type": "SPELL",
+            "rarity": "Rare",
+            "cost": 3,
+            "text": "Deal 5 damage. Overload: (2).",
+            "class": "SHAMAN",
+            "targeting": "any_character",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 5
+                },
+                {
+                    "effect": "add_overload",
+                    "amount": 2
+                }
+            ]
+        },
+        {
             "id": "LIGHTNING_BOLT",
             "name": "Lightning Bolt",
             "type": "SPELL",
             "cost": 1,
             "text": "Deal 3 damage. Overload: (1).",
             "class": "SHAMAN",
-            "targeting": "enemy_character",
+            "targeting": "any_character",
             "on_cast": [
                 {
                     "effect": "deal_damage",

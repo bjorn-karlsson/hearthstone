@@ -108,7 +108,8 @@
                             "STONECLAW_TOTEM",
                             "HEALING_TOTEM",
                             "WRATH_OF_AIR_TOTEM"
-                        ]
+                        ],
+                        "priority_pool": true
                     }
                 ]
             }

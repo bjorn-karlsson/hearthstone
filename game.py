@@ -200,7 +200,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    desired = ["DOOMHAMMER"]
+    desired = ["MIRROR_ENTITY", "UNBOUND_ELEMENTAL"]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -233,6 +233,7 @@ if DEBUG:
     for k, c in db.items():
         if isinstance(c, Card):
             c.cost = 0
+            #print(c.name, c.keywords, c.text)
 # Try to load preconfigured decks
 try:
     loaded_decks = load_decks_from_json("lib/decks.json", db)
@@ -249,7 +250,8 @@ playable_decks = [
     "Handlock",
     "Classic Warrior Deck (Control)",
     "Classic Priest Deck (Control / Value)",
-    "Classic Shaman Deck (Midrange / Control)"
+    "Classic Shaman Deck (Midrange / Control)",
+    "Classic Shaman Deck (Aggro / Burst)"
 ]
 
 def get_random_deck(playable_decks: list):
@@ -257,7 +259,7 @@ def get_random_deck(playable_decks: list):
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Shaman Deck (Midrange / Control)")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Shaman Deck (Aggro / Burst)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 
 if DEBUG:
@@ -519,18 +521,14 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
         draw_frozen_overlay(face_rect)
 
 def keyword_explanations_for_card(card_obj) -> List[str]:
-    tips = []
-    kws = set(getattr(card_obj, "keywords", []) or [])
-    # Some cards have battlecry but not the literal keyword in JSON:
-    if getattr(card_obj, "battlecry", None):
-        kws.add("Battlecry")
-    if getattr(card_obj, "on_cast", None) and card_obj.type == "MINION":
-        kws.add("Battlecry")
-
-    for k in KEYWORD_HELP:
-        if k in kws:
-            tips.append(f"{k}: {KEYWORD_HELP[k]}")
-    return tips
+    """
+    STRICT: Only show tooltips for keywords explicitly present on the card JSON.
+    No inference from handlers like `battlecry` or `on_cast`.
+    """
+    raw = getattr(card_obj, "keywords", []) or []
+    # Normalize to strings and filter to those we have help text for
+    kws = [str(k) for k in raw if str(k) in KEYWORD_HELP]
+    return [f"{k}: {KEYWORD_HELP[k]}" for k in kws]
 
 def keyword_explanations_for_minion(m) -> List[str]:
     tips = []
@@ -1010,20 +1008,10 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         cost_to_show = card_obj.cost if override_cost is None else int(override_cost)
         draw_cost_gem(r, cost_to_show, surface=surface)
 
-        kw = []
-        if "Taunt" in card_obj.keywords:   kw.append("Taunt")
-        if "Charge" in card_obj.keywords:  kw.append("Charge")
-        if "Rush" in card_obj.keywords:    kw.append("Rush")
-
-        text = (card_obj.text or "").strip()
-        if text in kw: text = ""
-        for k in kw:
-            if text.lower().startswith(k.lower()):
-                text = text[len(k):].lstrip(" :.-").strip()
-
-        header = " / ".join(kw)
-        body = header if header and not text else (header + ("\n" + text if text else ""))
-        draw_text_box(r, body, max_lines=6, title=card_obj.name, font_body=RULE_FONT, surface=surface)
+        # Show only the printed text, no auto-added keywords
+        body = (card_obj.text or "").strip()
+        
+        draw_text_box(r, body, max_lines=4, title=card_obj.name, font_body=RULE_FONT, surface=surface)
 
         draw_rarity_droplet(r, getattr(card_obj, "rarity", "Common"), surface=surface)
 
@@ -1038,22 +1026,18 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
                 r, card_obj.attack, card_obj.health, card_obj.health,
                 base_attack=card_obj.attack, base_health=card_obj.health, surface=surface
             )
-            draw_name_footer(r, "Weapon", surface=surface)
+            draw_name_footer(r, card_obj.type.capitalize(), surface=surface)
+        elif card_obj.type in ["SPELL", "SECRET"]:
+            draw_name_footer(r, card_obj.type.capitalize(), surface=surface)
         else:
-            draw_name_footer(r, card_obj.type, surface=surface)
+            draw_name_footer(r, card_obj.type.capitalize(), surface=surface)
 
     elif minion_obj:
         draw_cost_gem(r, getattr(minion_obj, "cost", 0), surface=surface)
         kws = []
-        if getattr(minion_obj, "taunt", False):  kws.append("Taunt")
-        if getattr(minion_obj, "charge", False): kws.append("Charge")
-        if getattr(minion_obj, "rush", False):   kws.append("Rush")
-        header = " / ".join(kws)
-        text = (getattr(minion_obj, "base_text", "") or "").strip()
-        for k in ["Taunt", "Charge", "Rush"]:
-            if text.lower().startswith(k.lower()):
-                text = text[len(k):].lstrip(" :.-").strip()
-        body = header if header and not text else (header + ("\n" + text if text else ""))
+        # Show only the printed base text, no auto-added keywords
+        body = (getattr(minion_obj, "base_text", "") or "").strip()
+        
         draw_text_box(r, body, max_lines=4, title=minion_obj.name, font_body=RULE_FONT, surface=surface)
         draw_rarity_droplet(r, getattr(minion_obj, "rarity", "Common"), surface=surface)
         draw_minion_stats(
@@ -1079,7 +1063,6 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         draw_silence_overlay(r, surface=surface)
     if getattr(minion_obj, "frozen", False):
         draw_frozen_overlay(r, surface=surface)
-
 
 def _deck_source_rect_for_pid(pid: int) -> pygame.Rect:
     """Where cards 'come from' visually."""
@@ -1517,7 +1500,7 @@ def layout_board(g: Game) -> Dict[str, Any]:
     hot["face_me"] = pygame.Rect(arena.centerx - FACE_W//2, face_me_y, FACE_W, FACE_H)
 
     # Hero power buttons (keep your current offsets)
-    hp_x_enemy = hot["face_enemy"].right + CRYSTAL_PAD
+    hp_x_enemy = hot["face_enemy"].right +  CRYSTAL_PAD
     hp_x_me    = hot["face_me"].right    + CRYSTAL_PAD
     hot["hp_enemy"] = pygame.Rect(hp_x_enemy, hot["face_enemy"].y, 150, 52)
     hot["hp_me"]    = pygame.Rect(hp_x_me,    hot["face_me"].y,    150, 52)

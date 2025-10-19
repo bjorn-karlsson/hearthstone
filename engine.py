@@ -927,6 +927,19 @@ class Game:
             ev += self._run_minion_triggers(m, "end_of_your_turn", None)
         return ev
 
+    def _fire_friendly_overload(self, owner: int, amount: int) -> List[Event]:
+        """
+        Let OWNER's minions know an Overload amount was just added by a friendly card.
+        Triggers with key 'friendly_overload'. Context includes {'amount': <int>}.
+        """
+        ev: List[Event] = []
+        for m in list(self.players[owner].board):
+            if not m.is_alive() or m.silenced:
+                continue
+            ev += self._run_minion_triggers(m, "friendly_overload", {"amount": int(amount)})
+        return ev
+
+
     def play_card(self, pid:int, hand_index:int, target_player:Optional[int]=None, target_minion:Optional[int]=None, insert_at: Optional[int] = None,) -> List[Event]:
         if pid != self.active_player:
             raise IllegalAction("Not your turn")
@@ -1979,26 +1992,53 @@ def _fx_summon_from_pool(params, json_db_tokens):
       pool: [token_id, token_id, ...]   # choose 1 at random (or 'count' times with replacement)
       count: int (default 1)
       owner: same semantics as _fx_summon (player/enemy/both/active/inactive/0/1)
+      priority_pool: bool (default False)
+          If True, prefer summoning tokens from 'pool' that the summoning player
+          does not currently control on board (by card_id). If all are present,
+          fall back to uniform choice from the full pool.
     """
     pool = list(params.get("pool", []))
     count = int(params.get("count", 1))
     owner_param = params.get("owner", "player")
+    priority_pool = bool(params.get("priority_pool", False))
 
     def run(g, source_obj, target):
         if not pool:
             return []
         source_owner = getattr(source_obj, "owner", g.active_player)
-        owners = _resolve_owner_list(owner_param, g, source_owner)  # NEW
+        owners = _resolve_owner_list(owner_param, g, source_owner)
         evs = []
+
         for ow in owners:
             for _ in range(count):
-                token_id = g.rng.choice(pool)
-                raw = json_db_tokens[token_id]
-                spec = dict(raw); spec.setdefault("id", token_id)
+                # Build a prioritized candidate list if requested
+                if priority_pool:
+                    have_ids = {
+                        getattr(m, "card_id", "")
+                        for m in g.players[ow].board
+                        if m.is_alive()
+                    }
+                    # Prefer tokens from the pool that aren't already on this owner's board
+                    candidates = [tid for tid in pool if tid not in have_ids]
+                    choice_pool = candidates if candidates else pool
+                else:
+                    choice_pool = pool
+
+                token_id = g.rng.choice(choice_pool)
+
+                raw = json_db_tokens.get(token_id, {})
+                if not raw:
+                    # Defensive fallback: skip if token missing
+                    continue
+
+                spec = dict(raw)
+                spec.setdefault("id", token_id)
                 evs += g._summon_from_card_spec(ow, spec, 1)
+
         return evs
 
     return run
+
 
 def _fx_equip_weapon(params, json_db_tokens):
     token_id = params.get("card_id")
@@ -2093,7 +2133,11 @@ def _fx_add_overload(params):
             amt = g.get_spell_damage(owner)
         # clamp non-negative
         amt = max(0, int(amt))
-        return g.add_overload(owner, amt)
+        ev = g.add_overload(owner, amt)
+        # notify friendly minions that an Overload card was just played
+        if amt > 0:
+            ev += g._fire_friendly_overload(owner, amt)
+        return ev
     return run
 
 

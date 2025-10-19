@@ -5,10 +5,10 @@
 # [x] Add Adjecent to minions, Defender of Argus
 # [x] Add weapon mechanic, Arathi Weaponsmith — 3/3, Battlecry: equip a 2/2 weapon
 # [x] Add freeze mechanic, Frost Elemental
-# [] Add AoE Heal, Darkscale Healer
+# [x] Add AoE Heal, Darkscale Healer
 # [] Add Costs (x) less per minion on the battlefield, Sea Giant — 8/8
-# [] Add Costs less per card in your hand, Mountain Giant — 8/8
-# [] Add Costs less per damage your hero has taken, Molten Giant — 8/8
+# [x] Add Costs less per card in your hand, Mountain Giant — 8/8
+# [x] Add Costs less per damage your hero has taken, Molten Giant — 8/8
 # [] Add Choose, Druid of the Claw, Choose One: Charge or +2 Health and Taunt
 # [x] Add Houndmaster — Battlecry: give a friendly Beast +2/+2 and Taunt
 # [x] Starving Buzzard — draw a card whenever you summon a Beast
@@ -26,14 +26,14 @@
 # [] Add choose mechanic, drawing, logic, ai, etc
 # [x] Add Class Druid
 # [x] Add Class Priest
-# [] Add class Shaman
+# [x] Add class Shaman
 # [x] Add class Rougue
 # [x] Add heroCards like Jarraxuss.
 # [] Draw diffrent mechanics on cards, Aura, triggers, Deathrattle, etc.
 # [x] Add minion types: None, Mech, Beast, Demon, Dragon, Murloc, Pirate, Totem, Elemental, Naga, Undead, All (All = is both Beast and Dragon, etc, at the same time)
-# [] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
-# [] Add class color for cards
-# [] Draw mana crystals
+# [x] Add class card type: each Hero class type, ie, Hunter, Warlock etc.
+# [x] Add class color for cards
+# [x] Draw mana crystals
 # [x] Draw hero health  damaged
 # [x] Add secrets
 # [x] Draw secrets, ? and color by Hero color
