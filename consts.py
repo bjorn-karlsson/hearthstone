@@ -10,7 +10,7 @@ from engine import Game
 SHOW_ENEMY_HAND = False
 DEBUG_BTN_RECT = None
 
-DEBUG = False
+DEBUG = True
 
 # --- Pygame ---
 pygame.init()
@@ -29,6 +29,7 @@ GLOBAL_GAME: Game
 
 
 # Colors
+NEUTRAL_BG = (90, 90, 90)  # fallback gray
 BG = (20, 25, 30)
 WHITE = (230, 230, 230)
 GREY = (150, 150, 150)
@@ -84,7 +85,7 @@ HERO_COLORS = {
     "HUNTER":  (35, 155, 75),
     "SHAMAN":  (25, 105, 185),  # deep cyan/blue
     "ROGUE":   (80, 80, 80),    # charcoal/steel
-    "PRIEST":  (230, 230, 230), # light/holy white
+    "PRIEST":  (170, 170, 170), # light/holy white
     "DRUID":   (165, 110, 30),  # warm amber/bark
 }
 

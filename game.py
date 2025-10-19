@@ -49,7 +49,13 @@ def format_event(e, g, skip=False) -> str:
     if k == "CardDiscarded":
         who = "You" if p.get("player") == 0 else "AI"
         return f"{who} discarded: {p.get('name')}"
-    
+    if k == "HeroTempAttack":
+        who = "You" if p.get("player") == 0 else "AI"
+        return f"{who}'s hero gained +{p.get('added', 0)} Attack this turn."
+
+    if k == "HeroBuffExpired":
+        who = "You" if p.get("player") == 0 else "AI"
+        return f"{who}'s temporary hero Attack expired."
     if k == "Frozen":
         t = p.get("target_type")
         if t == "player":
@@ -194,7 +200,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    desired = ["ARCANE_INTELLECT"]
+    desired = ["HEX", "ROCKBITER_WEAPON", "ARATHI_WEAPONSMITH"]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -242,6 +248,7 @@ playable_decks = [
     "Classic Warlock Deck (Zoo Aggro)",
     "Handlock",
     "Classic Warrior Deck (Control)",
+    "Classic Priest Deck (Control / Value)"
 ]
 
 def get_random_deck(playable_decks: list):
@@ -254,7 +261,7 @@ ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=
 
 if DEBUG:
     player_deck = None
-    ai_deck = None
+#ai_deck = None
 if not player_deck:
     player_deck = make_starter_deck(db, random.randint(1, 5_000_000))
 if not ai_deck:
@@ -378,16 +385,22 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
         pygame.draw.circle(screen, (40, 35, 25), (cx, cy), radius)
         pygame.draw.circle(screen, (20, 20, 20), (cx, cy), radius, 2)
 
-        atk = int(getattr(pstate.weapon, "attack", 0))
+        base_atk = int(getattr(pstate.weapon, "attack", 0))
+        temp_atk = int(getattr(pstate, "temp_hero_attack", 0))
+        atk      = base_atk + max(0, temp_atk)  # show weapon + temp hero attack
+
         cur = int(getattr(pstate.weapon, "durability", 0))
         base = _weapon_base_durability_safe(GLOBAL_GAME, pstate.weapon)
 
-        # Only durability turns red if it’s below max
+        # Colors: durability red if damaged; attack green if temporarily buffed
         dur_col = HP_HURT if (base is not None and cur < base) else WHITE
+        atk_col = (60, 200, 90) if temp_atk > 0 else WHITE
 
-        atk_surf   = FONT.render(str(atk), True, WHITE)
-        slash_surf = FONT.render("/", True, WHITE)   # keep slash neutral
+        atk_surf   = FONT.render(str(atk), True, atk_col)
+        slash_surf = FONT.render("/", True, WHITE)
         dur_surf   = FONT.render(str(cur), True, dur_col)
+
+        
 
         total_w = atk_surf.get_width() + slash_surf.get_width() + dur_surf.get_width()
         max_h   = max(atk_surf.get_height(), slash_surf.get_height(), dur_surf.get_height())
@@ -397,7 +410,18 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
         screen.blit(atk_surf,   (x, y)); x += atk_surf.get_width()
         screen.blit(slash_surf, (x, y)); x += slash_surf.get_width()
         screen.blit(dur_surf,   (x, y))
+        
+    elif getattr(pstate, "temp_hero_attack", 0) > 0:
+        # NEW: show temp hero Attack when no weapon is equipped
+        cx, cy = face_rect.x + 26, face_rect.bottom - 18
+        radius = 14
+        pygame.draw.circle(screen, (40, 35, 25), (cx, cy), radius)
+        pygame.draw.circle(screen, (20, 20, 20), (cx, cy), radius, 2)
 
+        atk_val = int(getattr(pstate, "temp_hero_attack", 0))
+        # Slightly green to indicate a buff this turn
+        atk_surf = FONT.render(str(atk_val), True, (60, 200, 90))
+        screen.blit(atk_surf, atk_surf.get_rect(center=(cx, cy)))
 
     # mana crystal on the right side
     crystal = pygame.Rect(face_rect.right + CRYSTAL_PAD, face_rect.y + 6, CRYSTAL_W, face_rect.h - 12)
@@ -691,6 +715,7 @@ PLAY_REQUIREMENTS: dict[str, callable] = {
     "SACRIFICIAL_PACT" : _exists_any_demon_minion,
     "SHADOWFLAME": _exists_friendly_minion,
 
+
     "SHADOW_WORD_PAIN":  _exists_enemy_minion_attack_leq3,
     "SHADOW_WORD_DEATH": _exists_enemy_minion_attack_geq5,
     #"BIG_GAME_HUNTER": _exists_minion_attack_7plus
@@ -825,9 +850,71 @@ def draw_frozen_overlay(r: pygame.Rect, *, surface=None):
     s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.12))))
     surface.blit(s, (r.x, r.y))
 
+
+def _infer_card_class_name(card_obj) -> str | None:
+    """Best-effort: grab the class name off the Card object (or dict)."""
+    if card_obj is None:
+        return None
+    # probe common field names
+    candidates = [
+        "card_class", "hero_class", "class_name", "class", "klass",
+        "cardClass", "Class", "clazz", "classId", "cardclass", "class_"
+    ]
+    val = None
+    for key in candidates:
+        if hasattr(card_obj, key):
+            val = getattr(card_obj, key)
+            break
+        if isinstance(card_obj, dict) and key in card_obj:
+            val = card_obj[key]
+            break
+
+    # lists like ["MAGE"] → take first
+    if isinstance(val, (list, tuple)) and val:
+        val = val[0]
+
+    if not val:
+        return None
+
+    # strings/ints
+    s = str(val).strip()
+    if not s:
+        return None
+    # normalize Neutral-ish values
+    if s.upper() in ("NEUTRAL", "NONE", "0"):
+        return None
+    return s
+
+def _class_color_from_name(name: str | None) -> tuple[int,int,int]:
+    if not name:
+        return NEUTRAL_BG
+    col = HERO_COLORS.get(str(name).upper())
+    return col if col else NEUTRAL_BG
+
+def class_color_for_card(card_obj) -> tuple[int,int,int]:
+    return _class_color_from_name(_infer_card_class_name(card_obj))
+
+def class_color_for_minion(minion_obj) -> tuple[int,int,int]:
+    """
+    Use the minion's original card to determine class color.
+    If we can’t resolve, fall back to gray.
+    """
+    try:
+        cid = getattr(minion_obj, "card_id", None)
+        if cid and GLOBAL_GAME and cid in GLOBAL_GAME.cards_db:
+            return class_color_for_card(GLOBAL_GAME.cards_db[cid])
+    except Exception:
+        pass
+    return NEUTRAL_BG
+
 def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool,
                     override_cost: int | None = None, surface=None):
     if surface is None: surface = screen
+
+    if card_obj is not None:
+        color_bg = class_color_for_card(card_obj)
+    elif minion_obj is not None:
+        color_bg = class_color_for_minion(minion_obj)
 
     pygame.draw.rect(surface, color_bg, r, border_radius=12)
 
@@ -1032,10 +1119,8 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
     abyss_pt = (arena.centerx, H + 140)  # fall off screen
 
     # hero plate badges
-    def _weapon_badge_rect(pid: int) -> pygame.Rect | None:
+    def _weapon_badge_rect(pid: int) -> pygame.Rect:
         face = post["face_me"] if pid == 0 else post["face_enemy"]
-        if getattr(g.players[pid], "weapon", None) is None:
-            return None
         cx, cy = face.x + 26, face.bottom - 18
         return _badge_rect_from_center(cx, cy, 14)
 
@@ -1181,6 +1266,11 @@ def animate_from_events(g: Game, ev_list: List[Any], hot_snapshot=None):
             if rr:
                 ANIMS.push(AnimStep("badge_pulse", 420, {"rect": rr, "non_blocking": True, "layer": 1}))
 
+        elif k == "HeroTempAttack":
+            pid = p.get("player", 0)
+            rr = _weapon_badge_rect(pid)
+            if rr:
+                ANIMS.push(AnimStep("badge_pulse", 420, {"rect": rr, "non_blocking": True, "layer": 1}))
         elif k == "SpellHit":
             # you already call queue_spell_projectiles_from_events elsewhere,
             # but if you want to ensure it here:
@@ -3263,7 +3353,10 @@ def main():
                         continue
 
                     # Select hero attacker
-                    if hot["face_me"].collidepoint(mx, my) and hero_ready_to_act(g, 0):
+                    if (waiting_target_for_play is None
+                        and waiting_target_for_power is None
+                        and hot["face_me"].collidepoint(mx, my)
+                        and hero_ready_to_act(g, 0)):
                         mins, face_ok = hero_legal_targets(g, 0)
                         selected_hero = True
                         selected_attacker = None
@@ -3513,7 +3606,7 @@ def main():
                                         #enqueue_flash(r)
                                     except IllegalAction: pass
 
-                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
+                                _animate_hand_card_play(idx, cid, src_rect, r, 0, db[cid].name, on_finish)
 
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
@@ -3533,7 +3626,7 @@ def main():
                                         animate_from_events(g, ev)
                                         #enqueue_flash(r)
                                     except IllegalAction: pass
-                                _animate_hand_card_play(idx, cid, src_rect, dst, 0, db[cid].name, on_finish)
+                                _animate_hand_card_play(idx, cid, src_rect, r, 0, db[cid].name, on_finish)
 
                                 waiting_target_for_play = None
                                 hilite_enemy_min.clear(); hilite_my_min.clear()
@@ -3608,6 +3701,8 @@ def main():
                                         hilite_my_min = set(my_mins)
                                         hilite_enemy_face = enemy_face_ok
                                         hilite_my_face = my_face_ok
+                                        selected_attacker = None
+                                        selected_hero = False
                                     else:
                                         # (Very rare) truly no-target but not covered above → fall back to drag-to-cast
                                         dragging_from_hand = (i, cid, r.copy())
@@ -3786,6 +3881,8 @@ def main():
                                     hilite_my_min = set(my_mins)
                                     hilite_enemy_face = enemy_face_ok or (need in ("any_character", "enemy_character"))
                                     hilite_my_face = my_face_ok or (need in ("any_character", "friendly_character"))
+                                    selected_attacker = None
+                                    selected_hero = False
                                     hover_slot_index = slot_idx
                                     continue
                                 else:
@@ -3877,6 +3974,8 @@ def main():
                                 hilite_my_min = set(my_mins)
                                 hilite_enemy_face = enemy_face_ok or (need in ("any_character", "enemy_character"))
                                 hilite_my_face = my_face_ok or (need in ("any_character", "friendly_character"))
+                                selected_attacker = None
+                                selected_hero = False
                                 hover_slot_index = slot_idx
                                 continue
                             else:

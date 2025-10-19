@@ -179,6 +179,28 @@
                 "SENJIN_SHIELDMASTA": 2,
                 "STORMWIND_CHAMPION": 2
             }
+        },
+        {
+            "name": "Classic Shaman Deck (Midrange / Control)",
+            "hero": "SHAMAN",
+            "cards": {
+                "ROCKBITER_WEAPON": 2,
+                "LIGHTNING_BOLT": 2,
+                "FLAMETONGUE_TOTEM": 2,
+                "STORMFORGED_AXE": 2,
+                "FERAL_SPIRIT": 2,
+                "HEX": 2,
+                "LIGHTNING_STORM": 2,
+                "MANA_TIDE_TOTEM": 2,
+                "HARVEST_GOLEM": 2,
+                "CHILLWIND_YETI": 2,
+                "FIRE_ELEMENTAL": 2,
+                "BLOODLUST": 2,
+                "SENJIN_SHIELDMASTA": 2,
+                "ACOLYTE_OF_PAIN": 2,
+                "ALAKIR_THE_WINDLORD": 1,
+                "DOOMHAMMER": 1
+            }
         }
     ]
 }

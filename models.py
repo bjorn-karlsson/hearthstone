@@ -97,6 +97,7 @@ class Card:
     attack: int = 0
     health: int = 0
     spell_damage: int = 0
+    card_class: str = "NEUTRAL"
     keywords: List[str] = field(default_factory=list)
     # Scripting hooks:
     battlecry: Optional[Callable[['Game','Card', Optional[int]], List[Event]]] = None # type: ignore

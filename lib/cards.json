@@ -104,6 +104,19 @@
             "rarity": "Common",
             "minion_type": "Beast"
         },
+        "FROG": {
+            "name": "Frog",
+            "type": "MINION",
+            "class": "SHAMAN",
+            "cost": 0,
+            "attack": 0,
+            "health": 1,
+            "keywords": [
+                "Taunt"
+            ],
+            "rarity": "Common",
+            "minion_type": "Beast"
+        },
         "NERUBIAN_4_4": {
             "name": "Nerubian",
             "type": "MINION",
@@ -328,11 +341,28 @@
             "targeting": "none"
         },
         {
+            "id": "ROCKBITER_WEAPON",
+            "name": "Rockbiter Weapon",
+            "type": "SPELL",
+            "class": "SHAMAN",
+            "cost": 1,
+            "rarity": "Common",
+            "text": "Give a friendly character +3 Attack this turn.",
+            "on_cast": [
+                {
+                    "effect": "temp_add_attack_to_character",
+                    "amount": 3
+                }
+            ],
+            "targeting": "friendly_character"
+        },
+        {
             "id": "WATER_ELEMENTAL",
             "name": "Water Elemental",
             "type": "MINION",
             "rarity": "Common",
             "minion_type": "Elemental",
+            "class": "MAGE",
             "cost": 4,
             "attack": 3,
             "health": 6,
@@ -353,6 +383,7 @@
             "id": "MORTAL_COIL",
             "name": "Mortal Coil",
             "type": "SPELL",
+            "class": "WARLOCK",
             "cost": 1,
             "text": "Deal 1 damage to a minion. If that kills it, draw a card.",
             "targeting": "any_minion",
@@ -408,6 +439,7 @@
             "id": "SLAM",
             "name": "Slam",
             "type": "SPELL",
+            "class": "WARRIOR",
             "cost": 2,
             "text": "Deal 2 damage to a minion. If it survives, draw a card.",
             "targeting": "any_minion",
@@ -433,6 +465,7 @@
             "name": "Starving Buzzard",
             "type": "MINION",
             "rarity": "Common",
+            "class": "HUNTER",
             "cost": 2,
             "attack": 2,
             "health": 1,
@@ -462,6 +495,7 @@
             "name": "Houndmaster",
             "type": "MINION",
             "rarity": "Rare",
+            "class": "HUNTER",
             "minion_type": "None",
             "cost": 4,
             "attack": 4,
@@ -487,6 +521,7 @@
             "id": "SACRIFICIAL_PACT",
             "name": "Sacrificial Pact",
             "type": "SPELL",
+            "class": "WARLOCK",
             "cost": 0,
             "rarity": "Common",
             "text": "Destroy a Demon. Restore 5 Health to your hero.",
@@ -509,6 +544,7 @@
             "name": "Animal Companion",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "HUNTER",
             "cost": 3,
             "text": "Summon a random Beast Companion.",
             "on_cast": [
@@ -561,6 +597,7 @@
             "name": "Cruel Taskmaster",
             "type": "MINION",
             "rarity": "Common",
+            "class": "WARRIOR",
             "minion_type": "None",
             "cost": 2,
             "attack": 2,
@@ -586,6 +623,7 @@
             "name": "Shield Up",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "WARRIOR",
             "cost": 1,
             "text": "Give a minion Taunt.",
             "on_cast": [
@@ -670,6 +708,7 @@
             "name": "Voidwalker",
             "type": "MINION",
             "rarity": "Common",
+            "class": "WARLOCK",
             "minion_type": "Demon",
             "cost": 1,
             "attack": 1,
@@ -723,6 +762,7 @@
             "id": "SHADOWFLAME",
             "name": "Shadowflame",
             "type": "SPELL",
+            "class": "WARLOCK",
             "cost": 4,
             "text": "Destroy a friendly minion. Deal its Attack to all enemy minions.",
             "targeting": "friendly_minion",
@@ -737,6 +777,7 @@
             "name": "Timber Wolf",
             "type": "MINION",
             "rarity": "Common",
+            "class": "HUNTER",
             "cost": 1,
             "attack": 1,
             "health": 2,
@@ -774,6 +815,7 @@
             "id": "SORCERERS_APPRENTICE",
             "name": "Sorcerer's Apprentice",
             "type": "MINION",
+            "class": "MAGE",
             "cost": 2,
             "attack": 3,
             "health": 2,
@@ -877,6 +919,7 @@
             "id": "FROST_NOVA",
             "name": "Frost Nova",
             "type": "SPELL",
+            "class": "MAGE",
             "cost": 3,
             "text": "Freeze all enemy minions.",
             "on_cast": [
@@ -892,6 +935,7 @@
             "id": "BLIZZARD",
             "name": "Blizzard",
             "type": "SPELL",
+            "class": "MAGE",
             "cost": 6,
             "text": "Deal 2 damage to all enemy minions and Freeze them.",
             "on_cast": [
@@ -912,6 +956,7 @@
             "id": "FROSTBOLT",
             "name": "Frostbolt",
             "type": "SPELL",
+            "class": "MAGE",
             "cost": 2,
             "text": "Deal 3 damage to a character and Freeze it.",
             "on_cast": [
@@ -930,6 +975,7 @@
             "id": "SIPHON_SOUL",
             "name": "Siphon Soul",
             "type": "SPELL",
+            "class": "WARLOCK",
             "cost": 6,
             "text": "Destroy a minion. Restore 3 Health to your hero.",
             "on_cast": [
@@ -1053,6 +1099,7 @@
             "name": "Arathi Weaponsmith",
             "type": "MINION",
             "rarity": "Common",
+            "class": "WARRIOR",
             "minion_type": "None",
             "cost": 4,
             "attack": 3,
@@ -1125,6 +1172,7 @@
             "name": "Flame imp",
             "type": "MINION",
             "rarity": "Common",
+            "class": "WARLOCK",
             "minion_type": "Demon",
             "cost": 1,
             "attack": 3,
@@ -1203,7 +1251,29 @@
                     "amount": 1
                 }
             ],
-            "targeting": "enemy_character"
+            "targeting": "any_character"
+        },
+        {
+            "id": "FIRE_ELEMENTAL",
+            "name": "Fire Elemental",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Elemental",
+            "class": "SHAMAN",
+            "cost": 6,
+            "attack": 6,
+            "health": 5,
+            "text": "Battlecry: Deal 4 damage.",
+            "keywords": [
+                "Battlecry"
+            ],
+            "battlecry": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 4
+                }
+            ],
+            "targeting": "any_character"
         },
         {
             "id": "KOBOLD_BLASTER",
@@ -1250,6 +1320,52 @@
             "targeting": "none"
         },
         {
+            "id": "FLAMETONGUE_TOTEM",
+            "name": "Flametongue Totem",
+            "type": "MINION",
+            "rarity": "Common",
+            "minion_type": "Totem",
+            "class": "SHAMAN",
+            "cost": 2,
+            "attack": 0,
+            "health": 3,
+            "text": "Adjacent minions have +2 Attack.",
+            "keywords": [],
+            "auras": [
+                {
+                    "kind": "stats",
+                    "scope": "adjacent_friendly_minions",
+                    "attack": 2
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "MANA_TIDE_TOTEM",
+            "name": "Mana Tide Totem",
+            "type": "MINION",
+            "rarity": "Rare",
+            "minion_type": "Totem",
+            "class": "SHAMAN",
+            "cost": 3,
+            "attack": 0,
+            "health": 3,
+            "text": "At the end of your turn, draw a card",
+            "triggers": [
+                {
+                    "on": "end_of_your_turn",
+                    "effects": [
+                        {
+                            "effect": "draw",
+                            "count": 1,
+                            "owner": "source_owner"
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
             "id": "DIRE_WOLF_ALPHA",
             "name": "Dire Wolf Alpha",
             "type": "MINION",
@@ -1273,6 +1389,7 @@
             "id": "DOOMGUARD",
             "name": "Doomguard",
             "type": "MINION",
+            "class": "WARLOCK",
             "rarity": "Common",
             "minion_type": "Demon",
             "cost": 5,
@@ -1333,6 +1450,7 @@
             "id": "FIERY_WAR_AXE",
             "name": "Fiery War Axe",
             "type": "WEAPON",
+            "class": "WARRIOR",
             "rarity": "Common",
             "cost": 2,
             "attack": 3,
@@ -1343,6 +1461,7 @@
             "id": "EAGLEHORN_BOW",
             "name": "Eaglehorn Bow",
             "type": "WEAPON",
+            "class": "HUNTER",
             "rarity": "Rare",
             "cost": 3,
             "attack": 3,
@@ -1400,6 +1519,7 @@
             "name": "Dark Cultist",
             "type": "MINION",
             "rarity": "Common",
+            "class": "PRIEST",
             "minion_type": "None",
             "cost": 3,
             "attack": 3,
@@ -1418,9 +1538,25 @@
             "targeting": "none"
         },
         {
+            "id": "MIND_CONTROL",
+            "name": "Mind Control",
+            "type": "SPELL",
+            "class": "PRIEST",
+            "cost": 10,
+            "rarity": "Epic",
+            "text": "Take control of an enemy minion.",
+            "on_cast": [
+                {
+                    "effect": "mind_control"
+                }
+            ],
+            "targeting": "enemy_minion"
+        },
+        {
             "id": "SHADOW_WORD_PAIN",
             "name": "Shadow Word: Pain",
             "type": "SPELL",
+            "class": "PRIEST",
             "cost": 2,
             "text": "Destroy a minion with 3 or less Attack.",
             "targeting": "enemy_minion",
@@ -1441,6 +1577,7 @@
             "id": "SHADOW_WORD_DEATH",
             "name": "Shadow Word: Death",
             "type": "SPELL",
+            "class": "PRIEST",
             "cost": 3,
             "text": "Destroy a minion with 5 or more Attack.",
             "targeting": "enemy_minion",
@@ -1611,6 +1748,7 @@
             "name": "Explosive Trap",
             "type": "SECRET",
             "rarity": "Common",
+            "class": "HUNTER",
             "cost": 2,
             "text": "Secret: When your hero is attacked, deal 2 damage to all enemies.",
             "secret": {
@@ -1629,6 +1767,7 @@
             "name": "Ice Barrier",
             "type": "SECRET",
             "rarity": "Common",
+            "class": "MAGE",
             "cost": 3,
             "text": "As soon as your hero is attacked, gain 8 Armor.",
             "secret": {
@@ -1648,6 +1787,7 @@
             "name": "Mirror Entity",
             "type": "SECRET",
             "rarity": "Common",
+            "class": "MAGE",
             "cost": 3,
             "text": "Secret: When your opponent plays a minion, summon a copy of it.",
             "secret": {
@@ -1665,6 +1805,7 @@
             "name": "Counterspell",
             "type": "SECRET",
             "rarity": "Rare",
+            "class": "MAGE",
             "cost": 3,
             "text": "Secret: When your opponent casts a spell, counter it.",
             "secret": {
@@ -1682,6 +1823,7 @@
             "name": "Hunter's Mark",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "HUNTER",
             "cost": 0,
             "text": "Change a minion’s Health to 1.",
             "on_cast": [
@@ -1696,6 +1838,7 @@
             "id": "ALDOR_PEACEKEEPER",
             "name": "Aldor Peacekeeper",
             "type": "MINION",
+            "class": "PALADIN",
             "cost": 3,
             "attack": 3,
             "health": 3,
@@ -1717,6 +1860,7 @@
             "id": "TRUESILVER_CHAMPION",
             "name": "Truesilver Champion",
             "type": "WEAPON",
+            "class": "PALADIN",
             "cost": 4,
             "attack": 4,
             "health": 2,
@@ -1741,6 +1885,7 @@
             "name": "Kill Command",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "HUNTER",
             "cost": 3,
             "text": "Deal 3 damage; deal 5 damage instead if you control a Beast.",
             "on_cast": [
@@ -1786,6 +1931,7 @@
             "name": "Savannah Highmane",
             "type": "MINION",
             "rarity": "Rare",
+            "class": "HUNTER",
             "minion_type": "Beast",
             "cost": 6,
             "attack": 6,
@@ -1906,6 +2052,7 @@
             "name": "Arcane Shot",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "HUNTER",
             "cost": 1,
             "text": "Deal 2 damage.",
             "on_cast": [
@@ -1921,6 +2068,7 @@
             "name": "Shield Block",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "WARRIOR",
             "cost": 3,
             "text": "Gain 5 Armor. Draw a card.",
             "on_cast": [
@@ -1940,6 +2088,7 @@
             "name": "Shield Slam",
             "type": "SPELL",
             "rarity": "Epic",
+            "class": "WARRIOR",
             "cost": 1,
             "text": "Deal damage equal to your Armor to a minion.",
             "targeting": "any_minion",
@@ -1954,6 +2103,7 @@
             "name": "Execute",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "WARRIOR",
             "cost": 1,
             "text": "Destroy a damaged enemy minion.",
             "targeting": "enemy_minion",
@@ -1968,6 +2118,7 @@
             "name": "Armorsmith",
             "type": "MINION",
             "rarity": "Rare",
+            "class": "WARRIOR",
             "minion_type": "None",
             "cost": 2,
             "attack": 1,
@@ -1992,6 +2143,7 @@
             "id": "NORTHSHIRE_CLERIC",
             "name": "Northshire Cleric",
             "type": "MINION",
+            "class": "PRIEST",
             "cost": 1,
             "attack": 1,
             "health": 3,
@@ -2016,6 +2168,7 @@
             "name": "Hammer of Wrath",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "PALADIN",
             "cost": 4,
             "text": "Deal 3 damage. Draw a card.",
             "on_cast": [
@@ -2025,7 +2178,8 @@
                 },
                 {
                     "effect": "draw",
-                    "count": 1
+                    "count": 1,
+                    "owner": "source_owner"
                 }
             ],
             "targeting": "enemy_character"
@@ -2035,6 +2189,7 @@
             "name": "Holy Fire",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "PRIEST",
             "cost": 6,
             "text": "Deal 5 damage. Restore 5 Health to your hero.",
             "on_cast": [
@@ -2055,6 +2210,7 @@
             "name": "Holy Nova",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "PRIEST",
             "cost": 3,
             "text": "Deal 2 damage to all enemy minions. Restore 2 Health to all friendly characters.",
             "on_cast": [
@@ -2075,6 +2231,7 @@
             "id": "ARGENT_PROTECTOR",
             "name": "Argent Protector",
             "type": "MINION",
+            "class": "PALADIN",
             "cost": 2,
             "attack": 2,
             "health": 2,
@@ -2138,6 +2295,7 @@
             "id": "MANA_WYRM",
             "name": "Mana Wyrm",
             "type": "MINION",
+            "class": "MAGE",
             "cost": 1,
             "attack": 1,
             "health": 3,
@@ -2163,6 +2321,7 @@
             "id": "GUARDIAN_OF_KINGS",
             "name": "Guardian of Kings",
             "type": "MINION",
+            "class": "PALADIN",
             "cost": 7,
             "attack": 5,
             "health": 6,
@@ -2182,6 +2341,7 @@
             "id": "BLESSED_CHAMPION",
             "name": "Blessed Champion",
             "type": "SPELL",
+            "class": "PALADIN",
             "cost": 5,
             "rarity": "Rare",
             "text": "Double a minion's Attack.",
@@ -2197,6 +2357,7 @@
             "id": "DIVINE_SPIRIT",
             "name": "Divine Spirit",
             "type": "SPELL",
+            "class": "PRIEST",
             "cost": 2,
             "rarity": "Common",
             "text": "Double a minion's Health.",
@@ -2213,6 +2374,7 @@
             "name": "Soulfire",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "WARLOCK",
             "cost": 0,
             "text": "Deal 4 damage. Discard a random card.",
             "on_cast": [
@@ -2232,6 +2394,7 @@
             "name": "Holy Smite",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "PRIEST",
             "cost": 1,
             "text": "Deal 2 damage.",
             "on_cast": [
@@ -2247,6 +2410,7 @@
             "name": "Fireball",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "MAGE",
             "cost": 4,
             "text": "Deal 6 damage.",
             "on_cast": [
@@ -2262,6 +2426,7 @@
             "name": "Pyroblast",
             "type": "SPELL",
             "rarity": "Epic",
+            "class": "MAGE",
             "cost": 10,
             "text": "Deal 10 damage.",
             "on_cast": [
@@ -2277,6 +2442,7 @@
             "name": "Holy Light",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "PALADIN",
             "cost": 2,
             "text": "Restore 6 Health.",
             "on_cast": [
@@ -2292,6 +2458,7 @@
             "name": "Arcane Intellect",
             "rarity": "Common",
             "type": "SPELL",
+            "class": "MAGE",
             "cost": 3,
             "text": "Draw 2 cards.",
             "on_cast": [
@@ -2307,6 +2474,7 @@
             "name": "Major Arcane Intellect",
             "type": "SPELL",
             "rarity": "Epic",
+            "class": "MAGE",
             "cost": 6,
             "text": "Draw 4 cards.",
             "on_cast": [
@@ -2322,6 +2490,7 @@
             "name": "Arcane Missiles",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "MAGE",
             "cost": 1,
             "text": "Deal 3 damage randomly split among enemies.",
             "on_cast": [
@@ -2338,6 +2507,7 @@
             "name": "Blessing of Might",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "PALADIN",
             "cost": 1,
             "text": "Give a minion +3 Attack.",
             "on_cast": [
@@ -2353,6 +2523,7 @@
             "name": "Power Word Shield",
             "rarity": "Common",
             "type": "SPELL",
+            "class": "PRIEST",
             "cost": 1,
             "text": "Give a minion +2 Health. Draw a card.",
             "on_cast": [
@@ -2372,6 +2543,7 @@
             "name": "Blessing of Kings",
             "rarity": "Rare",
             "type": "SPELL",
+            "class": "PALADIN",
             "cost": 4,
             "text": "Give a minion +4/+4.",
             "on_cast": [
@@ -2388,6 +2560,7 @@
             "name": "Silence",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "PRIEST",
             "cost": 0,
             "text": "Silence a minion.",
             "on_cast": [
@@ -2398,10 +2571,27 @@
             "targeting": "any_minion"
         },
         {
+            "id": "HEX",
+            "name": "Hex",
+            "type": "SPELL",
+            "rarity": "Rare",
+            "class": "SHAMAN",
+            "cost": 3,
+            "text": "Transform a minion into a 0/1 Frog with Taunt.",
+            "on_cast": [
+                {
+                    "effect": "transform",
+                    "card_id": "FROG"
+                }
+            ],
+            "targeting": "any_minion"
+        },
+        {
             "id": "POLYMORPH",
             "name": "Polymorph",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "MAGE",
             "cost": 4,
             "text": "Transform a minion into a 1/1 Sheep.",
             "on_cast": [
@@ -2417,6 +2607,7 @@
             "name": "Hellfire",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "WARLOCK",
             "cost": 3,
             "text": "Deal 3 to all characters.",
             "on_cast": [
@@ -2433,6 +2624,7 @@
             "name": "Consecration",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "PALADIN",
             "cost": 4,
             "text": "Deal 2 damage to all enemies.",
             "on_cast": [
@@ -2449,6 +2641,7 @@
             "name": "Arcane Explosion",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "MAGE",
             "cost": 2,
             "text": "Deal 1 damage to all enemy minions.",
             "on_cast": [
@@ -2465,6 +2658,7 @@
             "name": "Flamestrike",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "MAGE",
             "cost": 7,
             "text": "Deal 4 damage to all enemy minions.",
             "on_cast": [
@@ -2481,6 +2675,7 @@
             "name": "Whirlwind",
             "type": "SPELL",
             "rarity": "Common",
+            "class": "WARRIOR",
             "cost": 1,
             "text": "Deal 1 damage to all minions.",
             "on_cast": [
@@ -2529,6 +2724,7 @@
             "name": "Feral Spirit",
             "type": "SPELL",
             "rarity": "Rare",
+            "class": "SHAMAN",
             "cost": 3,
             "text": "Summon two 2/3 Spirit Wolves with Taunt.",
             "on_cast": [
@@ -2544,9 +2740,9 @@
             "id": "BRAWL",
             "name": "Brawl",
             "type": "SPELL",
-            "cost": 5,
-            "rarity": "Rare",
             "class": "WARRIOR",
+            "rarity": "Rare",
+            "cost": 5,
             "text": "Destroy all minions except one random survivor.",
             "targeting": "none",
             "on_cast": [
@@ -2583,6 +2779,7 @@
             "name": "Grommash Hellscream",
             "type": "MINION",
             "rarity": "Legendary",
+            "class": "WARRIOR",
             "minion_type": "None",
             "cost": 8,
             "attack": 4,
@@ -2665,6 +2862,7 @@
             "id": "ARCHMAGE_ANTONIDAS",
             "name": "Archmage Antonidas",
             "type": "MINION",
+            "class": "MAGE",
             "cost": 7,
             "attack": 5,
             "health": 7,
@@ -2691,6 +2889,7 @@
             "id": "LORD_JARAXXUS",
             "name": "Lord Jaraxxus",
             "type": "MINION",
+            "class": "WARLOCK",
             "cost": 9,
             "attack": 3,
             "health": 15,

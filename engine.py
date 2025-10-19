@@ -184,6 +184,17 @@ class Game:
                     continue
                 keep.append(mod)
             p.temp_cost_mods = keep
+        
+        # --- Player temp hero-attack buffs expire at end of their turn
+        p = self.players[ending_pid]
+        if getattr(p, "temp_hero_attack", 0) > 0:
+            expired = p.temp_hero_attack
+            p.temp_hero_attack = 0
+            ev.append(Event("HeroBuffExpired", {
+                "player": ending_pid,
+                "attack_delta": -expired,
+                "reason": "EndOfTurn"
+            }))
 
         return ev
 
@@ -683,10 +694,11 @@ class Game:
 
     def hero_can_attack(self, pid:int) -> bool:
         p = self.players[pid]
+        temp_atk = getattr(p, "temp_hero_attack", 0)
+        weapon_ok = (p.weapon is not None and p.weapon.attack > 0)
         return (
             pid == self.active_player
-            and p.weapon is not None
-            and p.weapon.attack > 0
+            and (weapon_ok or temp_atk > 0)
             and not p.hero_has_attacked_this_turn
             and not p.hero_frozen
         )
@@ -710,8 +722,10 @@ class Game:
         p   = self.players[pid]
         opp = self.other(pid)
         w   = p.weapon
-        if w is None or w.attack <= 0:
-            raise IllegalAction("No usable weapon")
+        temp_atk = getattr(p, "temp_hero_attack", 0)
+        hero_attack_value = (w.attack if w else 0) + temp_atk
+        if hero_attack_value <= 0:
+            raise IllegalAction("Hero cannot attack")
 
         # Taunt / legality
         allowed_mins, face_ok = self.hero_legal_targets(pid)
@@ -743,10 +757,10 @@ class Game:
 
             # capture minion's attack BEFORE dealing damage (simultaneous combat)
             retaliate = max(0, tgt.attack)
-
-            ret_to_minion = self._damage_minion(tgt, w.attack, source=w.name)
+            ret_to_minion = self._damage_minion(tgt, hero_attack_value, source=(w.name if w else "Hero"))
             ev += ret_to_minion
 
+            
             if retaliate > 0:
                 ret_to_hero = self.deal_damage_to_player(pid, retaliate, source=tgt.name)
                 ev += ret_to_hero
@@ -755,7 +769,8 @@ class Game:
                     ev += self._run_minion_triggers(tgt, "self_deals_damage", {"player": pid})
 
             # spend durability
-            ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
+            if w is not None:
+                ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
 
             p.hero_has_attacked_this_turn = True
             self.history += ev
@@ -784,8 +799,9 @@ class Game:
                 "target_player": opp
             })
 
-            ev += self.deal_damage_to_player(opp, w.attack, source=w.name)
-            ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
+            ev += self.deal_damage_to_player(opp, hero_attack_value, source=(w.name if w else "Hero"))
+            if w is not None:
+                ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
 
             p.hero_has_attacked_this_turn = True
             self.history += ev
@@ -2747,6 +2763,80 @@ def _fx_summon(params, json_db_tokens):
 
     return run
 
+def _fx_mind_control(params):
+    """
+    Take control of an enemy minion.
+    JSON:
+      { "effect": "mind_control" }
+    """
+    def run(g, source_obj, target):
+        kind, obj = _resolve_tagged_target(g, target)
+        if kind != "minion" or obj is None:
+            return []
+
+        # Which player cast the spell
+        caster_pid = getattr(source_obj, "owner", g.active_player)
+        if obj.owner == caster_pid:
+            return []  # already yours; nothing to do
+
+        # Require space (extra safety—UI also blocks this via PLAY_REQUIREMENTS)
+        if len(g.players[caster_pid].board) >= 7:
+            return []
+
+        # Remove from old board
+        old_pid = obj.owner
+        old_board = g.players[old_pid].board
+        for i, m in enumerate(old_board):
+            if m.id == obj.id:
+                old_board.pop(i)
+                break
+
+        # Switch sides
+        obj.owner = caster_pid
+        # Make sure it can't attack immediately (HS-style)
+        obj.summoned_this_turn = True
+        obj.has_attacked_this_turn = True
+
+        # Drop at the right end of new board (or you can insert_at)
+        g.players[caster_pid].board.append(obj)
+
+        return [Event("MinionStolen", {
+            "minion": obj.id,
+            "name": obj.name,
+            "from": old_pid,
+            "to": caster_pid
+        })]
+    return run
+
+
+def _fx_temp_add_attack_to_character(params):
+    """
+    Give +Attack this turn to a tagged character (minion or hero).
+    JSON:
+      { "effect": "temp_add_attack_to_character", "amount": 3 }
+    """
+    amt = int(params.get("amount", 0))
+
+    def run(g, source_obj, target):
+        if amt == 0:
+            return []
+        kind, obj = _resolve_tagged_target(g, target)
+        # Minion: use the existing temporary minion buff system
+        if kind == "minion" and obj is not None:
+            caster = getattr(source_obj, "owner", g.active_player)
+            return g._apply_temp_to_minion(obj, caster_pid=caster, attack=amt)
+        # Hero/player: attach a temp attack number that expires at end of that player's turn
+        if kind == "player" and obj in (0, 1):
+            pid = obj
+            p = g.players[pid]
+            before = getattr(p, "temp_hero_attack", 0)
+            p.temp_hero_attack = before + amt
+            return [Event("HeroTempAttack", {"player": pid, "added": amt, "total": p.temp_hero_attack})]
+        return []
+    return run
+
+
+
 def _fx_temp_modify(params):
     # Any subset is fine
     a  = int(params.get("attack", 0))
@@ -3381,6 +3471,7 @@ def _effect_factory(name, params, json_tokens):
         "discover_equal_remaining_mana":    _fx_discover_equal_remaining_mana,
         "temp_modify":                      _fx_temp_modify,
         "temp_cost":                        _fx_temp_cost,
+        "temp_add_attack_to_character":     _fx_temp_add_attack_to_character,
         "discard_random":                   _fx_discard_random,
         "random_pings":                     _fx_random_pings,
         "random_enemy_damage":              _fx_random_enemy_damage,
@@ -3396,6 +3487,7 @@ def _effect_factory(name, params, json_tokens):
         "copy_self_as_target_minion":       _fx_copy_self_as_target_minion,
         "add_self_health_from_hand":        _fx_add_self_health_from_hand,
         "replace_hero":                     _fx_replace_hero,
+        "mind_control":                     _fx_mind_control
         
     }
     if name not in table:
@@ -3500,6 +3592,7 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
         secret_spec = raw.get("secret")
         cost_aura = raw.get("cost_aura")  # dict or None
         auras_list = list(raw.get("auras", [])) # NEW: list of generic auras
+        card_class = raw.get("class", "NEUTRAL")
 
         triggers_map: Dict[str, List[Callable]] = {}
         for tr in raw.get("triggers", []) or []:
@@ -3523,7 +3616,8 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             spell_damage=spell_dmg,
             minion_type=mtype,
             triggers_map=triggers_map,
-            cost_aura_spec=cost_aura, auras=auras_list
+            cost_aura_spec=cost_aura, auras=auras_list,
+            card_class=card_class
         )
 
         setattr(card, "enrage_spec", enrage_spec)
