@@ -41,9 +41,50 @@ class Game:
         self.current_battlecry_minion_id: Optional[int] = None
         self.current_battlecry_owner: Optional[int] = None
         self._spell_countered = False
+        for pid in (0, 1):
+            # amount that will be locked next turn
+            setattr(self.players[pid], "overload_next", getattr(self.players[pid], "overload_next", 0))
+            # amount currently locked this turn
+            setattr(self.players[pid], "overload_locked", getattr(self.players[pid], "overload_locked", 0))
 
     def other(self, pid:int) -> int:
         return 1 - pid
+    
+        # -------- Overload helpers --------
+    def add_overload(self, pid: int, amount: int):
+        """Queue 'amount' of Overload for pid's *next* turn (dynamic-friendly)."""
+        if amount <= 0:
+            return []
+        p = self.players[pid]
+        before = p.overload_next
+        p.overload_next = max(0, before + int(amount))
+        return [Event("OverloadQueued", {"player": pid, "added": int(amount), "total_next": p.overload_next})]
+
+    def _apply_start_of_turn_overload(self, pid: int) -> List[Event]:
+        """
+        Move queued overload to locked, reduce usable mana this turn,
+        and clear the queue.
+        """
+        p = self.players[pid]
+        ev: List[Event] = []
+        # Move "next" → "locked"
+        locked = max(0, int(getattr(p, "overload_next", 0)))
+        p.overload_locked = locked
+        p.overload_next = 0
+        if locked > 0:
+            ev.append(Event("OverloadLocked", {"player": pid, "locked": locked}))
+        # Mana will be clamped in start_turn
+        return ev
+
+    def _free_end_of_turn_overload(self, pid: int) -> List[Event]:
+        """Unlock current turn’s overload locks (classic HS timing)."""
+        p = self.players[pid]
+        if getattr(p, "overload_locked", 0) > 0:
+            freed = p.overload_locked
+            p.overload_locked = 0
+            return [Event("OverloadFreed", {"player": pid, "freed": freed})]
+        return []
+
 
     def _apply_temp_to_minion(self, m: Minion, caster_pid: int,
                               *, attack=0, health=0, max_health=0,
@@ -99,6 +140,7 @@ class Game:
             if k == "taunt":           m.taunt = m.taunt or kw[k] > 0
             elif k == "charge":        m.charge = m.charge or kw[k] > 0
             elif k == "rush":          m.rush = m.rush or kw[k] > 0
+            elif k == "windfury":      m.windfury = m.windfury or kw[k] > 0
             elif k in ("divine_shield","divine_shielded"):
                 # divine shield treated like a boolean grant; temp stacks keep it on (won't re-pop bubbles).
                 if kw[k] > 0: m.divine_shield = True
@@ -170,6 +212,8 @@ class Game:
                         m.charge = (m.charge and _kw_total("charge") > 0) or ("Charge" in m.base_keywords)
                     if "rush" in (kw or {}):
                         m.rush = (m.rush and _kw_total("rush") > 0) or ("Rush" in m.base_keywords)
+                    if "windfury" in (kw or {}):
+                        m.windfury = (m.windfury and _kw_total("windfury") > 0) or ("Windfury" in m.base_keywords)
                     if "divine_shield" in (kw or {}):
                         # do not force-remove a live shield if it came from elsewhere or from base card
                         m.divine_shield = m.divine_shield and (_kw_total("divine_shield") > 0 or ("Divine Shield" in m.base_keywords))
@@ -582,16 +626,28 @@ class Game:
         if pid == 0:
             self.turn += 1
         turn_number = self.turn if pid == 0 else max(1, self.turn)
+
+        # rollover queued overload to locked and clamp mana
+        ev = [Event("TurnStart", {"player": pid, "turn": turn_number})]
+        ev += self._apply_start_of_turn_overload(pid)
+
+        # growth
         p.max_mana = min(10, p.max_mana + 1)
-        p.mana = p.max_mana
+
+        # available mana is max minus locked (cannot go below 0)
+        p.mana = max(0, p.max_mana - getattr(p, "overload_locked", 0))
+
+        #p.mana = p.max_mana
         p.hero_power_used_this_turn = False
         p.hero_has_attacked_this_turn = False
+        p.hero_attacks_this_turn = 0  
         for m in p.board:
             m.exhausted = False
             m.has_attacked_this_turn = False
             m.summoned_this_turn = False
+            m.attacks_this_turn = 0 
             m.can_attack = m.charge or (not m.exhausted)
-        ev = [Event("TurnStart", {"player": pid, "turn": turn_number})]
+        #ev = [Event("TurnStart", {"player": pid, "turn": turn_number})]
         ev += p.draw(self, 1)
         return ev
 
@@ -611,6 +667,9 @@ class Game:
 
         # thaw after this player’s turn finishes
         ev += self._thaw_owner(pid)   # NEW
+
+        # free the locks at the end of THIS player's turn
+        ev += self._free_end_of_turn_overload(pid)
 
         ev += self.start_turn(self.active_player)
         self.history += ev
@@ -696,10 +755,12 @@ class Game:
         p = self.players[pid]
         temp_atk = getattr(p, "temp_hero_attack", 0)
         weapon_ok = (p.weapon is not None and p.weapon.attack > 0)
+        allowed = _hero_allowed_attacks_this_turn(p)
         return (
             pid == self.active_player
             and (weapon_ok or temp_atk > 0)
             and not p.hero_has_attacked_this_turn
+            and (p.hero_attacks_this_turn < allowed)
             and not p.hero_frozen
         )
 
@@ -771,8 +832,10 @@ class Game:
             # spend durability
             if w is not None:
                 ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
-
-            p.hero_has_attacked_this_turn = True
+            
+            p.hero_attacks_this_turn = p.hero_attacks_this_turn + 1
+            #p.hero_has_attacked_this_turn = True
+            p.hero_has_attacked_this_turn = (p.hero_attacks_this_turn >= _hero_allowed_attacks_this_turn(p))
             self.history += ev
             return ev
 
@@ -788,7 +851,8 @@ class Game:
             # Defender secrets first
             ev += self._trigger_secrets(opp, "hero_attacked")
 
-            # >>> RECHECK hero can still attack (weapon removed, atk 0, or hero died)
+            # Recheck only that we can still attack NOW (weapon destroyed, atk dropped to 0, frozen, or hero died)
+            # IMPORTANT: do NOT pre-increment hero_attacks_this_turn before this recheck.
             if not self.hero_can_attack(pid):
                 self.history += ev
                 return ev
@@ -799,13 +863,22 @@ class Game:
                 "target_player": opp
             })
 
+            # Recompute current attack in case triggers changed it
+            w = p.weapon
+            temp_atk = getattr(p, "temp_hero_attack", 0)
+            hero_attack_value = (w.attack if w else 0) + temp_atk
+
             ev += self.deal_damage_to_player(opp, hero_attack_value, source=(w.name if w else "Hero"))
             if w is not None:
                 ev += self.lose_weapon_durability(pid, 1, source="HeroAttack")
 
-            p.hero_has_attacked_this_turn = True
+            # Now spend the swing and mark used
+            p.hero_attacks_this_turn = p.hero_attacks_this_turn + 1
+            p.hero_has_attacked_this_turn = (p.hero_attacks_this_turn >= _hero_allowed_attacks_this_turn(p))
+
             self.history += ev
             return ev
+
 
         raise IllegalAction("Hero attack needs a target")
 
@@ -883,6 +956,8 @@ class Game:
         p.mana -= eff_cost
         p.hand.pop(hand_index)
         ev: List[Event] = [Event("CardPlayed", {"player": pid, "card": cid, "name": card.name})]
+        
+
 
         if card.type == "MINION":
             if len(p.board) >= 7:
@@ -894,6 +969,7 @@ class Game:
                 charge=("Charge" in card.keywords),
                 rush=("Rush" in card.keywords),
                 divine_shield = ("Divine Shield" in card.keywords),
+                windfury=("Windfury" in card.keywords),
                 summoned_this_turn=True,
                 cost=card.cost,
                 rarity=card.rarity,
@@ -1006,6 +1082,7 @@ class Game:
             p.weapon = Weapon(name=card.name, attack=card.attack,
                               durability=card.health, card_id=card.id,
                               triggers_map=dict(getattr(card, "triggers_map", {})),
+                              windfury=("Windfury" in getattr(card, "keywords", []))
             )
             ev.append(Event("WeaponEquipped", {
                 "player": pid, "name": card.name,
@@ -1135,7 +1212,9 @@ class Game:
         return ev
 
     def equip_weapon(self, pid: int, name: str, attack: int, durability: int,
-                 *, card_id: str = "", triggers_map: Optional[Dict[str, List[Callable]]] = None) -> List[Event]:
+                 *, card_id: str = "", 
+                 triggers_map: Optional[Dict[str, List[Callable]]] = None, 
+                 windfury: bool = False) -> List[Event]:
         p = self.players[pid]
         ev: List[Event] = []
         if p.weapon is not None:
@@ -1144,7 +1223,8 @@ class Game:
             ev.append(Event("WeaponDestroyed", {"player": pid, "name": old.name, "reason": "Replaced"}))
         p.weapon = Weapon(
             name=name, attack=attack, durability=durability,
-            card_id=card_id, triggers_map=dict(triggers_map or {})
+            card_id=card_id, triggers_map=dict(triggers_map or {}),
+            windfury=windfury 
         )
         ev.append(Event("WeaponEquipped", {"player": pid, "name": name, "attack": attack, "durability": durability}))
         self.history += ev
@@ -1268,7 +1348,9 @@ class Game:
             raise IllegalAction("You don't control that minion")
         if getattr(att, "cant_attack", False):
             raise IllegalAction("This minion can't attack")
-        if att.has_attacked_this_turn or not att.is_alive():
+        if not att.is_alive():
+            raise IllegalAction("Minion cannot attack")
+        if getattr(att, "attacks_this_turn", 0) >= _allowed_attacks_this_turn(att):
             raise IllegalAction("Minion cannot attack")
         if att.attack <= 0:
             raise IllegalAction("Minion has 0 attack")
@@ -1295,14 +1377,17 @@ class Game:
                 raise IllegalAction("This minion can't attack another minion yet")
 
             # SIMULTANEOUS DAMAGE
-            att.has_attacked_this_turn = True
+            #att.has_attacked_this_turn = True
             ev: List[Event] = [Event("Attack", {"attacker": att.id, "target": tgt.id})]
+            att.attacks_this_turn = getattr(att, "attacks_this_turn", 0) + 1
 
             # SECRETS: defender 'opp' minion is being attacked
             ev += self._trigger_secrets(opp, "minion_attacked")
 
             a_dmg = att.attack
-            t_dmg = tgt.attack
+            t_dmg = tgt.attack  
+
+            
 
             # --- attacker deals damage to target ---
             ret1 = self._damage_minion(tgt, a_dmg, source=att.name)
@@ -1317,6 +1402,7 @@ class Game:
             if any(e.kind == "MinionDamaged" and e.payload.get("minion") == att.id and e.payload.get("amount", 0) > 0 for e in ret2):
                 ev += self._run_minion_triggers(tgt, "self_deals_damage", {"minion": att.id})
 
+            att.has_attacked_this_turn = att.attacks_this_turn >= _allowed_attacks_this_turn(att)
             self.history += ev
             return ev
 
@@ -1327,9 +1413,9 @@ class Game:
         if not can_vs_face:
             raise IllegalAction("This minion can't attack the enemy hero yet")
 
-        att.has_attacked_this_turn = True
+        #att.has_attacked_this_turn = True
         ev = [Event("Attack", {"attacker": att.id, "target": f"player:{opp}"})]
-
+        att.attacks_this_turn = getattr(att, "attacks_this_turn", 0) + 1
         # SECRETS: defender 'opp' hero is being attacked
         ev += self._trigger_secrets(opp, "hero_attacked")
 
@@ -1340,12 +1426,14 @@ class Game:
             self.history += ev
             return ev
 
+        
         ret_face = self.deal_damage_to_player(opp, att.attack, source=att.name)
         ev += ret_face
         # Only if real damage got through armor
         if any(e.kind == "PlayerDamaged" and e.payload.get("player") == opp and e.payload.get("amount", 0) > 0 for e in ret_face):
             ev += self._run_minion_triggers(att, "self_deals_damage", {"player": opp})
 
+        att.has_attacked_this_turn = att.attacks_this_turn >= _allowed_attacks_this_turn(att)
         self.history += ev
         return ev
     
@@ -1381,6 +1469,15 @@ class Game:
                 
             kws = card_spec.get("keywords", []) or []
 
+            tok_triggers: Dict[str, List[Callable]] = {}
+            for tr in (card_spec.get("triggers") or []):
+                on = str(tr.get("on", "")).lower().strip()
+                effs = tr.get("effects", []) or []
+                if on:
+                    tok_triggers.setdefault(on, []).append(
+                        _compile_effects(effs, self.cards_db.get("_TOKENS", {}))
+                    )
+
             m = Minion(
                 id=self.next_minion_id,
                 owner=owner,
@@ -1392,6 +1489,7 @@ class Game:
                 divine_shield = ("Divine Shield" in kws),
                 charge=("Charge" in kws),
                 rush=("Rush" in kws),
+                windfury=("Windfury" in kws),
                 exhausted=not ("Charge" in kws or "Rush" in kws),
                 cost=int(card_spec.get("cost", 0)),
                 rarity=str(card_spec.get("rarity", "Common")),
@@ -1407,7 +1505,7 @@ class Game:
                 enrage_active=False,
                 minion_type=str(card_spec.get("minion_type", "None")),
                 base_minion_type=str(card_spec.get("minion_type", "None")),
-                triggers_map=dict(card_spec.get("triggers_map", {})),
+                triggers_map=tok_triggers,
                 cost_aura_spec=card_spec.get("cost_aura"),
                 auras=list(card_spec.get("auras", [])),
                 cant_attack = ("Can't Attack" in kws) or ("Cant Attack" in kws)
@@ -1511,6 +1609,13 @@ def _resolve_tagged_target(g, target):
         if loc:
             return ("minion", loc[2])
     return (None, None)
+
+def _allowed_attacks_this_turn(m: 'Minion') -> int:
+    return 2 if getattr(m, "windfury", False) else 1
+
+def _hero_allowed_attacks_this_turn(p: 'PlayerState') -> int:
+    return 2 if (p.weapon and getattr(p.weapon, "windfury", False)) else 1
+
 
 def _apply_adjacent_buff(g, owner_pid: int, summoned_minion_id: int, *, attack=0, health=0, taunt=False):
     loc = g.find_minion(summoned_minion_id)
@@ -1900,11 +2005,13 @@ def _fx_equip_weapon(params, json_db_tokens):
     inline_a = params.get("attack")
     inline_d = params.get("durability")
     inline_name = params.get("name", "Weapon")
+    inline_wf = bool(params.get("windfury", False)) 
 
     def run(g, source_obj, target):
         pid = getattr(source_obj, "owner", g.active_player)
         card_id = ""
         trig_map = {}
+        windfury = inline_wf 
         if token_id:
             spec = dict(json_db_tokens.get(token_id, {}))
             if not spec and token_id in g.cards_db:
@@ -1918,10 +2025,13 @@ def _fx_equip_weapon(params, json_db_tokens):
             atk  = int(spec.get("attack", inline_a or 0))
             dur  = int(spec.get("durability", inline_d or 0))
             card_id = spec.get("id", "")
+            kws = list(spec.get("keywords", []))
+            if any(k == "Windfury" for k in kws):
+                windfury = True
         else:
             name, atk, dur = inline_name, int(inline_a or 0), int(inline_d or 0)
 
-        return g.equip_weapon(pid, name, atk, dur, card_id=card_id, triggers_map=trig_map)  # NEW
+        return g.equip_weapon(pid, name, atk, dur, card_id=card_id, triggers_map=trig_map, windfury=windfury)  # NEW
     return run
 
 def _fx_destroy_weapon(params):
@@ -1964,6 +2074,30 @@ def _fx_gain_armor(params):
         return [Event("ArmorGained", {"player": pid, "amount": amt})]
     return run
 
+
+def _fx_add_overload(params):
+    """
+    Queue Overload for the source owner (applies next turn).
+    JSON:
+      { "effect":"add_overload", "amount":1 }
+    Or dynamic:
+      { "effect":"add_overload", "from":"spell_damage" }   # equals current Spell Damage
+    """
+    base = int(params.get("amount", 0))
+    src  = str(params.get("from", "")).lower().strip()
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        amt = base
+        if src == "spell_damage":
+            amt = g.get_spell_damage(owner)
+        # clamp non-negative
+        amt = max(0, int(amt))
+        return g.add_overload(owner, amt)
+    return run
+
+
+
 def _fx_add_keyword(params):
     raw = str(params["keyword"]).strip().lower()
 
@@ -1983,6 +2117,9 @@ def _fx_add_keyword(params):
         elif raw in ("rush",):
             m.rush = True
             pretty = "Rush"
+        elif raw in ("windfury",):
+            m.windfury = True
+            pretty = "Windfury"
         elif raw in ("divine_shield", "divineshield", "divine shield"):
             m.divine_shield = True
             pretty = "Divine Shield"
@@ -2718,6 +2855,7 @@ def _fx_silence(params):
         ev += g._disable_aura(m)     # remove active aura first
         ev += g._update_enrage(m)
         m.taunt = m.charge = m.rush = m.divine_shield = False
+        m.windfury = False
         m.temp_stats.clear()
         m.triggers_map.clear()
         m.deathrattle = None
@@ -2835,6 +2973,51 @@ def _fx_temp_add_attack_to_character(params):
         return []
     return run
 
+def _fx_temp_modify_aoe(params):
+    """
+    Temporarily modify multiple minions until end of *caster's* turn.
+    JSON:
+      {
+        "effect": "temp_modify_aoe",
+        "attack": 3,
+        "health": 0,
+        "max_health": 0,
+        "add_keywords": [],
+        "remove_keywords": [],
+        "target": "friendly_minions"  # "enemy_minions" | "all_minions" | also accepts "friendly"/"enemy"/"all"
+      }
+    """
+    a  = int(params.get("attack", 0))
+    h  = int(params.get("health", 0))
+    mh = int(params.get("max_health", 0))
+    add_kw = list(params.get("add_keywords", []) or [])
+    rem_kw = list(params.get("remove_keywords", []) or [])
+    scope = str(params.get("target", "friendly_minions")).lower()
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        if scope in ("all", "both", "all_minions"):
+            sides = [owner, g.other(owner)]
+        elif scope in ("friendly", "ally", "self", "friendly_minions"):
+            sides = [owner]
+        else:  # "enemy", "enemies", "opponent", "enemy_minions"
+            sides = [g.other(owner)]
+
+        ev: list[Event] = []
+        for pid in sides:
+            # snapshot board so mid-loop deaths/changes don’t break iteration
+            for m in list(g.players[pid].board):
+                if not m.is_alive():
+                    continue
+                ev += g._apply_temp_to_minion(
+                    m, caster_pid=owner,
+                    attack=a, health=h, max_health=mh,
+                    add_keywords=add_kw, remove_keywords=rem_kw
+                )
+        return ev
+
+    return run
 
 
 def _fx_temp_modify(params):
@@ -2944,6 +3127,7 @@ def _fx_transform(params, json_db_tokens):
         m.rush            = ("Rush" in kws)
         m.divine_shield   = ("Divine Shield" in kws)
         m.cant_attack     = ("Can't Attack" in kws) or ("Cant Attack" in kws)
+        m.windfury        = ("Windfury" in kws)
 
         # Types / spell damage / enrage / auras / triggers
         m.minion_type       = str(raw.get("minion_type", "None"))
@@ -2960,7 +3144,14 @@ def _fx_transform(params, json_db_tokens):
         # Note: json token specs don't contain compiled callables; default to empty.
         # If you later want token deathrattles from your main cards.json, you could
         # attach them here via a helper similar to _POST_SUMMON_HOOK.
-        m.triggers_map      = dict(raw.get("triggers_map", {}))
+        m.triggers_map = {}
+        for tr in (raw.get("triggers") or []):
+            on = str(tr.get("on", "")).lower().strip()
+            effs = tr.get("effects", []) or []
+            if on:
+                m.triggers_map.setdefault(on, []).append(
+                    _compile_effects(effs, g.cards_db.get("_TOKENS", {}))
+                )
 
         # Re-enable any auras the *new* form provides, and refresh adjacency on this side
         #ev += g._enable_aura(m)
@@ -3375,6 +3566,7 @@ def _fx_copy_self_as_target_minion(params):
         me.triggers_map   = dict(getattr(tgt, "triggers_map", {}))
         me.enrage_spec    = getattr(tgt, "enrage_spec", None)
         me.enrage_active  = bool(getattr(tgt, "enrage_active", False))
+        me.windfury       = bool(getattr(tgt, "windfury", False))
 
         # Clear temporary stacks from the old self (those shouldn’t carry over)
         me.temp_stats.clear()
@@ -3446,6 +3638,7 @@ def _effect_factory(name, params, json_tokens):
         "add_attack":                       _fx_add_attack,
         "add_stats":                        _fx_add_stats,
         "add_self_stats":                   _fx_add_self_stats,
+        "add_overload":                     _fx_add_overload,
         "random_add_stat":                  _fx_random_add_stat,
         "silence":                          _fx_silence,
         "freeze":                           _fx_freeze,
@@ -3469,6 +3662,7 @@ def _effect_factory(name, params, json_tokens):
         "multiply_health":                  _fx_multiply_health,
         "weapon_durability_delta":          _fx_weapon_durability_delta,
         "discover_equal_remaining_mana":    _fx_discover_equal_remaining_mana,
+        "temp_modify_aoe":                  _fx_temp_modify_aoe,
         "temp_modify":                      _fx_temp_modify,
         "temp_cost":                        _fx_temp_cost,
         "temp_add_attack_to_character":     _fx_temp_add_attack_to_character,

@@ -256,6 +256,7 @@
             "id": "SEARING_TOTEM",
             "name": "Searing Totem",
             "type": "MINION",
+            "class": "SHAMAN",
             "cost": 1,
             "attack": 1,
             "health": 1,
@@ -268,6 +269,7 @@
             "id": "STONECLAW_TOTEM",
             "name": "Stoneclaw Totem",
             "type": "MINION",
+            "class": "SHAMAN",
             "cost": 1,
             "attack": 0,
             "health": 2,
@@ -281,6 +283,7 @@
         "HEALING_TOTEM": {
             "id": "HEALING_TOTEM",
             "name": "Healing Totem",
+            "class": "SHAMAN",
             "type": "MINION",
             "cost": 1,
             "attack": 0,
@@ -306,6 +309,7 @@
             "id": "WRATH_OF_AIR_TOTEM",
             "name": "Wrath of Air Totem",
             "type": "MINION",
+            "class": "SHAMAN",
             "cost": 1,
             "attack": 0,
             "health": 2,
@@ -1429,6 +1433,62 @@
             "targeting": "any_minion"
         },
         {
+            "id": "BLOODLUST",
+            "name": "Bloodlust",
+            "type": "SPELL",
+            "class": "SHAMAN",
+            "cost": 5,
+            "rarity": "Rare",
+            "text": "Give your minions +3 Attack this turn.",
+            "on_cast": [
+                {
+                    "effect": "temp_modify_aoe",
+                    "attack": 3,
+                    "target": "friendly_minions"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "LIGHTNING_BOLT",
+            "name": "Lightning Bolt",
+            "type": "SPELL",
+            "cost": 1,
+            "text": "Deal 3 damage. Overload: (1).",
+            "class": "SHAMAN",
+            "targeting": "enemy_character",
+            "on_cast": [
+                {
+                    "effect": "deal_damage",
+                    "amount": 3
+                },
+                {
+                    "effect": "add_overload",
+                    "amount": 1
+                }
+            ]
+        },
+        {
+            "id": "LIGHTNING_STORM",
+            "name": "Lightning Storm",
+            "type": "SPELL",
+            "cost": 3,
+            "text": "Deal 3 damage to all enemy minions. Overload: (1).",
+            "class": "SHAMAN",
+            "targeting": "none",
+            "on_cast": [
+                {
+                    "effect": "aoe_damage_minions",
+                    "amount": 3,
+                    "target": "enemy_minions"
+                },
+                {
+                    "effect": "add_overload",
+                    "amount": 1
+                }
+            ]
+        },
+        {
             "id": "NOVICE_ENGINEER",
             "name": "Novice Engineer",
             "type": "MINION",
@@ -1442,6 +1502,24 @@
                 {
                     "effect": "draw",
                     "count": 1
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "STORMFORGED_AXE",
+            "name": "Stormforged Axe",
+            "type": "WEAPON",
+            "class": "SHAMAN",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "text": "Overload: (1).",
+            "on_cast": [
+                {
+                    "effect": "add_overload",
+                    "amount": 1
                 }
             ],
             "targeting": "none"
@@ -2818,6 +2896,44 @@
                     ]
                 }
             ],
+            "targeting": "none"
+        },
+        {
+            "id": "DOOMHAMMER",
+            "name": "Doomhammer",
+            "type": "WEAPON",
+            "class": "SHAMAN",
+            "rarity": "Epic",
+            "cost": 5,
+            "attack": 2,
+            "health": 8,
+            "keywords": [
+                "Windfury"
+            ],
+            "on_cast": [
+                {
+                    "effect": "add_overload",
+                    "amount": 2
+                }
+            ],
+            "text": "Windfury. Overload: (2)."
+        },
+        {
+            "id": "ALAKIR_THE_WINDLORD",
+            "name": "Al'Akir The Windlord",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "minion_type": "Elemental",
+            "cost": 8,
+            "attack": 3,
+            "health": 6,
+            "keywords": [
+                "Charge",
+                "Divine Shield",
+                "Taunt",
+                "Windfury"
+            ],
+            "text": "Charge, Divine Shield, Taunt, Windfury",
             "targeting": "none"
         },
         {

@@ -35,6 +35,7 @@ class Weapon:
     attack: int
     durability: int
     max_durability: int = 0
+    windfury: bool = False
     card_id: str = ""
     triggers_map: Dict[str, List[Callable]] = field(default_factory=dict)
 
@@ -60,6 +61,7 @@ class Minion:
     can_attack: bool = False
     exhausted: bool = True
     silenced: bool = False
+    windfury: bool = False                  # has Windfury right now (after silences/temps)
     cant_attack: bool = False   # (e.g., Ragnaros)  
     deathrattle: Optional[Callable[['Game','Minion'], List[Event]]] = None # type: ignore
     aura_spec: Optional[Dict[str, Any]] = None   # e.g. {"scope":"other_friendly_minions","attack":1,"health":1}
@@ -73,6 +75,7 @@ class Minion:
     temp_keywords: Dict[int, Dict[str, int]] = field(default_factory=dict)  # {pid: {"charge":N,"taunt":N,"rush":N,"divine_shield":N}}
 
     has_attacked_this_turn: bool = False
+    attacks_this_turn: int = 0              # number of attacks already made this turn
 
     summoned_this_turn: bool = True
     cost: int = 0  # original mana cost to display on-board
@@ -130,6 +133,7 @@ class PlayerState:
     hero_frozen: bool = False
     weapon: Optional[Weapon] = None
     hero_has_attacked_this_turn: bool = False
+    hero_attacks_this_turn: int = 0
     temp_cost_mods: List[Dict[str, Any]] = field(default_factory=list)
 
     def draw(self, g:'Game', n:int=1) -> List[Event]: # type: ignore

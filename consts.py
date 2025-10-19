@@ -83,7 +83,7 @@ HERO_COLORS = {
     "PALADIN": (210, 175, 60),
     "MAGE":    (60, 120, 230),
     "HUNTER":  (35, 155, 75),
-    "SHAMAN":  (25, 105, 185),  # deep cyan/blue
+    "SHAMAN":  (25, 88, 155),  # deep cyan/blue
     "ROGUE":   (80, 80, 80),    # charcoal/steel
     "PRIEST":  (170, 170, 170), # light/holy white
     "DRUID":   (165, 110, 30),  # warm amber/bark

@@ -200,7 +200,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    desired = ["HEX", "ROCKBITER_WEAPON", "ARATHI_WEAPONSMITH"]
+    desired = ["DOOMHAMMER"]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -248,7 +248,8 @@ playable_decks = [
     "Classic Warlock Deck (Zoo Aggro)",
     "Handlock",
     "Classic Warrior Deck (Control)",
-    "Classic Priest Deck (Control / Value)"
+    "Classic Priest Deck (Control / Value)",
+    "Classic Shaman Deck (Midrange / Control)"
 ]
 
 def get_random_deck(playable_decks: list):
@@ -256,7 +257,7 @@ def get_random_deck(playable_decks: list):
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Shaman Deck (Midrange / Control)")
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 
 if DEBUG:
@@ -335,16 +336,88 @@ def draw_badge_circle(center: Tuple[int,int], radius: int, color: Tuple[int,int,
     label = font.render(text, True, text_color)
     screen.blit(label, label.get_rect(center=center))
 
-def draw_mana_crystal_rect(r: pygame.Rect, mana: int, max_mana: int):
-    """Right-side vertical crystal showing current/maximum mana."""
-    # crystal body
-    pygame.draw.rect(screen, MANA_BADGE, r, border_radius=10)
-    pygame.draw.rect(screen, (20, 30, 50), r, 2, border_radius=10)
-    # numbers stacked
-    t1 = BIG.render(str(mana), True, WHITE)
-    t2 = FONT.render(f"/{max_mana}", True, WHITE)
-    screen.blit(t1, t1.get_rect(center=(r.centerx, r.centery - 8)))
-    screen.blit(t2, t2.get_rect(center=(r.centerx, r.centery + 12)))
+def draw_mana_crystal_rect(r: pygame.Rect, mana: int, max_mana: int, *, locked: int = 0, overloaded: int = 0):
+    """
+    Draw a HORIZONTAL row of 10 diamonds (left → right).
+      • locked      = LEFTMOST 'amber' slots (locked this turn; e.g., Overload carryover)
+      • overloaded  = spent THIS TURN (orange/red) after the locked portion
+      • filled      = current usable mana left this turn (blue)
+      • empty line  = capacity this turn that's not filled (outline only)
+      • dim line    = beyond current max cap
+    """
+    total_slots = 10
+
+    mana       = max(0, min(mana, total_slots))
+    max_mana   = max(0, min(max_mana, total_slots))
+    locked     = max(0, min(locked, total_slots))
+    overloaded = max(0, min(overloaded, total_slots))
+
+    # Colors
+    col_filled  = MANA_BADGE
+    col_empty   = (32, 46, 64)
+    col_dim     = (24, 30, 40)
+    col_outline = (20, 30, 50)
+    col_locked  = (220, 160, 60)
+    col_over    = (210, 80, 45)
+
+    # Interior box + sizing
+    pad_x = 0
+    pad_y = 6
+    inner = r.inflate(-pad_x*2, -pad_y*2)
+    gap = 6
+
+    # Slot width so 10 items + gaps fit; height based on inner height
+    w = max(15, int((inner.w - gap * (total_slots - 1)) / total_slots))
+    h = max(10, min(inner.h, int(w * 1.1)))  # a bit taller than wide for a diamond look
+
+    # Vertical centering
+    top_y = inner.centery - h // 2
+    start_x = inner.x
+
+    def diamond(center_x: int, top_y: int, width: int, height: int):
+        mid_x = center_x
+        left  = center_x - width // 2
+        right = center_x + width // 2
+        top   = top_y
+        mid_y = top_y + height // 2
+        bot   = top_y + height
+        return [(mid_x, top), (right, mid_y), (mid_x, bot), (left, mid_y)]
+
+    # Partition counts within the first max_mana slots
+    locked_cnt = min(locked, max_mana)
+    usable_cnt = max(0, max_mana - locked_cnt)
+    # Overload spent applies against usable slots (not the locked ones)
+    over_cnt   = min(overloaded, usable_cnt)
+    filled_cnt = min(max(0, mana), max(0, usable_cnt - over_cnt))
+    empty_cnt  = max(0, usable_cnt - over_cnt - filled_cnt)
+
+    # Draw left → right
+    for i in range(total_slots):  # i=0 leftmost
+        x = start_x + i * (w + gap) + w // 2
+        poly = diamond(x, top_y, w, h)
+        slot_idx = i + 1  # 1-based index from left
+
+        if slot_idx <= max_mana:
+            # Within the active cap: locked → spent → filled → empty
+            if slot_idx <= locked_cnt:
+                pygame.draw.polygon(screen, col_locked, poly)
+                pygame.draw.polygon(screen, col_outline, poly, 2)
+            elif slot_idx <= locked_cnt + over_cnt:
+                pygame.draw.polygon(screen, col_over, poly)
+                pygame.draw.polygon(screen, col_outline, poly, 2)
+            elif slot_idx <= locked_cnt + over_cnt + filled_cnt:
+                pygame.draw.polygon(screen, col_filled, poly)
+                pygame.draw.polygon(screen, col_outline, poly, 2)
+            else:
+                pygame.draw.polygon(screen, col_empty, poly, 2)
+        else:
+            # Beyond max cap
+            pygame.draw.polygon(screen, col_dim, poly, 2)
+
+
+    # Locked crystals: paint onto the RIGHTMOST slots so they read as “next turn”
+   
+
 
 def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
     # plate
@@ -423,9 +496,24 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
         atk_surf = FONT.render(str(atk_val), True, (60, 200, 90))
         screen.blit(atk_surf, atk_surf.get_rect(center=(cx, cy)))
 
-    # mana crystal on the right side
-    crystal = pygame.Rect(face_rect.right + CRYSTAL_PAD, face_rect.y + 6, CRYSTAL_W, face_rect.h - 12)
-    draw_mana_crystal_rect(crystal, pstate.mana, pstate.max_mana)
+    # After armor/weapon/temp-attack, place mana *after* hero power
+    HP_W = 150
+    HP_H = 52  # keep in sync with layout_board
+
+    crystal = pygame.Rect(
+        face_rect.right + CRYSTAL_PAD + HP_W + CRYSTAL_PAD,  # after the power
+        face_rect.y + 6,
+        CRYSTAL_W,                                           # make this wider in consts if you want bigger crystals
+        HP_H                                                 # short strip to match the power button
+    )
+
+    draw_mana_crystal_rect(
+        crystal,
+        pstate.mana,
+        pstate.max_mana,
+        locked=getattr(pstate, "locked_mana", 0) or getattr(pstate, "overload_locked", 0),
+        overloaded=getattr(pstate, "overloaded", 0) or getattr(pstate, "overload_spent", 0),
+    )
 
     if getattr(pstate, "hero_frozen", False):
         draw_frozen_overlay(face_rect)
@@ -1429,11 +1517,10 @@ def layout_board(g: Game) -> Dict[str, Any]:
     hot["face_me"] = pygame.Rect(arena.centerx - FACE_W//2, face_me_y, FACE_W, FACE_H)
 
     # Hero power buttons (keep your current offsets)
-    hp_x_enemy = hot["face_enemy"].right + CRYSTAL_PAD + CRYSTAL_W + CRYSTAL_PAD
-    hp_x_me    = hot["face_me"].right    + CRYSTAL_PAD + CRYSTAL_W + CRYSTAL_PAD
+    hp_x_enemy = hot["face_enemy"].right + CRYSTAL_PAD
+    hp_x_me    = hot["face_me"].right    + CRYSTAL_PAD
     hot["hp_enemy"] = pygame.Rect(hp_x_enemy, hot["face_enemy"].y, 150, 52)
     hot["hp_me"]    = pygame.Rect(hp_x_me,    hot["face_me"].y,    150, 52)
-
     # --- NEW: hotspots for weapon badges (same centers as draw_hero_plate)
     # bottom-left of each hero plate: (x+26, bottom-18)
     if getattr(g.players[1], "weapon", None):
