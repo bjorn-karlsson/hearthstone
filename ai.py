@@ -179,12 +179,12 @@ def _raw(g: Game, cid: str) -> Dict[str, Any]:
 
 def _card_effects(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
     # prefer on_cast for spells, battlecry for minions; support both
-    effs = []
-    if isinstance(raw.get("on_cast"), list):
-        effs += raw["on_cast"]
-    if isinstance(raw.get("battlecry"), list):
-        effs += raw["battlecry"]
-    return effs
+    flat: List[Dict[str, Any]] = []
+    for effs in _collect_effect_lists(raw):
+        for e in _iter_nested_effects(effs):
+            if isinstance(e, dict) and e.get("effect"):
+                flat.append(e)
+    return flat
 
 
 def _minion_value_generic(m) -> int:
@@ -515,12 +515,17 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
     # scan effects
     has = lambda name: any(e.get("effect") == name for e in effs)
     get_first = lambda name, key, default=0: next((int(e.get(key, default)) for e in effs if e.get("effect")==name and isinstance(e.get(key, None),(int,str))), default)
+    deals_damage = has("deal_damage") or has("deal_damage_range") or has("random_enemy_damage")
 
     if has("set_health"):
         amt = get_first("set_health", "amount", 1)
         # Treat as a removal enabler; never use on friendlies
         return "set_health_debuff", {"amount": amt, "targeting": raw.get("targeting", "").lower()}
 
+    if has("heal") and not deals_damage:
+        amt = get_first("heal", "amount", 0)
+        return "heal", {"amount": amt, "targeting": (raw.get("targeting","") or "").lower()}
+    
     if has("heal"):
         amt = get_first("heal", "amount", 0)
         return "heal", {"amount": amt, "targeting": raw.get("targeting", "").lower()}
@@ -559,33 +564,95 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
     if has("add_self_health_from_hand"):
         return "drake_like", {}
 
+        # --- Damage range (e.g., Crackle 3–6)
+    if has("deal_damage_range"):
+        # Use min/max if present; target from raw targeting
+        mn = get_first("deal_damage_range", "min", 0)
+        mx = get_first("deal_damage_range", "max", 0)
+        return "burn_range", {"min": mn, "max": mx, "target": raw.get("targeting","").lower()}
+
+    # Detect "damage + heal to friendly face" pattern (Holy Fire)
+    heals_friendly_face = False
+    if deals_damage and has("heal"):
+        for e in effs:
+            if e.get("effect") == "heal" and str(e.get("target","")).lower() == "friendly_face":
+                heals_friendly_face = True
+                break
+
+    # --- Mortal Coil pattern: draw if the target died
+    if has("deal_damage") and any(e.get("effect") == "if_target_died_then" for e in effs):
+        amt = get_first("deal_damage", "amount", 0)
+        draw_count = 0
+        for e in effs:
+            if e.get("effect") == "if_target_died_then":
+                for te in (e.get("then") or []):
+                    if te.get("effect") == "draw":
+                        try: draw_count = int(te.get("count", 1))
+                        except: draw_count = 1
+                        break
+        info = {
+            "amount": amt,
+            "draw_if_kills": True,
+            "draw_count": max(1, draw_count),
+            "target": (raw.get("targeting","") or "").lower()
+        }
+        return "burn", info  # reuse existing 'burn' handler with new flags
+
+    # (keep your normal 'deal_damage' handler below — it’ll catch the rest)
+
+    # --- Equip weapon from spells/battlecries (Muster/Arathi)
+    if has("equip_weapon"):
+        return "equip_weapon", {}
+
+    # --- Mind Control (treat as premium hard remove + swing)
+    if has("mind_control"):
+        return "mind_control", {"targeting": (raw.get("targeting","") or "").lower()}
+
+    # --- Conditional destroy by Attack (SW:P / SW:D / BGH)
+    if any(e.get("effect") == "if_target_attack_at_most" for e in effs) \
+       or any(e.get("effect") == "if_target_attack_at_least" for e in effs):
+        # Collect the strongest gate present
+        at_most  = next((int(e.get("amount", 0)) for e in effs if e.get("effect")=="if_target_attack_at_most"), None)
+        at_least = next((int(e.get("amount", 0)) for e in effs if e.get("effect")=="if_target_attack_at_least"), None)
+        return "hard_remove_conditional_attack", {
+            "at_most": at_most, "at_least": at_least,
+            "targeting": (raw.get("targeting","") or "").lower()
+        }
+
+    # --- AoE heal variants (Healing Totem / Holy Nova half)
+    if has("aoe_heal") or has("aoe_heal_minions"):
+        amt = get_first("aoe_heal", "amount", get_first("aoe_heal_minions","amount",0))
+        return "heal_aoe", {"amount": amt}
+
+    # --- Temp buff forms should still act like buffs
+    if has("temp_modify") or has("temp_modify_random") \
+       or has("temp_modify_aoe") or has("temp_add_attack_to_character"):
+        return "buff", {"targeting": (raw.get("targeting","") or "").lower()}
+
+
     # Single-target damage (e.g., Slam/Arcane Shot/Fireball)
     if has("deal_damage"):
         amt = get_first("deal_damage", "amount", 0)
         tgt = next((e.get("target") for e in effs if e.get("effect")=="deal_damage" and "target" in e), None)
-
-        # --- NEW: detect "if_target_survived_then { draw ... }" (Slam pattern)
-        draw_if_survives = False
-        draw_count = 0
-        for e in effs:
-            if e.get("effect") == "if_target_survived_then":
-                then_list = e.get("then") or []
-                for te in then_list:
-                    if te.get("effect") == "draw":
-                        draw_if_survives = True
-                        try:
-                            draw_count = int(te.get("count", 1))
-                        except Exception:
-                            draw_count = 1
-                        break
-
+        
         info = {
             "amount": amt,
-            "target": (tgt or raw.get("targeting","")).lower(),
-            "draw_if_survives": draw_if_survives,
-            "draw_count": draw_count,
+            "target": (raw.get("targeting","") or "").lower(),
+            "heals_friendly_face": heals_friendly_face,
+            "draw_if_survives": False,
+            "draw_count": 0,
         }
+
+        for e in effs:
+            if e.get("effect") == "if_target_survived_then":
+                for te in (e.get("then") or []):
+                    if te.get("effect") == "draw":
+                        info["draw_if_survives"] = True
+                        try: info["draw_count"] = int(te.get("count", 1))
+                        except: info["draw_count"] = 1
+                        break
         return "burn", info
+
 
     if has("draw"):
         cnt = get_first("draw","count",1)
@@ -630,7 +697,11 @@ def classify_card(g: Game, cid: str) -> Tuple[str, Dict[str, Any]]:
     if card.type == "MINION":
         return "generic_minion", {"attack": card.attack, "health": card.health, "cost": card.cost}
 
-    return "unknown", {}
+    return "unknown", {
+        "targeting": (raw.get("targeting", "") or "").lower(),
+        "cost": getattr(card, "cost", 0),
+        "type": getattr(card, "type", None),
+    }
 
 def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int, Optional[int], Optional[int], int]]:
     p = g.players[pid]
@@ -683,9 +754,61 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
     if any(e.get("effect") == "summon" for e in _card_effects(raw)) and len(p.board) >= 7:
         return None
 
-    kind, info = classify_card(g, cid)
+    try:
+        kind, info = classify_card(g, cid)
+    except Exception:
+        # Defensive: skip just this card instead of nuking the whole decision step
+        return None
 
-        # ---- Hero replacement (Jaraxxus)
+    if kind == "equip_weapon":
+        me = g.players[pid]
+        w = me.weapon
+        # Value like your WEAPON branch, but slightly discounted (you also got the minions/effects already)
+        base = 120
+        if w is None:
+            base += 60
+        else:
+            if w.durability >= 2: base -= 20
+        return idx, None, None, base
+    
+    if kind == "mind_control":
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
+        if not enemies:
+            return None
+        tgt = max(enemies, key=threat_score_enemy_minion)
+        # Very high score: remove threat + add it to our board
+        return idx, None, tgt.id, 420 + threat_score_enemy_minion(tgt)
+
+    if kind == "hard_remove_conditional_attack":
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
+        at_most  = info.get("at_most")
+        at_least = info.get("at_least")
+        def ok(m):
+            if at_most  is not None and m.attack <= int(at_most):   return True
+            if at_least is not None and m.attack >= int(at_least):  return True
+            return False
+        cand = [m for m in enemies if ok(m)]
+        if not cand:
+            return None
+        tgt = max(cand, key=threat_score_enemy_minion)
+        return idx, None, tgt.id, 300 + threat_score_enemy_minion(tgt)
+    
+    if kind == "heal_aoe":
+        amt = int(info.get("amount", 0))
+        me = g.players[pid]
+        healed = 0
+        for m in me.board:
+            if m.is_alive() and m.health < m.max_health:
+                healed += min(amt, m.max_health - m.health)
+        face_miss = max(0, me.max_health - me.health)
+        healed += min(amt, face_miss)  # if card heals characters
+        if healed <= 0:
+            return None
+        # more value when we’re behind on board
+        behind = max(0, _board_value(g, 1 - pid) - _board_value(g, pid)) // 10
+        return idx, None, None, 80 + healed * 10 + behind
+    
+    # ---- Hero replacement (Jaraxxus)
     if kind == "hero_replace":
         # Prefer when low life or floating late-game mana
         low = g.players[pid].health <= 14
@@ -828,14 +951,21 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
                 if creates_tribe and (cost2 + F["cost"] <= g.players[pid].mana):
                     return None
 
+    if kind == "burn" and info.get("draw_if_kills"):
+        enemies = [m for m in g.players[1 - pid].board if m.is_alive() and m.health <= int(info.get("amount", 0))]
+        if not enemies:
+            return None
+        tgt = max(enemies, key=threat_score_enemy_minion)
+        # strongly prefer picking off 1-HP things for the cantrip
+        return idx, None, tgt.id, 320 + threat_score_enemy_minion(tgt)
+    
     # ---- Burn (single-target / face)  ***Slam logic is here***
     if kind == "burn":
         opp = 1 - pid
         amt = int(info.get("amount", 0))
-        can_go_face_now = can_face(g, pid)
-
+        tstr = info.get("target","")
         # (1) lethal face
-        if can_go_face_now and g.players[opp].health <= amt and info.get("target","").endswith("character"):
+        if tstr.endswith("character") and can_face(g, pid) and g.players[opp].health <= amt:
             return idx, opp, None, 1000
 
         # (2) hard removal if it kills a minion
@@ -878,7 +1008,7 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
                 return idx, None, target.id, int(110 + draw_val + chip_val + cand[0][0] + setup_bonus)
 
         # (4) face chip when appropriate (Hunters etc.)
-        if can_go_face_now and info.get("target","").endswith("character"):
+        if tstr.endswith("character") and can_face(g, pid):
             hero = g.players[pid].hero.id.upper()
             opp_hp = g.players[opp].health
             opp_max = g.players[opp].max_health 
@@ -888,6 +1018,31 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
                 chip_score = 120 + amt * 40 + int((opp_max - min(opp_hp, opp_max)) * 3)
                 return idx, opp, None, chip_score
 
+        return None
+
+    if kind == "burn_range":
+        opp = 1 - pid
+        mn = int(info.get("min", 0)); mx = int(info.get("max", 0))
+        # sure lethal to face only if min kills and face allowed
+        if info.get("target","").endswith("character") and can_face(g, pid) and g.players[opp].health <= mn:
+            return idx, opp, None, 900
+        enemies = [m for m in g.players[opp].board if m.is_alive()]
+        # sure killables (health <= min) are great
+        sure = [m for m in enemies if m.health <= mn]
+        if sure:
+            tgt = max(sure, key=threat_score_enemy_minion)
+            return idx, None, tgt.id, 220 + threat_score_enemy_minion(tgt)
+        # probable (health <= avg) are ok if we need tempo
+        avg = (mn + mx) / 2
+        prob = [m for m in enemies if m.health <= avg]
+        if prob and opponent_has_ready_threats(g, pid):
+            tgt = max(prob, key=threat_score_enemy_minion)
+            return idx, None, tgt.id, 150 + threat_score_enemy_minion(tgt) // 2
+        # chip face if pressuring
+        if info.get("target","").endswith("character") and can_face(g, pid):
+            hero = g.players[pid].hero.id.upper()
+            if hero == "HUNTER" or g.players[opp].health <= 12:
+                return idx, opp, None, 110 + int(avg) * 30
         return None
 
     # ---- Generic minions (unchanged except existing enabler heuristics)
@@ -1046,6 +1201,50 @@ def has_useful_play_for_card(g: Game, pid: int, cid: str) -> Optional[Tuple[int,
         enemies = [m for m in g.players[1 - pid].board if m.is_alive()]
         v = 40 + len(enemies) * 12 + (8 if can_face(g, pid) else 0)
         return idx, None, None, v
+
+    if kind == "unknown":
+        targeting = (info.get("targeting") or "").lower()
+        typ = str(info.get("type") or "")
+        cost = int(info.get("cost") or 0)
+
+        # Targeted unknowns:
+        # - If it wants an enemy target, pick the best threat (acts like a soft removal/bounce/hex-ish guess).
+        # - If it allows character targets, face is allowed only if taunts aren’t up and we’re applying pressure.
+        if _needs_any_target(g, cid):
+            enemies = _enemy_minions(g, pid)
+            if targeting.startswith("enemy_") or targeting in ("enemy_character",):
+                if enemies:
+                    m = max(enemies, key=threat_score_enemy_minion)
+                    # modest score; unknown could be soft disable, ping, or debuff
+                    return idx, None, m.id, 80 + threat_score_enemy_minion(m) // 6
+                # if character-legal and board is open, consider face poke (very small score)
+                if targeting.endswith("character") and can_face(g, pid):
+                    return idx, (1 - pid), None, 70
+                return None
+
+            # Friendly-targeting unknown (likely a buff or protect effect): choose our best buff target.
+            if targeting.startswith("friendly_") or targeting in ("friendly_character",):
+                tm = _has_friendly_target_for_buff(g, pid, cid)
+                if tm is not None:
+                    m = g.find_minion(tm)[2]
+                    return idx, None, tm, 75 + m.attack * 2 + getattr(m, "cost", 0)
+                return None
+
+            # Tribe-locked friendly target: let earlier tribe deferral logic decide (already handled above).
+            return None
+
+        # Untargeted unknowns:
+        # - Don’t spam them early. Use if we’d otherwise float mana or are near hand burn, with a small score.
+        float_mana = g.players[pid].mana - eff_cost
+        near_burn  = len(g.players[pid].hand) >= 9
+        late_game  = g.turn >= 7
+        if float_mana >= 1 or near_burn or late_game:
+            base = 60 + cost * 10
+            # tiny urgency bump if we’re behind on board
+            base += max(0, (_board_value(g, 1 - pid) - _board_value(g, pid)) // 12)
+            return idx, None, None, base
+
+        return None
 
     return None
 

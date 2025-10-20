@@ -419,6 +419,18 @@ def draw_mana_crystal_rect(r: pygame.Rect, mana: int, max_mana: int, *, locked: 
 
     # Locked crystals: paint onto the RIGHTMOST slots so they read as “next turn”
    
+def draw_weapon_deathrattle_hint(cx: int, cy: int, *, surface=None):
+    if surface is None: surface = screen
+    # tiny coin
+    pygame.draw.circle(surface, (46, 40, 34), (cx, cy), 7)
+    pygame.draw.circle(surface, (20, 20, 20), (cx, cy), 7, 1)
+    # tiny skull: head + eyes
+    skull_col = (238, 230, 220); eye_col = (40, 40, 40)
+    pygame.draw.circle(surface, skull_col, (cx, cy), 5)
+    pygame.draw.circle(surface, eye_col, (cx-2, cy-1), 1)
+    pygame.draw.circle(surface, eye_col, (cx+2, cy-1), 1)
+    # jaw line
+    pygame.draw.line(surface, eye_col, (cx-3, cy+3), (cx+3, cy+3), 1)
 
 
 def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
@@ -485,6 +497,16 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
         screen.blit(atk_surf,   (x, y)); x += atk_surf.get_width()
         screen.blit(slash_surf, (x, y)); x += slash_surf.get_width()
         screen.blit(dur_surf,   (x, y))
+        try:
+            if weapon_has_deathrattle(pstate.weapon):
+                draw_weapon_deathrattle_hint(cx + 11, cy + 10)
+        except Exception:
+            pass
+        
+        if getattr(pstate, "weapon", None) and weapon_has_triggers(pstate.weapon):
+            # get the same rr you use for the weapon badge and overlay the chip
+            rr = pygame.Rect(face_rect.x + 26 - 14, face_rect.bottom - 18 - 14, 28, 28)  # matches your badge circle
+            draw_weapon_trigger_chip(rr, surface=screen)
         
     elif getattr(pstate, "temp_hero_attack", 0) > 0:
         # NEW: show temp hero Attack when no weapon is equipped
@@ -520,15 +542,54 @@ def draw_hero_plate(face_rect: pygame.Rect, pstate, friendly: bool):
     if getattr(pstate, "hero_frozen", False):
         draw_frozen_overlay(face_rect)
 
+def draw_deathrattle_badge(r: pygame.Rect, *, surface=None, slot_index: int = 0) -> pygame.Rect:
+    """
+    Draw a shape-only deathrattle badge (skull-ish) near the card's top-right.
+    Returns the badge rect.
+    """
+    if surface is None: surface = screen
+    size  = 24
+    badge = _badge_slot(r, slot_index, size=size)
+
+    # coin base
+    center = badge.center
+    radius = size // 2
+    pygame.draw.circle(surface, (46, 40, 34), center, radius)         # fill
+    pygame.draw.circle(surface, (20, 20, 20), center, radius, 2)      # rim
+
+    # skull head (light beige)
+    skull_col = (238, 230, 220)
+    head_r = radius - 5
+    pygame.draw.circle(surface, skull_col, center, head_r)
+
+    # eyes (dark)
+    eye_col = (40, 40, 40)
+    ex = 5; ey = 2
+    pygame.draw.circle(surface, eye_col, (center[0] - ex, center[1] - ey), 2)
+    pygame.draw.circle(surface, eye_col, (center[0] + ex, center[1] - ey), 2)
+
+    # jaw rectangle
+    jaw_w, jaw_h = head_r + 2, 5
+    jaw = pygame.Rect(0, 0, jaw_w, jaw_h)
+    jaw.center = (center[0], center[1] + head_r - 2)
+    pygame.draw.rect(surface, skull_col, jaw)
+
+    # simple teeth lines
+    pygame.draw.line(surface, eye_col, (jaw.left+2, jaw.top+1), (jaw.right-2, jaw.top+1), 1)
+    pygame.draw.line(surface, eye_col, (center[0], jaw.top), (center[0], jaw.bottom-1), 1)
+
+    return badge
 def keyword_explanations_for_card(card_obj) -> List[str]:
     """
     STRICT: Only show tooltips for keywords explicitly present on the card JSON.
     No inference from handlers like `battlecry` or `on_cast`.
     """
     raw = getattr(card_obj, "keywords", []) or []
-    # Normalize to strings and filter to those we have help text for
     kws = [str(k) for k in raw if str(k) in KEYWORD_HELP]
-    return [f"{k}: {KEYWORD_HELP[k]}" for k in kws]
+    lines = [f"{k}: {KEYWORD_HELP[k]}" for k in kws]
+    if "Deathrattle" not in raw and card_has_deathrattle(card_obj):
+        lines.append(f"Deathrattle: {KEYWORD_HELP['Deathrattle']}")
+    return lines
 
 def keyword_explanations_for_minion(m) -> List[str]:
     tips = []
@@ -819,6 +880,30 @@ TARGET_FILTERS: dict[str, callable] = {
 }
 
 # --- helpers -
+
+def card_has_deathrattle(card_obj) -> bool:
+    if not card_obj:
+        return False
+    # 1) explicit keyword
+    if "Deathrattle" in (getattr(card_obj, "keywords", []) or []):
+        return True
+    # 2) structured field in JSON
+    if getattr(card_obj, "deathrattle", None):
+        return True
+    # 3) fallback: printed rules text
+    txt = (getattr(card_obj, "text", "") or "").lower()
+    return "deathrattle" in txt
+
+def minion_has_deathrattle(m) -> bool:
+    if not m or getattr(m, "silenced", False):
+        return False
+    return bool(getattr(m, "deathrattle", None))
+
+def weapon_has_deathrattle(w) -> bool:
+    # you added weapon deathrattle support earlier
+    return bool(w) and bool(getattr(w, "deathrattle", None))
+
+
 def centered_text(text: str, y: int, font=BIG, color=WHITE):
     surf = font.render(text, True, color)
     screen.blit(surf, surf.get_rect(center=(W//2, y)))
@@ -936,6 +1021,77 @@ def draw_frozen_overlay(r: pygame.Rect, *, surface=None):
     s.blit(lbl, lbl.get_rect(center=(r.w//2, int(r.h*0.12))))
     surface.blit(s, (r.x, r.y))
 
+def _badge_slot(r: pygame.Rect, idx: int, size: int = 24) -> pygame.Rect:
+    """
+    Returns the rect for the idx-th badge at the card's top-right,
+    stacking downward with small padding.
+    """
+    pad = 8
+    return pygame.Rect(r.right - size - pad, r.y + pad + idx * (size + 4), size, size)
+
+def draw_trigger_badge(r: pygame.Rect, *, surface=None, slot_index: int = 0) -> pygame.Rect:
+    if surface is None: surface = screen
+    badge = _badge_slot(r, slot_index, size=24)
+
+    # base coin
+    pygame.draw.circle(surface, (42, 86, 140), badge.center, badge.w // 2)      # fill
+    pygame.draw.circle(surface, (20, 20, 30),   badge.center, badge.w // 2, 2)  # rim
+
+    # lightning bolt (yellow polygon)
+    cx, cy = badge.center
+    s = 0.85 * (badge.w // 2)
+    pts = [
+        (cx - 0.30*s, cy - 0.70*s),
+        (cx + 0.05*s, cy - 0.70*s),
+        (cx - 0.10*s, cy - 0.15*s),
+        (cx + 0.35*s, cy - 0.15*s),
+        (cx - 0.05*s, cy + 0.70*s),
+        (cx - 0.20*s, cy + 0.10*s),
+        (cx - 0.45*s, cy + 0.10*s),
+    ]
+    pygame.draw.polygon(surface, (250, 215, 80), pts)
+    pygame.draw.polygon(surface, (40, 40, 40),   pts, 1)
+    return badge
+def _has_triggerish(v) -> bool:
+    if not v: return False
+    if isinstance(v, dict):     # trigger_maps: dict of lists/maps
+        return any(bool(x) for x in v.values())
+    if isinstance(v, (list, tuple, set)):
+        return len(v) > 0
+    return True  # truthy scalar
+
+def _obj_has_triggers(obj) -> bool:
+    # checks both 'trigger_maps' and 'triggers'
+    return _has_triggerish(getattr(obj, "triggers_map", None)) or _has_triggerish(getattr(obj, "triggers", None))
+
+def card_has_triggers(card_obj) -> bool:
+    try:
+        return _obj_has_triggers(card_obj)
+    except Exception:
+        return False
+
+def minion_has_triggers(minion_obj) -> bool:
+    try:
+        # live first
+        if _obj_has_triggers(minion_obj): return True
+        # base snapshot fields if you store them
+        if _obj_has_triggers(getattr(minion_obj, "base_triggers", None)): return True
+        if _obj_has_triggers(getattr(minion_obj, "base_trigger_maps", None)): return True
+        # fall back to original card
+        cid = getattr(minion_obj, "card_id", None)
+        if cid and GLOBAL_GAME and cid in GLOBAL_GAME.cards_db:
+            return card_has_triggers(GLOBAL_GAME.cards_db[cid])
+        return False
+    except Exception:
+        return False
+def weapon_has_triggers(weapon_obj) -> bool:
+    try:
+        if _obj_has_triggers(weapon_obj): return True
+        # look up printed card (important for preview / static card draw)
+        base = _weapon_card_from_state(GLOBAL_GAME, weapon_obj)
+        return card_has_triggers(base) if base else False
+    except Exception:
+        return False
 
 def _infer_card_class_name(card_obj) -> str | None:
     """Best-effort: grab the class name off the Card object (or dict)."""
@@ -992,6 +1148,25 @@ def class_color_for_minion(minion_obj) -> tuple[int,int,int]:
     except Exception:
         pass
     return NEUTRAL_BG
+
+def draw_weapon_trigger_chip(rr: pygame.Rect, *, surface=None):
+    # draw a tiny lightning chip on weapon badge rect rr
+    if surface is None: surface = screen
+    chip = rr.inflate(-10, -10)  # small chip inside the circle
+    cx, cy = chip.center
+    s = min(chip.w, chip.h) * 0.45
+    pts = [
+        (cx - 0.25*s, cy - 0.55*s),
+        (cx + 0.00*s, cy - 0.55*s),
+        (cx - 0.10*s, cy - 0.10*s),
+        (cx + 0.30*s, cy - 0.10*s),
+        (cx - 0.05*s, cy + 0.55*s),
+        (cx - 0.18*s, cy + 0.08*s),
+        (cx - 0.40*s, cy + 0.08*s),
+    ]
+    pygame.draw.polygon(surface, (250, 215, 80), pts)
+
+
 
 def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None, in_hand: bool,
                     override_cost: int | None = None, surface=None):
@@ -1063,6 +1238,34 @@ def draw_card_frame(r: pygame.Rect, color_bg, *, card_obj=None, minion_obj=None,
         draw_silence_overlay(r, surface=surface)
     if getattr(minion_obj, "frozen", False):
         draw_frozen_overlay(r, surface=surface)
+
+
+    slot = 0
+    try:
+        has_dr = False
+        if card_obj and getattr(card_obj, "deathrattle", None): has_dr = True
+        if minion_obj and getattr(minion_obj, "deathrattle", None): has_dr = True
+        # weapon preview in-hand uses card_obj; live weapon badge handled on hero plate below
+        if has_dr:
+            # if you updated draw_deathrattle_badge to take slot_index, pass it; else keep old call
+            draw_deathrattle_badge(r, surface=surface, slot_index=slot)
+            slot += 1
+    except Exception:
+        pass
+    
+    # Trigger (⚡) badge for minions, weapons, or cards
+    try:
+        show_trigger = False
+        if minion_obj:
+            show_trigger = minion_has_triggers(minion_obj)
+        elif card_obj:
+            # show for any card type (MINION/WEAPON/SECRET/SPELL) that has triggers/trigger_maps
+            show_trigger = card_has_triggers(card_obj)
+        if show_trigger:
+            draw_trigger_badge(r, surface=surface, slot_index=slot)
+            slot += 1
+    except Exception:
+        pass
 
 def _deck_source_rect_for_pid(pid: int) -> pygame.Rect:
     """Where cards 'come from' visually."""
