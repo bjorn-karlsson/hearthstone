@@ -200,7 +200,7 @@ def shuffle_deck(deck, seed=None):
 def make_starter_deck(db, seed=None):
     rng = random.Random(seed)
     
-    desired = ["MIRROR_ENTITY", "UNBOUND_ELEMENTAL"]
+    desired = ["ZOMBIE_CHOW", "HAUNTED_CREEPER", "MAD_SCIENTIST", "SHADE_OF_NAXXRAMAS", "SLUDGE_BELCHER", "LOATHEB"]
 
     # DB keys that are real cards (ignore internal keys like "_POST_SUMMON_HOOK")
     valid_ids = {cid for cid in db.keys() if not cid.startswith("_")}
@@ -259,7 +259,7 @@ def get_random_deck(playable_decks: list):
 
 
 # Pick a deck for each side (by name or first valid), else fall back to your random builder
-player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name="Classic Shaman Deck (Aggro / Burst)")
+player_deck, player_hero_hint = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 ai_deck, ai_hero_hint         = choose_loaded_deck(loaded_decks, preferred_name=get_random_deck(playable_decks))
 
 if DEBUG:

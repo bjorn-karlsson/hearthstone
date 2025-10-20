@@ -416,7 +416,7 @@ class Game:
 
             apply = False
             if scope in ("friendly:spell","friendly:spells","spells"):
-                apply = (cobj.type == "SPELL")
+                apply = _is_spell_like_card(cobj)
             elif scope.startswith("friendly:type:"):
                 want = scope.split(":", 2)[2].upper()
                 apply = (getattr(cobj, "type","").upper() == want)
@@ -648,6 +648,8 @@ class Game:
             m.attacks_this_turn = 0 
             m.can_attack = m.charge or (not m.exhausted)
         #ev = [Event("TurnStart", {"player": pid, "turn": turn_number})]
+        ev += self._fire_start_of_turn(pid)
+
         ev += p.draw(self, 1)
         return ev
 
@@ -926,6 +928,16 @@ class Game:
                 continue
             ev += self._run_minion_triggers(m, "end_of_your_turn", None)
         return ev
+    
+    def _fire_start_of_turn(self, owner: int) -> List[Event]:
+        ev: List[Event] = []
+        for m in list(self.players[owner].board):
+            if not m.is_alive() or m.silenced:
+                continue
+            ev += self._run_minion_triggers(m, "start_of_your_turn", None)
+        return ev
+    
+    
 
     def _fire_friendly_overload(self, owner: int, amount: int) -> List[Event]:
         """
@@ -1097,6 +1109,7 @@ class Game:
                               triggers_map=dict(getattr(card, "triggers_map", {})),
                               windfury=("Windfury" in getattr(card, "keywords", []))
             )
+            setattr(p.weapon, "deathrattle", getattr(card, "weapon_deathrattle", None))
             ev.append(Event("WeaponEquipped", {
                 "player": pid, "name": card.name,
                 "attack": card.attack, "durability": card.health
@@ -1244,15 +1257,22 @@ class Game:
         return ev
 
     def destroy_weapon(self, pid: int, reason: str = "Broken") -> List[Event]:
-        """Break the current weapon, if any. Emits logs."""
         p = self.players[pid]
         if p.weapon is None:
             return []
         w = p.weapon
+
+        ev: List[Event] = []
+        # Run deathrattle (if any) before removing the weapon
+        dr = getattr(w, "deathrattle", None)
+        if callable(dr):
+            ev += dr(self, SimpleNamespace(owner=pid, name=w.name), None)
+
         p.weapon = None
-        ev = [Event("WeaponDestroyed", {"player": pid, "name": w.name, "reason": reason})]
+        ev.append(Event("WeaponDestroyed", {"player": pid, "name": w.name, "reason": reason}))
         self.history += ev
         return ev
+
 
     def lose_weapon_durability(self, pid: int, amount: int = 1, source: str = "HeroAttack") -> List[Event]:
         """Lose durability, log the change, auto-break at 0."""
@@ -1720,6 +1740,33 @@ def _minion_owner_matches(source_pid: int, target_pid: int, scope: str) -> bool:
 
 # ---- Effect factories ----
 
+def _fx_spells_cost_more_next_turn(params):
+    """
+    Make the chosen player's spells cost +amount until the END of that player's next turn.
+    JSON:
+      { "effect": "spells_cost_more_next_turn", "amount": 5, "owner": "enemy" }
+    'owner' can be: "enemy" (default), "friendly"/"self", "active", "inactive", or 0/1.
+    """
+    amount = int(params.get("amount", 5))
+    owner_param = params.get("owner", "enemy")
+
+    def run(g, source_obj, target):
+        src_owner = getattr(source_obj, "owner", g.active_player)
+        victim = _resolve_owner_single(owner_param, g, src_owner, default_to_enemy=True)
+        # Add a temp cost modifier to the VICTIM; it will expire at the end of THEIR turn.
+        g.players[victim].temp_cost_mods.append({
+            "scope": "spells",
+            "delta": amount,
+            "floor": 0,
+            "expires_pid": victim,
+            "expires_when": "end_of_turn"
+        })
+        return [Event("TempRuleAdded", {
+            "player": victim, "kind": "cost", "delta": amount, "scope": "spells", "source": "Loatheb"
+        })]
+    return run
+
+
 def _fx_replace_hero(params):
     """
     Replace the source owner's hero. Also sets BOTH current and maximum hero health.
@@ -1951,6 +1998,66 @@ def _fx_weapon_durability_delta(params):
         return ev
     return run
 
+
+def _fx_put_random_secret_from_deck(params):
+    """
+    Pull a random Secret from the specified owner's DECK and arm it (no cost,
+    not a spell cast, not counterable). Skips Secrets the player already has
+    active (no dupes). If none available, does nothing.
+
+    JSON:
+      { "effect": "put_random_secret_from_deck", "owner": "source_owner" }
+    """
+    owner_param = params.get("owner", "source_owner")
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        pid = _resolve_owner_single(owner_param, g, owner)
+
+        p = g.players[pid]
+
+        # Secrets in deck (by card type), excluding ones already active by same id
+        def _is_secret(cid):
+            if cid not in g.cards_db:
+                return False
+            try:
+                return getattr(g.cards_db[cid], "type", "") == "SECRET"
+            except Exception:
+                return False
+
+        active_ids = {s.get("card_id") for s in (p.active_secrets or [])}
+        candidates = [cid for cid in p.deck if _is_secret(cid) and cid not in active_ids]
+
+        if not candidates:
+            return []
+
+        choice = g.rng.choice(candidates)
+        # remove a single copy from deck
+        try:
+            p.deck.remove(choice)
+        except ValueError:
+            pass  # ultra-safe; shouldn't happen
+
+        card = g.cards_db.get(choice)
+        trig = getattr(card, "secret_trigger", None)
+        runner = getattr(card, "secret_runner", None)
+        if not trig or not callable(runner):
+            return []  # malformed secret (safety)
+
+        # Arm the Secret (hidden info; do NOT fire spell-cast/counter)
+        p.active_secrets.append({
+            "card_id": card.id,
+            "name": card.name,
+            "trigger": trig,
+            "runner": runner,
+        })
+
+        # Match the existing UX of a secret being armed (name hidden)
+        return [Event("SecretPlayed", {"player": pid, "from_deck": True})]
+
+    return run
+
+
 def _fx_if_control_tribe(params, json_db_tokens):
     """
     If the source owner controls at least one friendly minion of 'tribe',
@@ -1970,6 +2077,7 @@ def _fx_if_control_tribe(params, json_db_tokens):
         ) if tribe else False
         return then_fn(g, source_obj, target) if has else else_fn(g, source_obj, target)
     return run
+    
 
 def _fx_if_summoned_tribe(params, json_db_tokens):
     """Run nested 'then' effects only if the current target minion is of the given tribe."""
@@ -2211,6 +2319,48 @@ def _fx_deal_damage(params):
                 ev += g.deal_damage_to_player(pid, dmg, source=name); g.history += ev; return ev
 
         # 3) Fallback: enemy face
+        pid = g.other(owner)
+        ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": pid}))
+        ev += g.deal_damage_to_player(pid, dmg, source=name)
+        g.history += ev
+        return ev
+    return run
+
+def _fx_deal_damage_range(params):
+    """Deal a random amount of damage between min..max (inclusive).
+    Respects tagged target (minion/player) and defaults to enemy face.
+    Spell Damage is added to the rolled amount.
+    JSON: { "effect":"deal_damage_range", "min":3, "max":6 }
+    """
+    lo = int(params.get("min", 0))
+    hi = int(params.get("max", lo))
+
+    def run(g, source_obj, target):
+        name  = getattr(source_obj, "name", "Effect")
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        # roll between lo..hi inclusive
+        rolled = g.rng.randint(min(lo, hi), max(lo, hi))
+        dmg    = _with_spell_bonus(rolled, g, owner, source_obj)
+
+        # Prefer tagged target if present
+        kind, obj = _resolve_tagged_target(g, target)
+        ev = []
+
+        if kind == "minion" and obj is not None:
+            ev.append(Event("SpellHit", {"source": name, "target_type": "minion", "minion": obj.id, "player": obj.owner}))
+            ev += g.deal_damage_to_minion(obj, dmg, source=name)
+            g.history += ev
+            return ev
+
+        if kind == "player":
+            pid = obj
+            ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": pid}))
+            ev += g.deal_damage_to_player(pid, dmg, source=name)
+            g.history += ev
+            return ev
+
+        # Fallback: enemy face
         pid = g.other(owner)
         ev.append(Event("SpellHit", {"source": name, "target_type": "player", "player": pid}))
         ev += g.deal_damage_to_player(pid, dmg, source=name)
@@ -2581,6 +2731,61 @@ def _fx_random_heal(params):
     return run
 
 
+def _fx_summon_random_minion_with_cost(params):
+    """
+    Summon a random MINION from the main cards DB with the exact mana cost.
+    JSON:
+      { "effect": "summon_random_minion_with_cost", "cost": 2, "count": 1, "owner": "player" }
+    Notes:
+      - Uses db["_RAW"] so it pulls real cards (not tokens).
+      - Summons via _summon_from_card_spec, so no Battlecry triggers (correct for Shredder).
+    """
+    want = int(params.get("cost", 2))
+    count = int(params.get("count", 1))
+    owner_param = params.get("owner", "player")
+
+    def run(g, source_obj, target):
+        raw_map = g.cards_db.get("_RAW", {}) or {}
+        # pool: real MINIONs with exact cost
+        pool = [
+            (cid, raw) for cid, raw in raw_map.items()
+            if isinstance(raw, dict)
+            and str(raw.get("type", "")).upper() == "MINION"
+            and int(raw.get("cost", -1)) == want
+        ]
+        if not pool:
+            return []
+
+        src_owner = getattr(source_obj, "owner", g.active_player)
+        owners = _resolve_owner_list(owner_param, g, src_owner)
+
+        evs = []
+        for ow in owners:
+            for _ in range(max(0, count)):
+                cid, raw = g.rng.choice(pool)
+                # build a summon spec from the base card (no battlecry)
+                spec = {
+                    "id": raw.get("id", cid),
+                    "name": raw.get("name", "Minion"),
+                    "type": "MINION",
+                    "cost": int(raw.get("cost", 0)),
+                    "attack": int(raw.get("attack", 0)),
+                    "health": int(raw.get("health", 1)),
+                    "rarity": raw.get("rarity", "Common"),
+                    "keywords": list(raw.get("keywords", []) or []),
+                    "minion_type": str(raw.get("minion_type", "None")),
+                    "text": str(raw.get("text", "")),
+                    "spell_damage": int(raw.get("spell_damage", 0)),
+                    "enrage": raw.get("enrage"),
+                    "aura": raw.get("aura"),
+                    "auras": list(raw.get("auras", []) or []),
+                    "cost_aura": raw.get("cost_aura"),
+                }
+                evs += g._summon_from_card_spec(ow, spec, 1)
+        return evs
+    return run
+
+
 def _fx_random_add_stat(params):
     """
     Give +attack/+health to ONE random minion from a scope.
@@ -2600,6 +2805,7 @@ def _fx_random_add_stat(params):
     h = int(params.get("health", 0))
     scope = str(params.get("target", "friendly_minions"))
     exclude_self = bool(params.get("exclude_self", False))
+    tribe = str(params.get("tribe", "") or "").lower().strip()
 
     def run(g, source_obj, target):
         owner = getattr(source_obj, "owner", g.active_player)
@@ -2618,6 +2824,8 @@ def _fx_random_add_stat(params):
             if not mm.is_alive():
                 continue
             if exclude_self and self_id is not None and mm.id == self_id:
+                continue
+            if tribe and not _has_tribe(mm, tribe):
                 continue
             mids.append(mm)
 
@@ -2873,6 +3081,48 @@ def _fx_multiply_health(params):
 
     return run
 
+def _fx_add_stats_aoe(params):
+    a = int(params.get("attack", 0))
+    h = int(params.get("health", 0))
+    scope = str(params.get("target", "friendly_minions")).lower()
+    filt = params.get("filter", {}) or {}
+    want_card = filt.get("card_id")
+    want_tribe = (filt.get("tribe") or "").lower().strip()
+
+    def matches(m: Minion) -> bool:
+        if want_card and getattr(m, "card_id", "") != want_card:
+            return False
+        if want_tribe and not _has_tribe(m, want_tribe):
+            return False
+        return True
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+        if scope in ("all", "both", "all_minions"):
+            sides = [owner, g.other(owner)]
+        elif scope in ("friendly", "ally", "self", "friendly_minions"):
+            sides = [owner]
+        else:  # "enemy", "enemies", "opponent", "enemy_minions"
+            sides = [g.other(owner)]
+
+        ev: list[Event] = []
+        for pid in sides:
+            for m in list(g.players[pid].board):
+                if not m.is_alive() or not matches(m):
+                    continue
+                before_a, before_h = m.attack, m.health
+                if a: m.attack = max(0, m.attack + a)
+                if h:
+                    m.max_health = max(1, m.max_health + h)
+                    m.health += h  # lift current by same delta
+                ev.append(Event("Buff", {
+                    "minion": m.id,
+                    "attack_delta": m.attack - before_a,
+                    "health_delta": m.health - before_h
+                }))
+                ev += g._update_enrage(m)
+        return ev
+    return run
 
 def _fx_add_stats(params):
     a = int(params.get("attack", 0))
@@ -2988,6 +3238,55 @@ def _fx_mind_control(params):
             "from": old_pid,
             "to": caster_pid
         })]
+    return run
+
+def _fx_temp_modify_random(params):
+    """
+    Give a temporary buff to ONE random minion from a scope.
+    Expires at end of the caster's turn (uses _apply_temp_to_minion).
+    JSON:
+      {
+        "effect": "temp_modify_random",
+        "target": "friendly_minions",   # or "enemy_minions" | "all_minions"
+        "attack": 1,
+        "health": 0,
+        "max_health": 0,
+        "add_keywords": [],
+        "remove_keywords": []
+      }
+    """
+    a  = int(params.get("attack", 0))
+    h  = int(params.get("health", 0))
+    mh = int(params.get("max_health", 0))
+    add_kw = list(params.get("add_keywords", []) or [])
+    rem_kw = list(params.get("remove_keywords", []) or [])
+    scope = str(params.get("target", "friendly_minions")).lower()
+
+    def run(g, source_obj, target):
+        owner = getattr(source_obj, "owner", g.active_player)
+
+        # Build pool (reuse helper), keep only live minions
+        pairs = _build_random_target_pool(g, owner, scope, only_injured=False)
+        pool = []
+        for kind, val in pairs:
+            if kind != "minion":
+                continue
+            loc = g.find_minion(val)
+            if not loc:
+                continue
+            _, _, m = loc
+            if m.is_alive():
+                pool.append(m)
+
+        if not pool:
+            return []
+
+        m = g.rng.choice(pool)
+        return g._apply_temp_to_minion(
+            m, caster_pid=owner,
+            attack=a, health=h, max_health=mh,
+            add_keywords=add_kw, remove_keywords=rem_kw
+        )
     return run
 
 
@@ -3671,6 +3970,7 @@ def _fx_add_self_health_from_hand(params):
 def _effect_factory(name, params, json_tokens):
     table = {
         "deal_damage":                      _fx_deal_damage,
+        "deal_damage_range":                _fx_deal_damage_range,
         "heal":                             _fx_heal,
         "draw":                             _fx_draw,
         "gain_temp_mana":                   _fx_gain_temp_mana,
@@ -3681,6 +3981,7 @@ def _effect_factory(name, params, json_tokens):
         "add_keyword":                      _fx_add_keyword,
         "add_attack":                       _fx_add_attack,
         "add_stats":                        _fx_add_stats,
+        "add_stats_aoe":                    _fx_add_stats_aoe,
         "add_self_stats":                   _fx_add_self_stats,
         "add_overload":                     _fx_add_overload,
         "random_add_stat":                  _fx_random_add_stat,
@@ -3709,7 +4010,9 @@ def _effect_factory(name, params, json_tokens):
         "temp_modify_aoe":                  _fx_temp_modify_aoe,
         "temp_modify":                      _fx_temp_modify,
         "temp_cost":                        _fx_temp_cost,
+        "spells_cost_more_next_turn":       _fx_spells_cost_more_next_turn,
         "temp_add_attack_to_character":     _fx_temp_add_attack_to_character,
+        "temp_modify_random":               _fx_temp_modify_random,
         "discard_random":                   _fx_discard_random,
         "random_pings":                     _fx_random_pings,
         "random_enemy_damage":              _fx_random_enemy_damage,
@@ -3725,7 +4028,10 @@ def _effect_factory(name, params, json_tokens):
         "copy_self_as_target_minion":       _fx_copy_self_as_target_minion,
         "add_self_health_from_hand":        _fx_add_self_health_from_hand,
         "replace_hero":                     _fx_replace_hero,
-        "mind_control":                     _fx_mind_control
+        "mind_control":                     _fx_mind_control,
+        "summon_random_minion_with_cost":   _fx_summon_random_minion_with_cost,
+        "put_random_secret_from_deck":      _fx_put_random_secret_from_deck,
+        
         
     }
     if name not in table:
@@ -3871,6 +4177,9 @@ def load_cards_from_json(path: str) -> Dict[str, Card]:
             effs = secret_spec.get("effects", []) or []
             setattr(card, "secret_trigger", trig)
             setattr(card, "secret_runner", _compile_effects(effs, tokens))
+
+        if typ == "WEAPON" and "deathrattle" in raw:
+            setattr(card, "weapon_deathrattle", _compile_effects(raw["deathrattle"], tokens))
 
         db[cid] = card
         targeting[cid] = raw.get("targeting", "none")

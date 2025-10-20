@@ -77,6 +77,36 @@
         "WATER_ELEMENTAL": "none"
     },
     "tokens": {
+        "SLIME_1_2_TAUNT": {
+            "name": "Slime",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 2,
+            "rarity": "Common",
+            "minion_type": "None",
+            "keywords": [
+                "Taunt"
+            ],
+            "text": "Taunt."
+        },
+        "SPECTRAL_SPIDER": {
+            "name": "Spectral Spider",
+            "type": "MINION",
+            "cost": 1,
+            "attack": 1,
+            "health": 1,
+            "rarity": "Common",
+            "minion_type": "Beast"
+        },
+        "LIGHTS_JUSTICE": {
+            "id": "LIGHTS_JUSTICE",
+            "name": "Light's Justice",
+            "type": "WEAPON",
+            "attack": 1,
+            "health": 4,
+            "text": "1/4."
+        },
         "WISP": {
             "name": "Wisp",
             "type": "MINION",
@@ -321,6 +351,364 @@
         }
     },
     "cards": [
+        {
+            "id": "ZOMBIE_CHOW",
+            "name": "Zombie Chow",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 1,
+            "attack": 2,
+            "health": 3,
+            "minion_type": "None",
+            "text": "Deathrattle: Restore 5 Health to the enemy hero.",
+            "deathrattle": [
+                {
+                    "effect": "heal",
+                    "amount": 5,
+                    "target": "enemy_face"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "HAUNTED_CREEPER",
+            "name": "Haunted Creeper",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 1,
+            "health": 2,
+            "minion_type": "Beast",
+            "text": "Deathrattle: Summon two 1/1 Spectral Spiders.",
+            "deathrattle": [
+                {
+                    "effect": "summon",
+                    "card_id": "SPECTRAL_SPIDER",
+                    "count": 2,
+                    "owner": "player"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "MAD_SCIENTIST",
+            "name": "Mad Scientist",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "minion_type": "None",
+            "text": "Deathrattle: Put a Secret from your deck into the battlefield.",
+            "deathrattle": [
+                {
+                    "effect": "put_random_secret_from_deck",
+                    "owner": "source_owner"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "SHADE_OF_NAXXRAMAS",
+            "name": "Shade of Naxxramas",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 3,
+            "attack": 2,
+            "health": 2,
+            "minion_type": "None",
+            "keywords": [
+                "Stealth"
+            ],
+            "text": "Stealth. At the start of your turn, gain +1/+1.",
+            "triggers": [
+                {
+                    "on": "start_of_your_turn",
+                    "effects": [
+                        {
+                            "effect": "add_self_stats",
+                            "attack": 1,
+                            "health": 1
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "SLUDGE_BELCHER",
+            "name": "Sludge Belcher",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 5,
+            "attack": 3,
+            "health": 5,
+            "minion_type": "Undead",
+            "keywords": [
+                "Taunt",
+                "Deathrattle"
+            ],
+            "text": "Taunt. Deathrattle: Summon a 1/2 Slime with Taunt.",
+            "deathrattle": [
+                {
+                    "effect": "summon",
+                    "card_id": "SLIME_1_2_TAUNT",
+                    "count": 1,
+                    "owner": "player"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "DEATHS_BITE",
+            "name": "Death's Bite",
+            "type": "WEAPON",
+            "class": "WARRIOR",
+            "rarity": "Rare",
+            "cost": 4,
+            "attack": 4,
+            "health": 2,
+            "text": "Deathrattle: Deal 1 damage to all minions.",
+            "deathrattle": [
+                {
+                    "effect": "aoe_damage_minions",
+                    "amount": 1,
+                    "target": "all"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "MECHWARPER",
+            "name": "Mechwarper",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "minion_type": "Mech",
+            "text": "Your Mechs cost (1) less.",
+            "auras": [
+                {
+                    "kind": "cost",
+                    "scope": "friendly:tribe:mech",
+                    "delta": -1,
+                    "floor": 0
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "ANNOY_O_TRON",
+            "name": "Annoy-o-Tron",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 1,
+            "health": 2,
+            "minion_type": "Mech",
+            "keywords": [
+                "Divine Shield",
+                "Taunt"
+            ],
+            "text": "Divine Shield. Taunt.",
+            "targeting": "none"
+        },
+        {
+            "id": "SHIELDED_MINIBOT",
+            "name": "Shielded Minibot",
+            "type": "MINION",
+            "class": "PALADIN",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "minion_type": "Mech",
+            "keywords": [
+                "Divine Shield"
+            ],
+            "text": "Divine Shield.",
+            "targeting": "none"
+        },
+        {
+            "id": "PILOTED_SHREDDER",
+            "name": "Piloted Shredder",
+            "type": "MINION",
+            "rarity": "Common",
+            "cost": 4,
+            "attack": 4,
+            "health": 3,
+            "minion_type": "Mech",
+            "text": "Deathrattle: Summon a random 2-Cost minion.",
+            "deathrattle": [
+                {
+                    "effect": "summon_random_minion_with_cost",
+                    "cost": 2,
+                    "count": 1,
+                    "owner": "player"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "MUSTER_FOR_BATTLE",
+            "name": "Muster for Battle",
+            "type": "SPELL",
+            "class": "PALADIN",
+            "rarity": "Rare",
+            "cost": 3,
+            "text": "Summon three 1/1 Silver Hand Recruits. Equip a 1/4 weapon.",
+            "on_cast": [
+                {
+                    "effect": "summon",
+                    "card_id": "SILVER_HAND_RECRUIT",
+                    "count": 3,
+                    "owner": "player"
+                },
+                {
+                    "effect": "equip_weapon",
+                    "card_id": "LIGHTS_JUSTICE"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "QUARTERMASTER",
+            "name": "Quartermaster",
+            "type": "MINION",
+            "class": "PALADIN",
+            "rarity": "Epic",
+            "cost": 5,
+            "attack": 2,
+            "health": 5,
+            "minion_type": "None",
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Give your Silver Hand Recruits +2/+2.",
+            "battlecry": [
+                {
+                    "effect": "add_stats_aoe",
+                    "target": "friendly_minions",
+                    "filter": {
+                        "card_id": "SILVER_HAND_RECRUIT"
+                    },
+                    "attack": 2,
+                    "health": 2
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "ANTIQUE_HEALBOT",
+            "name": "Antique Healbot",
+            "type": "MINION",
+            "rarity": "Rare",
+            "cost": 5,
+            "attack": 3,
+            "health": 3,
+            "minion_type": "Mech",
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Restore 8 Health to your hero.",
+            "battlecry": [
+                {
+                    "effect": "heal",
+                    "amount": 8,
+                    "target": "friendly_face"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "SNOWCHUGGER",
+            "name": "Snowchugger",
+            "type": "MINION",
+            "class": "MAGE",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 3,
+            "minion_type": "Mech",
+            "text": "Freeze any character damaged by this minion.",
+            "triggers": [
+                {
+                    "on": "self_deals_damage",
+                    "effects": [
+                        {
+                            "effect": "freeze",
+                            "target": "damaged_character"
+                        }
+                    ]
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "CRACKLE",
+            "name": "Crackle",
+            "type": "SPELL",
+            "class": "SHAMAN",
+            "rarity": "Rare",
+            "cost": 2,
+            "text": "Deal 3–6 damage. Overload: (1).",
+            "on_cast": [
+                {
+                    "effect": "deal_damage_range",
+                    "min": 3,
+                    "max": 6
+                },
+                {
+                    "effect": "add_overload",
+                    "amount": 1
+                }
+            ],
+            "targeting": "any_character"
+        },
+        {
+            "id": "GLAIVEZOOKA",
+            "name": "Glaivezooka",
+            "type": "WEAPON",
+            "class": "HUNTER",
+            "rarity": "Common",
+            "cost": 2,
+            "attack": 2,
+            "health": 2,
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Give a random friendly minion +1 Attack this turn.",
+            "battlecry": [
+                {
+                    "effect": "temp_modify_random",
+                    "target": "friendly_minions",
+                    "attack": 1
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "POWERMACE",
+            "name": "Powermace",
+            "type": "WEAPON",
+            "class": "SHAMAN",
+            "rarity": "Rare",
+            "cost": 3,
+            "attack": 3,
+            "health": 2,
+            "text": "Deathrattle: Give a random friendly Mech +2/+2.",
+            "deathrattle": [
+                {
+                    "effect": "random_add_stat",
+                    "attack": 2,
+                    "health": 2,
+                    "target": "friendly_minions",
+                    "tribe": "Mech"
+                }
+            ],
+            "targeting": "none"
+        },
         {
             "id": "KNIFE_JUGGLER",
             "name": "Knife Juggler",
@@ -2913,6 +3301,28 @@
                     "effect": "summon",
                     "card_id": "WHELP",
                     "count": 2,
+                    "owner": "enemy"
+                }
+            ],
+            "targeting": "none"
+        },
+        {
+            "id": "LOATHEB",
+            "name": "Loatheb",
+            "type": "MINION",
+            "rarity": "Legendary",
+            "cost": 5,
+            "attack": 5,
+            "health": 5,
+            "minion_type": "None",
+            "keywords": [
+                "Battlecry"
+            ],
+            "text": "Battlecry: Enemy spells cost (5) more next turn.",
+            "battlecry": [
+                {
+                    "effect": "spells_cost_more_next_turn",
+                    "amount": 5,
                     "owner": "enemy"
                 }
             ],
