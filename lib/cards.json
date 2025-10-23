@@ -4,11 +4,9 @@
         "STARVING_BUZZARD": "none",
         "HOUNDMASTER": "friendly_tribe:beast",
         "ANIMAL_COMPANION": "none",
-        "CHARGING_BOAR": "none",
-        "GIVE_TAUNT": "friendly_minion",
+        "STONETUSK_BOAR": "none",
         "SHATTERED_SUN_CLERIC": "friendly_minion",
         "SCRAPPY_SCAVENGER": "none",
-        "RUSHER": "none",
         "IRONFUR_GRIZZLY": "none",
         "KOBOLD_GEOMANCER": "none",
         "TIMBER_WOLF": "none",
@@ -16,11 +14,8 @@
         "SORCERERS_APPRENTICE": "none",
         "STORMWIND_CHAMPION": "none",
         "SENJIN_SHIELDMASTA": "none",
-        "CHARGE_RUSH_2_2": "none",
         "MUSTER_FOR_BATTLE": "none",
         "FROSTBOLT": "any_character",
-        "GIVE_CHARGE": "friendly_minion",
-        "GIVE_RUSH": "friendly_minion",
         "THE_COIN": "none",
         "SPELLBREAKER": "any_minion",
         "ACIDIC_SWAMP_OOZE": "none",
@@ -30,8 +25,6 @@
         "EARTHEN_RING_FARSEER": "any_character",
         "VOODOO_DOCTOR": "any_character",
         "STORMPIKE_COMMANDO": "enemy_face",
-        "KOBOLD_PING": "enemy_character",
-        "KOBOLD_BLASTER": "enemy_character",
         "DEFENDER_OF_ARGUS": "none",
         "NOVICE_ENGINEER": "none",
         "EAGLEHORN_BOW": "none",
@@ -63,7 +56,6 @@
         "FIREBALL": "enemy_character",
         "HOLY_LIGHT": "any_character",
         "ARCANE_INTELLECT": "none",
-        "ARCANE_INTELLECT_MAJOR": "none",
         "ARCANE_MISSILES": "none",
         "BLESSING_OF_MIGHT": "friendly_minion",
         "BLESSING_OF_KINGS": "friendly_minion",
@@ -954,8 +946,8 @@
             "targeting": "none"
         },
         {
-            "id": "CHARGING_BOAR",
-            "name": "Charging Boar",
+            "id": "STONETUSK_BOAR",
+            "name": "Stonetusk Boar",
             "type": "MINION",
             "cost": 1,
             "attack": 1,
@@ -1011,22 +1003,6 @@
             "targeting": "any_minion"
         },
         {
-            "id": "GIVE_TAUNT",
-            "name": "Shield Up",
-            "type": "SPELL",
-            "rarity": "Common",
-            "class": "WARRIOR",
-            "cost": 1,
-            "text": "Give a minion Taunt.",
-            "on_cast": [
-                {
-                    "effect": "add_keyword",
-                    "keyword": "Taunt"
-                }
-            ],
-            "targeting": "any_minion"
-        },
-        {
             "id": "SHATTERED_SUN_CLERIC",
             "name": "Shattered Sun Cleric",
             "type": "MINION",
@@ -1063,21 +1039,6 @@
                     "effect": "discover_equal_remaining_mana"
                 }
             ],
-            "targeting": "none"
-        },
-        {
-            "id": "RUSHER",
-            "name": "Arena Rusher",
-            "type": "MINION",
-            "rarity": "Rare",
-            "minion_type": "None",
-            "cost": 2,
-            "attack": 2,
-            "health": 1,
-            "keywords": [
-                "Rush"
-            ],
-            "text": "Rush.",
             "targeting": "none"
         },
         {
@@ -1307,7 +1268,7 @@
         },
         {
             "id": "SENJIN_SHIELDMASTA",
-            "name": "Sen’jin Shieldmasta",
+            "name": "Sen'jin Shieldmasta",
             "type": "MINION",
             "rarity": "Common",
             "minion_type": "None",
@@ -1318,39 +1279,6 @@
                 "Taunt"
             ],
             "text": "Taunt.",
-            "targeting": "none"
-        },
-        {
-            "id": "CHARGE_RUSH_2_2",
-            "name": "Stormrunner",
-            "type": "MINION",
-            "rarity": "Rare",
-            "minion_type": "None",
-            "cost": 3,
-            "attack": 2,
-            "health": 2,
-            "keywords": [
-                "Charge",
-                "Rush"
-            ],
-            "text": "Charge, Rush.",
-            "targeting": "none"
-        },
-        {
-            "id": "MUSTER_FOR_BATTLE",
-            "name": "Muster for Battle (Lite)",
-            "type": "SPELL",
-            "rarity": "Rare",
-            "cost": 3,
-            "text": "Summon three 1/1 Recruits.",
-            "on_cast": [
-                {
-                    "effect": "summon",
-                    "card_id": "SILVER_HAND_RECRUIT",
-                    "count": 3,
-                    "owner": "player"
-                }
-            ],
             "targeting": "none"
         },
         {
@@ -1428,36 +1356,6 @@
                 }
             ],
             "rarity": "Rare",
-            "targeting": "any_minion"
-        },
-        {
-            "id": "GIVE_CHARGE",
-            "name": "Battle Drums",
-            "type": "SPELL",
-            "rarity": "Common",
-            "cost": 2,
-            "text": "Give a minion Charge.",
-            "on_cast": [
-                {
-                    "effect": "add_keyword",
-                    "keyword": "Charge"
-                }
-            ],
-            "targeting": "any_minion"
-        },
-        {
-            "id": "GIVE_RUSH",
-            "name": "Quick March",
-            "type": "SPELL",
-            "rarity": "Common",
-            "cost": 1,
-            "text": "Give a minion Rush.",
-            "on_cast": [
-                {
-                    "effect": "add_keyword",
-                    "keyword": "Rush"
-                }
-            ],
             "targeting": "any_minion"
         },
         {
@@ -1607,7 +1505,7 @@
         },
         {
             "id": "FLAMEIMP",
-            "name": "Flame imp",
+            "name": "Flame Imp",
             "type": "MINION",
             "rarity": "Common",
             "class": "WARLOCK",
@@ -1671,27 +1569,6 @@
             "targeting": "enemy_face"
         },
         {
-            "id": "KOBOLD_PING",
-            "name": "Kobold Pinger",
-            "type": "MINION",
-            "rarity": "Common",
-            "minion_type": "None",
-            "cost": 2,
-            "attack": 2,
-            "health": 2,
-            "text": "Battlecry: Deal 1 damage.",
-            "keywords": [
-                "Battlecry"
-            ],
-            "battlecry": [
-                {
-                    "effect": "deal_damage",
-                    "amount": 1
-                }
-            ],
-            "targeting": "any_character"
-        },
-        {
             "id": "FIRE_ELEMENTAL",
             "name": "Fire Elemental",
             "type": "MINION",
@@ -1712,27 +1589,6 @@
                 }
             ],
             "targeting": "any_character"
-        },
-        {
-            "id": "KOBOLD_BLASTER",
-            "name": "Kobold Blaster",
-            "type": "MINION",
-            "rarity": "Rare",
-            "minion_type": "None",
-            "cost": 3,
-            "attack": 2,
-            "health": 3,
-            "text": "Battlecry: Deal 2 damage.",
-            "keywords": [
-                "Battlecry"
-            ],
-            "battlecry": [
-                {
-                    "effect": "deal_damage",
-                    "amount": 2
-                }
-            ],
-            "targeting": "enemy_character"
         },
         {
             "id": "DEFENDER_OF_ARGUS",
@@ -3002,22 +2858,6 @@
             "targeting": "none"
         },
         {
-            "id": "ARCANE_INTELLECT_MAJOR",
-            "name": "Major Arcane Intellect",
-            "type": "SPELL",
-            "rarity": "Epic",
-            "class": "MAGE",
-            "cost": 6,
-            "text": "Draw 4 cards.",
-            "on_cast": [
-                {
-                    "effect": "draw",
-                    "count": 4
-                }
-            ],
-            "targeting": "none"
-        },
-        {
             "id": "ARCANE_MISSILES",
             "name": "Arcane Missiles",
             "type": "SPELL",
@@ -3052,7 +2892,7 @@
         },
         {
             "id": "POWER_WORD_SHIELD",
-            "name": "Power Word Shield",
+            "name": "Power Word: Shield",
             "rarity": "Common",
             "type": "SPELL",
             "class": "PRIEST",
@@ -3220,22 +3060,6 @@
             "targeting": "none"
         },
         {
-            "id": "RAISE_WISPS",
-            "name": "Raise Wisps",
-            "type": "SPELL",
-            "rarity": "Rare",
-            "cost": 2,
-            "text": "Summon two 1/1 Wisps.",
-            "on_cast": [
-                {
-                    "effect": "summon",
-                    "card_id": "WISP",
-                    "count": 2
-                }
-            ],
-            "targeting": "none"
-        },
-        {
             "id": "MIRROR_IMAGE",
             "name": "Mirror Image",
             "type": "SPELL",
@@ -3396,7 +3220,7 @@
         },
         {
             "id": "ALAKIR_THE_WINDLORD",
-            "name": "Al'Akir The Windlord",
+            "name": "Al'Akir the Windlord",
             "type": "MINION",
             "rarity": "Legendary",
             "minion_type": "Elemental",

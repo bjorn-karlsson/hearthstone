@@ -2396,6 +2396,7 @@ def _fx_heal(params):
         name = getattr(source_obj, "name", "Effect")
         # 1) If a tagged target was provided (minion or player), use it.
         kind, obj = _resolve_tagged_target(g, target)
+        print(t_spec, kind)
         if kind == "minion":
             ev = []
             before = obj.health
@@ -2412,6 +2413,18 @@ def _fx_heal(params):
             ev += g._update_enrage(obj)
             return ev
         if kind == "player":
+            if t_spec:
+                owner = getattr(source_obj, "owner", g.active_player)
+                if str(t_spec).lower() in ("friendly_face", "ally_face", "self_face"):
+                    pid = owner
+                elif str(t_spec).lower() in ("enemy_face", "opponent_face"):
+                    pid = g.other(owner)
+                else:
+                    return []
+                p = g.players[pid]
+                before = p.health
+                p.health = min(p.max_health, p.health + n)
+                return [Event("PlayerHealed", {"player": pid, "amount": p.health - before, "source": name})]
             p = g.players[obj]
             before = p.health
             p.health = min(p.max_health, p.health + n)
@@ -2421,6 +2434,7 @@ def _fx_heal(params):
         if t_spec:
             owner = getattr(source_obj, "owner", g.active_player)
             if str(t_spec).lower() in ("friendly_face", "ally_face", "self_face"):
+               
                 pid = owner
             elif str(t_spec).lower() in ("enemy_face", "opponent_face"):
                 pid = g.other(owner)
